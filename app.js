@@ -177,6 +177,10 @@
     tv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="13" rx="2"/><path d="M8 3l4 4 4-4"/></svg>',
     cast: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16a6 6 0 016 6M2 12a10 10 0 0110 10M2 20a2 2 0 012 2"/><path d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
+    chevR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>',
     ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>',
     x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>'
   };
@@ -220,6 +224,10 @@
         <button class="wl ${on ? 'on' : ''}" data-wl="${item.id}" data-type="${type}" title="Toggle watchlist" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">
           ${on ? ICON.bookmarkFill : ICON.bookmark}
         </button>
+        <div class="card-hover">
+          <button class="ch-play" data-nav="#/watch/${type}/${item.id}" tabindex="-1" aria-label="Play ${esc(title)}">${ICON.play}</button>
+          <div class="ch-cap"><div class="ch-title">${esc(title)}</div><div class="ch-meta">${y || ''}${rating ? ' · ★ ' + rating : ''}</div></div>
+        </div>
       </div>
       <div class="cap"><div class="t">${esc(title)}</div><div class="y">${y || '—'}</div></div>
     </div>`;
@@ -228,9 +236,43 @@
   function railHTML(title, items, moreHref, type) {
     if (!items || !items.length) return '';
     return `<section class="rail">
-      <div class="rail-head"><h2>${esc(title)}</h2>${moreHref ? `<a class="more" data-nav="${moreHref}">See all →</a>` : ''}</div>
-      <div class="track">${items.map(i => cardHTML(i, type)).join('')}</div>
+      <div class="rail-head"><h2>${esc(title)}</h2>${moreHref ? `<a class="more" data-nav="${moreHref}">See all ${ICON.chevR}</a>` : ''}</div>
+      <div class="rail-wrap">
+        <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
+        <div class="track">${items.map(i => cardHTML(i, type)).join('')}</div>
+        <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
+      </div>
     </section>`;
+  }
+
+  // "Top 10"-style ranked row with big numerals
+  function rankRailHTML(title, items) {
+    items = (items || []).filter(x => x.poster_path || x.backdrop_path).slice(0, 10);
+    if (!items.length) return '';
+    return `<section class="rail rank-rail">
+      <div class="rail-head"><h2>${esc(title)}</h2></div>
+      <div class="rail-wrap">
+        <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
+        <div class="track">${items.map((it, i) => {
+          const type = it.media_type || (it.first_air_date ? 'tv' : 'movie');
+          itemCache[ck(type, it.id)] = it;
+          return `<div class="rank-item card" data-nav="#/${type}/${it.id}" tabindex="0" role="button" aria-label="Number ${i + 1}, ${esc(it.title || it.name)}">
+            <span class="rank-num">${i + 1}</span>
+            <div class="poster">
+              <img loading="lazy" src="${img(it.poster_path, 'w342')}" onerror="this.src='${PLACEHOLDER}'" alt="${esc(it.title || it.name)}">
+              <div class="card-hover"><button class="ch-play" data-nav="#/watch/${type}/${it.id}" tabindex="-1" aria-label="Play">${ICON.play}</button></div>
+            </div>
+          </div>`;
+        }).join('')}</div>
+        <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
+      </div>
+    </section>`;
+  }
+
+  function skeletonRow() {
+    let s = '<div class="rail"><div class="sk line" style="width:180px;height:20px;margin:0 0 14px"></div><div class="track">';
+    for (let i = 0; i < 7; i++) s += '<div style="width:165px;flex:none"><div class="sk poster"></div></div>';
+    return s + '</div></div>';
   }
 
   function skeletonGrid(n) {
@@ -255,47 +297,97 @@
      ============================================================ */
 
   /* ---------- Home ---------- */
+  let heroTimer = null;
+  function clearHero() { if (heroTimer) { clearInterval(heroTimer); heroTimer = null; } }
+
+  async function heroLogo(item) {
+    try {
+      const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
+      const d = await tmdb('/' + type + '/' + item.id + '/images', { include_image_language: 'en,null', language: 'en' });
+      const logos = (d.logos || []).filter(l => l.file_path && (l.iso_639_1 === 'en' || l.iso_639_1 === null));
+      logos.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
+      return logos[0] ? img(logos[0].file_path, 'w500') : null;
+    } catch (e) { return null; }
+  }
+
+  function billboardSlide(it, i) {
+    const type = it.media_type || (it.first_air_date ? 'tv' : 'movie');
+    const title = it.title || it.name || '';
+    const y = year(it.release_date || it.first_air_date);
+    const rating = it.vote_average ? it.vote_average.toFixed(1) : null;
+    const on = isInWatch(it.id, type);
+    const ov = (it.overview || '').slice(0, 200);
+    return `<div class="bb-slide ${i === 0 ? 'on' : ''}" data-i="${i}">
+      <div class="bb-bg" style="background-image:url('${img(it.backdrop_path, 'w1280')}')"></div>
+      <div class="bb-scrim"></div>
+      <div class="bb-info">
+        ${it._logo
+          ? `<img class="bb-logo" src="${it._logo}" alt="${esc(title)}" onerror="this.style.display='none';var h=this.nextElementSibling;if(h)h.style.display='block'"><h1 class="bb-title" style="display:none">${esc(title)}</h1>`
+          : `<h1 class="bb-title">${esc(title)}</h1>`}
+        <div class="bb-meta">
+          ${rating ? `<span class="star">${ICON.star} ${rating}</span>` : ''}
+          <span>${y || ''}</span>
+          <span class="pill-type">${type === 'tv' ? 'Series' : 'Film'}</span>
+        </div>
+        <p class="bb-ovw">${esc(ov)}${(it.overview || '').length > 200 ? '…' : ''}</p>
+        <div class="bb-cta">
+          <button class="btn primary lg" data-nav="#/watch/${type}/${it.id}">${ICON.play} Play</button>
+          <button class="btn glass lg" data-nav="#/${type}/${it.id}">${ICON.info} More Info</button>
+          <button class="btn glass icon" data-wl="${it.id}" data-type="${type}" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">${on ? ICON.check : ICON.plus}</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function buildBillboard(items) {
+    if (!items.length) return '';
+    return `<div class="billboard" id="billboard">
+      ${items.map(billboardSlide).join('')}
+      <div class="bb-dots">${items.map((it, i) => `<button class="bb-dot ${i === 0 ? 'on' : ''}" data-dot="${i}" tabindex="-1" aria-label="Featured ${i + 1}"></button>`).join('')}</div>
+    </div>`;
+  }
+
+  function wireBillboard() {
+    const bb = document.getElementById('billboard');
+    if (!bb) return;
+    const slides = [].slice.call(bb.querySelectorAll('.bb-slide'));
+    const dots = [].slice.call(bb.querySelectorAll('.bb-dot'));
+    if (slides.length < 2) return;
+    let idx = 0;
+    const show = (n) => {
+      idx = (n + slides.length) % slides.length;
+      slides.forEach((s, i) => s.classList.toggle('on', i === idx));
+      dots.forEach((d, i) => d.classList.toggle('on', i === idx));
+    };
+    const start = () => { clearHero(); heroTimer = setInterval(() => show(idx + 1), 8000); };
+    start();
+    bb.addEventListener('mouseenter', clearHero);
+    bb.addEventListener('mouseleave', start);
+    dots.forEach((d, i) => d.addEventListener('click', () => { show(i); start(); }));
+  }
+
   async function homeView() {
-    view().innerHTML = `<div class="sk" style="height:420px;border-radius:20px;margin-bottom:28px"></div>${skeletonGrid(8)}`;
+    clearHero();
+    view().innerHTML = `<div class="billboard-sk sk"></div><div class="rows">${skeletonRow()}${skeletonRow()}</div>`;
     try {
       const [trend, popM, popT, topM, upcoming] = await Promise.all([
-        tmdb('/trending/all/day'),
-        tmdb('/movie/popular'),
-        tmdb('/tv/popular'),
-        tmdb('/movie/top_rated'),
-        tmdb('/movie/upcoming', { region: cfg.region })
+        tmdb('/trending/all/day'), tmdb('/movie/popular'), tmdb('/tv/popular'),
+        tmdb('/movie/top_rated'), tmdb('/movie/upcoming', { region: cfg.region })
       ]);
-      const heroItems = (trend.results || []).filter(x => x.backdrop_path && (x.media_type === 'movie' || x.media_type === 'tv'));
-      const hero = heroItems[Math.floor(Math.random() * Math.min(5, heroItems.length))] || heroItems[0];
-      let html = '';
-      if (hero) {
-        const type = hero.media_type;
-        itemCache[ck(type, hero.id)] = hero;
-        html += `<div class="hero">
-          <div class="bg" style="background-image:url('${img(hero.backdrop_path, 'w1280')}')"></div>
-          <div class="scrim"></div>
-          <div class="inner">
-            <div class="metarow" style="margin-bottom:10px"></div>
-            <h1>${esc(hero.title || hero.name)}</h1>
-            <div class="meta">
-              <span>${ICON.star} ${hero.vote_average ? hero.vote_average.toFixed(1) : '—'}</span>
-              <span>${year(hero.release_date || hero.first_air_date) || ''}</span>
-              <span style="text-transform:uppercase">${type}</span>
-            </div>
-            <p class="ovw">${esc(hero.overview || '')}</p>
-            <div class="cta">
-              <button class="btn primary" data-nav="#/watch/${type}/${hero.id}">${ICON.play} Watch</button>
-              <button class="btn" data-nav="#/${type}/${hero.id}">Details</button>
-            </div>
-          </div>
-        </div>`;
-      }
-      html += railHTML('Trending today', (trend.results || []).filter(x => x.media_type !== 'person'), '#/movies?sort=popularity.desc');
+      const trendItems = (trend.results || []).filter(x => x.media_type !== 'person');
+      const heroItems = trendItems.filter(x => x.backdrop_path).slice(0, 5);
+      const logos = await Promise.all(heroItems.map(heroLogo));
+      heroItems.forEach((h, i) => { h._logo = logos[i]; itemCache[ck(h.media_type, h.id)] = h; });
+      let html = buildBillboard(heroItems);
+      html += '<div class="rows">';
+      html += rankRailHTML('Top 10 today', trendItems);
       html += railHTML('Popular movies', popM.results, '#/movies', 'movie');
       html += railHTML('Popular shows', popT.results, '#/tv', 'tv');
-      html += railHTML('Top rated movies', topM.results, '#/movies?sort=vote_average.desc', 'movie');
+      html += railHTML('Top rated', topM.results, '#/movies?sort=vote_average.desc', 'movie');
       html += railHTML('Coming soon', upcoming.results, '#/movies?sort=primary_release_date.desc', 'movie');
+      html += '</div>';
       view().innerHTML = html;
+      wireBillboard();
     } catch (e) { errorState(e); }
   }
 
@@ -429,17 +521,20 @@
     const isTV = type === 'tv';
     view().innerHTML = `<div class="sk" style="height:480px;border-radius:0;margin:-22px -22px 24px"></div><div class="section">${skeletonGrid(6)}</div>`;
     try {
-      const [d, credits, videos, similar, ext] = await Promise.all([
+      const [d, credits, videos, similar, ext, imgs] = await Promise.all([
         tmdb('/' + type + '/' + id),
         tmdb('/' + type + '/' + id + '/credits'),
         tmdb('/' + type + '/' + id + '/videos'),
         tmdb('/' + type + '/' + id + '/similar'),
-        tmdb('/' + type + '/' + id + '/external_ids').catch(() => ({}))
+        tmdb('/' + type + '/' + id + '/external_ids').catch(() => ({})),
+        tmdb('/' + type + '/' + id + '/images', { include_image_language: 'en,null', language: 'en' }).catch(() => ({}))
       ]);
       itemCache[ck(type, d.id)] = d;
       d._imdb = ext.imdb_id;
       const title = d.title || d.name;
       const y = year(d.release_date || d.first_air_date);
+      const _logos = (imgs.logos || []).filter(l => l.file_path && (l.iso_639_1 === 'en' || l.iso_639_1 === null)).sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
+      const logoUrl = _logos[0] ? img(_logos[0].file_path, 'w500') : null;
       const gEls = (d.genres || []).map(g => `<button class="chip" data-nav="#/${isTV ? 'tv' : 'movies'}?genres=${g.id}">${esc(g.name)}</button>`).join('');
       const director = (credits.crew || []).filter(c => c.job === 'Director').map(c => c.name).join(', ');
       const creators = (d.created_by || []).map(c => c.name).join(', ');
@@ -456,7 +551,9 @@
         <div class="detail-body">
           <div class="poster"><img src="${img(d.poster_path, 'w500')}" alt="${esc(title)}" onerror="this.src='${PLACEHOLDER}'"></div>
           <div class="info">
-            <h1>${esc(title)} ${y ? `<span class="muted" style="font-weight:600">(${y})</span>` : ''}</h1>
+            ${logoUrl
+              ? `<img class="detail-logo" src="${logoUrl}" alt="${esc(title)}" onerror="this.style.display='none';var h=this.nextElementSibling;if(h)h.style.display='block'"><h1 style="display:none">${esc(title)} ${y ? `<span class="muted" style="font-weight:600">(${y})</span>` : ''}</h1>`
+              : `<h1>${esc(title)} ${y ? `<span class="muted" style="font-weight:600">(${y})</span>` : ''}</h1>`}
             ${d.tagline ? `<p class="tagline">${esc(d.tagline)}</p>` : ''}
             <div class="metarow">
               <span class="pill"><span class="star">${ICON.star}</span> ${d.vote_average ? d.vote_average.toFixed(1) : '—'}</span>
@@ -862,6 +959,9 @@
   function route() {
     const { parts, params } = parseHash();
     closeSuggest();
+    clearHero();                 // stop billboard rotation when leaving Home
+    document.body.classList.toggle('home', !parts.length);
+    window.scrollTo(0, 0);
     if (IS_TV) tvFocusFirst();  // re-establish focus after every (re-)render
     const sec = parts[0] || 'home';
     setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? '' : 'home');
@@ -931,6 +1031,11 @@
         <a data-nav="#/watchlist" data-section="watchlist">${ICON.bookmark}<span>Saved</span></a>`;
       document.body.appendChild(bn);
     }
+    // scroll-aware header: transparent over the Home billboard, frosts on scroll
+    const hdrEl = $('header.top');
+    const onScroll = () => { if (hdrEl) hdrEl.classList.toggle('scrolled', window.scrollY > 30); };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
     applyTheme();
   }
 
@@ -976,6 +1081,8 @@
     if (tr) { openTrailer(tr.dataset.trailer); return; }
     const oe = e.target.closest('[data-openext]');
     if (oe) { e.preventDefault(); openExternal(oe.dataset.openext); return; }
+    const ra = e.target.closest('[data-rail]');
+    if (ra) { const track = ra.parentElement.querySelector('.track'); if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: 'smooth' }); return; }
     const nav = e.target.closest('[data-nav]');
     if (nav) { e.preventDefault(); go(nav.dataset.nav); return; }
     // click outside search closes suggestions
