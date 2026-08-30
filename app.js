@@ -45,9 +45,13 @@
     region:   'US',
     theme:    'midnight',
     accent:   '#f5c518',   // derived from the theme; used for the player {color} placeholder
-    // Install-on-TV: where the Android APK lives + an optional short link you create
+    // Install-on-TV: where the Android APK lives. apkShortUrl is an optional
+    // manual override; apkShortAuto is the auto-generated short link (cached,
+    // keyed by apkShortAutoFor so it regenerates only when apkUrl changes).
     apkUrl:   'https://github.com/jaig-eye/reeldeck/releases/latest/download/Reeldeck.apk',
     apkShortUrl: '',
+    apkShortAuto: '',
+    apkShortAutoFor: '',
     // OFF by default: the iframe sandbox trips "Iframe Sandbox Detected" on most
     // providers (it's their anti-adblock gate). The desktop app blocks pop-under/ad
     // requests at the network layer instead, so video plays AND the ads are gone.
@@ -832,25 +836,56 @@
   }
 
   /* ---------- Install on TV / other devices ---------- */
+  // Shorten a long URL via a free, no-auth, CORS-enabled service so it's easy to
+  // type on a TV remote. TinyURL is primary (established since 2002, deterministic
+  // — same long URL always maps to the same short code — and returns plain text);
+  // spoo.me is the fallback (Access-Control-Allow-Origin: *). Returns null if both
+  // are unreachable, in which case the full URL is used (it always works).
+  async function shortenUrl(longUrl) {
+    try {
+      const r = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl));
+      if (r.ok) { const t = (await r.text()).trim(); if (/^https?:\/\/tinyurl\.com\/\S+$/i.test(t)) return t; }
+    } catch (e) {}
+    try {
+      const r = await fetch('https://spoo.me/', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'url=' + encodeURIComponent(longUrl)
+      });
+      if (r.ok) { const j = await r.json(); if (j && j.short_url) return String(j.short_url).trim(); }
+    } catch (e) {}
+    return null;
+  }
+
   function getAppView() {
-    const url = (cfg.apkShortUrl || cfg.apkUrl || '').trim();
+    const longUrl = (cfg.apkUrl || '').trim();
+    const manual  = (cfg.apkShortUrl || '').trim();
+    const cached  = (cfg.apkShortAutoFor === longUrl && cfg.apkShortAuto) ? cfg.apkShortAuto : '';
+    const short   = manual || cached;            // best short link we already have
+    const primary = short || longUrl;            // address we tell people to type
+
+    const autoLine = manual
+      ? 'Using your custom link. <button class="linkish" id="ga-reset">Switch back to the auto link</button>'
+      : (cached ? 'Auto-shortened via TinyURL — same short link for everyone.' : 'Shortening the link…');
+
     view().innerHTML = `<h1 class="page-title">Get Reeldeck on your devices</h1>
       <div class="getapp">
         <div class="ga-card">
           <h3>${ICON.tv} Android TV / Google TV</h3>
           <p class="muted">Install the <b>Downloader</b> app on the TV, open it, and enter this address:</p>
-          <div class="ga-url"><code id="ga-url">${esc(url)}</code><button class="btn sm" id="ga-copy">Copy</button></div>
+          <div class="ga-url"><code id="ga-url">${esc(primary)}</code><button class="btn sm" id="ga-copy">Copy</button></div>
           <div class="ga-qr"><img id="ga-qr-img" alt="QR code for the app download" width="176" height="176"><span class="muted">Scan to open on a phone</span></div>
           <ol class="ga-steps">
             <li>On the TV: install <b>Downloader by AFTVnews</b>, and allow it to install unknown apps.</li>
-            <li>Open Downloader, type the address above (or your short link), press <b>Go</b>.</li>
+            <li>Open Downloader, type the address above, press <b>Go</b>.</li>
             <li>When it downloads, choose <b>Install</b>. If a Play Protect notice appears, pick Install anyway.</li>
           </ol>
         </div>
         <div class="ga-card">
           <h3>Shorter link — easier to type on a remote</h3>
-          <p class="muted">A long URL is painful with a TV remote. Make a short link (paste the address above into <b>is.gd</b> or <b>tinyurl.com</b>), then save it here — it replaces the URL above and updates the QR.</p>
-          <div class="ga-url"><input id="ga-short" placeholder="https://is.gd/yourlink" value="${esc(cfg.apkShortUrl || '')}"><button class="btn sm primary" id="ga-save">Save</button></div>
+          <p class="muted" id="ga-auto">${autoLine}</p>
+          <p class="muted" style="font-size:12.5px;margin-top:4px">Want your own memorable link instead? Paste one (e.g. a custom <b>tinyurl.com</b> alias) and save — it replaces the address above and updates the QR.</p>
+          <div class="ga-url"><input id="ga-short" placeholder="https://tinyurl.com/your-alias" value="${esc(manual)}"><button class="btn sm primary" id="ga-save">Save</button></div>
           <p class="muted" style="font-size:12.5px;margin-top:10px">Even easier: the Downloader app supports numeric <b>codes</b> — register your link at <b>aftv.news</b> and you get a short number to punch in.</p>
         </div>
         <div class="ga-card">
@@ -858,12 +893,32 @@
           <p class="muted"><b>Android phone:</b> open the address above (or scan the QR) and install the APK — same file as the TV. <b>Windows:</b> get the installer from the <button class="linkish" data-openext="https://github.com/jaig-eye/reeldeck/releases/latest">Releases page</button>.</p>
         </div>
       </div>`;
-    try {
-      const q = window.qrcode(0, 'M'); q.addData(url); q.make();
-      const im = $('#ga-qr-img'); if (im) im.src = q.createDataURL(5, 8);
-    } catch (e) { const im = $('#ga-qr-img'); if (im) im.style.display = 'none'; }
-    const cp = $('#ga-copy'); if (cp) cp.onclick = () => { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Copied'); };
+
+    const paint = (addr) => {
+      const u = $('#ga-url'); if (u) u.textContent = addr;
+      try {
+        const q = window.qrcode(0, 'M'); q.addData(addr); q.make();
+        const im = $('#ga-qr-img'); if (im) { im.style.display = ''; im.src = q.createDataURL(5, 8); }
+      } catch (e) { const im = $('#ga-qr-img'); if (im) im.style.display = 'none'; }
+    };
+    paint(primary);
+
+    // Auto-generate the short link once (cached), only if the user hasn't set a manual one.
+    if (!short && longUrl) {
+      shortenUrl(longUrl).then((s) => {
+        if (s) {
+          cfg.apkShortAuto = s; cfg.apkShortAutoFor = longUrl; saveConfig();
+          if (!(cfg.apkShortUrl || '').trim()) paint(s);      // don't clobber a manual link set meanwhile
+          const b = $('#ga-auto'); if (b) b.innerHTML = 'Auto-shortened via TinyURL: <b>' + esc(s) + '</b>';
+        } else {
+          const b = $('#ga-auto'); if (b) b.textContent = 'Auto-shortening is unavailable right now — the full link above still works.';
+        }
+      });
+    }
+
+    const cp = $('#ga-copy'); if (cp) cp.onclick = () => { try { navigator.clipboard.writeText($('#ga-url').textContent); } catch (e) {} toast('Copied'); };
     const sv = $('#ga-save'); if (sv) sv.onclick = () => { cfg.apkShortUrl = $('#ga-short').value.trim(); saveConfig(); toast('Saved'); getAppView(); };
+    const rs = $('#ga-reset'); if (rs) rs.onclick = () => { cfg.apkShortUrl = ''; saveConfig(); toast('Using the auto short link'); getAppView(); };
   }
 
   /* ---------- Error state ---------- */
