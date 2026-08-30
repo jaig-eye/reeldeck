@@ -16,6 +16,41 @@ Already built on this machine, in `release/`:
 
 Rebuild anytime: `npm run dist`.
 
+### Lightweight "web installer" (tiny file to hand out)
+
+Instead of sharing the ~87 MB installer, you can share a **~0.7 MB stub** that downloads the app during
+install. Built with `npm run dist:web` → `release/nsis-web/`:
+
+| File | Size | Role |
+|---|---|---|
+| `Reeldeck-Web-Setup-1.0.0.exe` | **~0.7 MB** | The stub you hand out. |
+| `reeldeck-1.0.0-x64.nsis.7z` | ~82 MB | The payload — **you host this**; the stub downloads it. |
+
+**The catch:** the stub bakes in a download URL at build time, and that URL must be an **anonymous,
+direct-download** link to the `.7z`. So:
+
+1. Set `build.publish.url` in `package.json` to where you'll host the `.7z` (it's a placeholder now).
+2. `npm run dist:web`.
+3. Upload the `.7z` to that exact location. Share the stub.
+
+Where to host the payload:
+
+- ✅ **GitHub Releases (public repo)** — free, reliable direct URLs. Change `build.publish` to
+  `{ "provider": "github", "owner": "<you>", "repo": "reeldeck" }` and the CI can upload it on a tag.
+  Note: a **private** repo's release files need a login to download, so the stub can't fetch them —
+  the repo must be **public** for this, which means the app is publicly downloadable.
+- ✅ **A static host / Cloudflare R2 / S3 bucket** — set `provider: generic` + the bucket URL.
+- ❌ **Google Drive / Dropbox share links** — these serve a "scan/confirm" HTML page for big files
+  instead of the raw file, so the stub's automatic download fails. Fine for a human clicking a link,
+  not for the stub.
+
+**Simpler alternative (no stub):** just upload the full `Reeldeck-1.0.0-portable.exe` to any host
+(**Google Drive is fine here**) and share the link. The file people download is one self-contained
+`.exe` — bigger, but there's nothing to configure and no host-uptime dependency at install time.
+
+Either way you are hosting the app for others to download, so pick a spot you're comfortable being
+reachable.
+
 ---
 
 ## macOS — build it free in the cloud (can't be built on Windows)
