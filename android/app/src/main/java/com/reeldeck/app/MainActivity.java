@@ -1,5 +1,7 @@
 package com.reeldeck.app;
 
+import android.app.UiModeManager;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -19,6 +21,16 @@ public class MainActivity extends BridgeActivity {
         // Block pop-up / new-window ads spawned from the player iframe.
         webView.getSettings().setSupportMultipleWindows(false);
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
+
+        // On a TV, flag it to the web layer (via UA) so it can switch on the
+        // 10-foot / D-pad experience. Set before the queued page load runs.
+        UiModeManager uiMode = (UiModeManager) getSystemService(UI_MODE_SERVICE);
+        if (uiMode != null && uiMode.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION) {
+            String ua = webView.getSettings().getUserAgentString();
+            if (ua != null && !ua.contains("ReeldeckTV")) {
+                webView.getSettings().setUserAgentString(ua + " ReeldeckTV");
+            }
+        }
 
         // Block the other ad vector: a framed player trying to navigate the WHOLE
         // app (top frame) to an ad URL. Allow the iframe's own sub-frame loads

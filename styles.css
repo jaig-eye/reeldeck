@@ -438,6 +438,16 @@ textarea:focus-visible, [tabindex]:focus-visible {
   }
 }
 
+/* ---------- TV / 10-foot D-pad mode ---------- */
+body.tv { cursor: none; font-size: 18px; }
+body.tv a:focus, body.tv button:focus, body.tv input:focus, body.tv select:focus, body.tv [tabindex]:focus {
+  outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 8px;
+}
+body.tv .card:focus { outline: none; }
+body.tv .card:focus .poster { outline: 3px solid var(--accent); outline-offset: 4px; transform: scale(1.07); box-shadow: 0 16px 44px rgba(0,0,0,.6); position: relative; z-index: 2; }
+body.tv .mirror:focus, body.tv .theme-card:focus, body.tv .chip:focus { outline: 3px solid var(--accent); outline-offset: 2px; }
+body.tv nav.main a:focus { background: var(--surface-2); color: var(--text); }
+
 /* ---------- Mobile bottom tab bar ---------- */
 .bottom-nav { display: none; }
 
