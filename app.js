@@ -45,6 +45,9 @@
     region:   'US',
     theme:    'midnight',
     accent:   '#f5c518',   // derived from the theme; used for the player {color} placeholder
+    // Install-on-TV: where the Android APK lives + an optional short link you create
+    apkUrl:   'https://github.com/jaig-eye/reeldeck/releases/latest/download/Reeldeck.apk',
+    apkShortUrl: '',
     // OFF by default: the iframe sandbox trips "Iframe Sandbox Detected" on most
     // providers (it's their anti-adblock gate). The desktop app blocks pop-under/ad
     // requests at the network layer instead, so video plays AND the ads are gone.
@@ -829,6 +832,41 @@
       <div class="grid">${list.map(i => cardHTML(i, i.type)).join('')}</div>`;
   }
 
+  /* ---------- Install on TV / other devices ---------- */
+  function getAppView() {
+    const url = (cfg.apkShortUrl || cfg.apkUrl || '').trim();
+    view().innerHTML = `<h1 class="page-title">Get Reeldeck on your devices</h1>
+      <div class="getapp">
+        <div class="ga-card">
+          <h3>${ICON.tv} Android TV / Google TV</h3>
+          <p class="muted">Install the <b>Downloader</b> app on the TV, open it, and enter this address:</p>
+          <div class="ga-url"><code id="ga-url">${esc(url)}</code><button class="btn sm" id="ga-copy">Copy</button></div>
+          <div class="ga-qr"><img id="ga-qr-img" alt="QR code for the app download" width="176" height="176"><span class="muted">Scan to open on a phone</span></div>
+          <ol class="ga-steps">
+            <li>On the TV: install <b>Downloader by AFTVnews</b>, and allow it to install unknown apps.</li>
+            <li>Open Downloader, type the address above (or your short link), press <b>Go</b>.</li>
+            <li>When it downloads, choose <b>Install</b>. If a Play Protect notice appears, pick Install anyway.</li>
+          </ol>
+        </div>
+        <div class="ga-card">
+          <h3>Shorter link — easier to type on a remote</h3>
+          <p class="muted">A long URL is painful with a TV remote. Make a short link (paste the address above into <b>is.gd</b> or <b>tinyurl.com</b>), then save it here — it replaces the URL above and updates the QR.</p>
+          <div class="ga-url"><input id="ga-short" placeholder="https://is.gd/yourlink" value="${esc(cfg.apkShortUrl || '')}"><button class="btn sm primary" id="ga-save">Save</button></div>
+          <p class="muted" style="font-size:12.5px;margin-top:10px">Even easier: the Downloader app supports numeric <b>codes</b> — register your link at <b>aftv.news</b> and you get a short number to punch in.</p>
+        </div>
+        <div class="ga-card">
+          <h3>Phone &amp; Windows</h3>
+          <p class="muted"><b>Android phone:</b> open the address above (or scan the QR) and install the APK — same file as the TV. <b>Windows:</b> get the installer from the <button class="linkish" data-openext="https://github.com/jaig-eye/reeldeck/releases/latest">Releases page</button>.</p>
+        </div>
+      </div>`;
+    try {
+      const q = window.qrcode(0, 'M'); q.addData(url); q.make();
+      const im = $('#ga-qr-img'); if (im) im.src = q.createDataURL(5, 8);
+    } catch (e) { const im = $('#ga-qr-img'); if (im) im.style.display = 'none'; }
+    const cp = $('#ga-copy'); if (cp) cp.onclick = () => { try { navigator.clipboard.writeText(url); } catch (e) {} toast('Copied'); };
+    const sv = $('#ga-save'); if (sv) sv.onclick = () => { cfg.apkShortUrl = $('#ga-short').value.trim(); saveConfig(); toast('Saved'); getAppView(); };
+  }
+
   /* ---------- Error state ---------- */
   function errorState(e, sel) {
     const msg = (e && e.message) || 'Something went wrong';
@@ -870,6 +908,9 @@
           <p class="hint">Pick a look — applies instantly.</p>
           <div class="theme-grid" id="set-themes">${themeCards}</div>
         </div>
+        <div class="set-group">
+          <button class="btn sm" id="set-getapp" style="width:100%;justify-content:center">${ICON.tv} Install on TV / other devices</button>
+        </div>
         ${IS_DESKTOP ? `<div class="set-group">
           <h4>Updates</h4>
           <div class="set-row" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap">
@@ -901,6 +942,8 @@
       card.classList.add('on');
       saveConfig();  // applyTheme runs -> live switch
     };
+    const ga = $('#set-getapp', back);
+    if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
     const sb = $('#set-sandbox', back);
     if (sb) sb.onchange = () => { cfg.blockPlayerAds = sb.checked; saveConfig(); };
     const cu = $('#set-check-update', back);
@@ -979,6 +1022,7 @@
       case 'person': return personView(parts[1]);
       case 'watch': return watchView(parts[1], parts[2], params);
       case 'watchlist': return watchlistView();
+      case 'get-app': return getAppView();
       default: return homeView();
     }
   }

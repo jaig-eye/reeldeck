@@ -1,7 +1,7 @@
 {
   "name": "reeldeck",
   "productName": "Reeldeck",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A clean, ad-free movie & TV browser (TMDB) — desktop build for per-app VPN routing.",
   "author": {
     "name": "jaig-eye",
@@ -92,6 +92,7 @@
   "dependencies": {
     "@capacitor/app": "^6.0.3",
     "@ghostery/adblocker-electron": "^2.18.2",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "qrcode-generator": "^2.0.4"
   }
 }
