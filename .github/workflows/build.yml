@@ -12,6 +12,11 @@ on:
       - 'v*'            # push a tag like v1.0.0 to trigger a release build
   workflow_dispatch: {} # allow manual runs from the Actions tab
 
+# Needed so the built-in GITHUB_TOKEN can create the Release and upload assets
+# (the web-installer payload the stub downloads).
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -19,9 +24,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            build_cmd: npx electron-builder --win --publish never
+            # nsis-web = the tiny web-installer stub + its payload; portable = full single exe.
+            # --publish always uploads them (incl. the .nsis.7z the stub fetches) to the GitHub Release.
+            build_cmd: npx electron-builder --win nsis-web portable --publish always
           - os: macos-latest     # Apple Silicon (arm64); billed at 10x on private repos
-            build_cmd: npx electron-builder --mac --publish never
+            build_cmd: npx electron-builder --mac --publish always
 
     runs-on: ${{ matrix.os }}
 

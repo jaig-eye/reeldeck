@@ -35,10 +35,10 @@ direct-download** link to the `.7z`. So:
 
 Where to host the payload:
 
-- ✅ **GitHub Releases (public repo)** — free, reliable direct URLs. Change `build.publish` to
-  `{ "provider": "github", "owner": "<you>", "repo": "reeldeck" }` and the CI can upload it on a tag.
-  Note: a **private** repo's release files need a login to download, so the stub can't fetch them —
-  the repo must be **public** for this, which means the app is publicly downloadable.
+- ✅ **GitHub Releases (public repo) — already wired up.** `build.publish` is set to `github`, and the
+  CI builds the web installer and uploads the stub + payload to a Release on every version tag. You just
+  create the repo and push (steps below). The repo must be **public** — a private repo's release files
+  need a login, which the stub can't do — so the app becomes publicly downloadable.
 - ✅ **A static host / Cloudflare R2 / S3 bucket** — set `provider: generic` + the bucket URL.
 - ❌ **Google Drive / Dropbox share links** — these serve a "scan/confirm" HTML page for big files
   instead of the raw file, so the stub's automatic download fails. Fine for a human clicking a link,
@@ -50,6 +50,31 @@ Where to host the payload:
 
 Either way you are hosting the app for others to download, so pick a spot you're comfortable being
 reachable.
+
+### Publishing to GitHub Releases (the steps you run)
+
+The config auto-targets whatever repo you push to. On github.com, create a **public** repo (e.g.
+`reeldeck`), then from this folder:
+
+```bash
+git remote add origin https://github.com/<your-username>/reeldeck.git
+git push -u origin main
+
+# Tag a version — this is what triggers the cloud build + publish:
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+~5 minutes later, `https://github.com/<your-username>/reeldeck/releases` will hold:
+
+| Asset | What to do with it |
+|---|---|
+| `Reeldeck-Web-Setup-1.0.0.exe` | **Share this** — the ~0.7 MB installer. |
+| `reeldeck-1.0.0-x64.nsis.7z` | Leave it in the release — the stub downloads it. |
+| `Reeldeck-1.0.0-portable.exe` | Full single-file exe, if someone wants the direct download. |
+| `Reeldeck-1.0.0-*.dmg` / `.zip` | The macOS builds. |
+
+To ship an update later: bump `version` in `package.json`, commit, and push a new tag (`v1.0.1`).
 
 ---
 
