@@ -135,7 +135,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.4';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.5';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
 
   // TV / D-pad state — declared up here (not next to the nav functions further
