@@ -1,9 +1,10 @@
 // Reeldeck service worker — makes the app installable and load offline-ish.
 // Only touches SAME-ORIGIN app shell files. TMDB, image CDN and the streaming
 // providers are always fetched live from the network (never cached/intercepted).
-const CACHE = 'reeldeck-v10';
+const CACHE = 'reeldeck-v11';
 const SHELL = [
-  './', './index.html', './app.js?v=12', './styles.css?v=12',
+  './', './index.html', './app.js?v=13', './styles.css?v=13',
+  './assets/vendor/qrcode.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png'
 ];
 

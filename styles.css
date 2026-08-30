@@ -477,6 +477,19 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .warn-box { background: rgba(255,84,112,.08); border: 1px solid rgba(255,84,112,.3); border-radius: 12px; padding: 13px 15px; color: #ffc2cd; font-size: 13px; line-height: 1.55; margin-bottom: 16px; }
 .warn-box b { color: #fff; }
 
+/* ---------- Get app / Install on TV ---------- */
+.getapp { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; max-width: 1040px; }
+.ga-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+.ga-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 17px; }
+.ga-card h3 svg { width: 20px; height: 20px; color: var(--accent); }
+.ga-url { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+.ga-url code, .ga-url input { flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; overflow-x: auto; white-space: nowrap; }
+.ga-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 16px 0; }
+.ga-qr img { border-radius: 12px; background: #fff; padding: 8px; display: block; }
+.ga-qr .muted { font-size: 12px; }
+.ga-steps { margin: 12px 0 0; padding-left: 20px; color: var(--text-soft); font-size: 14px; line-height: 1.7; }
+.linkish { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+
 /* ---------- Footer ---------- */
 footer.site { max-width: var(--maxw); margin: 50px auto 0; padding: 26px 22px 40px; border-top: 1px solid var(--border); color: var(--muted-2); font-size: 13px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 footer.site a { color: var(--muted); }
