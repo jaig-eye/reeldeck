@@ -135,7 +135,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.5';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.6';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
 
   // TV / D-pad state — declared up here (not next to the nav functions further
@@ -1200,66 +1200,89 @@
   // Silent update check on launch (web/Android). Desktop uses electron-updater.
   if (!IS_DESKTOP) setTimeout(() => checkForUpdate(false), 1500);
 
-  // Desktop auto-update (electron-updater) notifications.
+  // ---- Update UI ---------------------------------------------------------
+  // One persistent banner drives EVERY state so the user always gets feedback
+  // (the old code wrote status into a Settings element we later removed, so
+  // errors and progress were invisible). Works for desktop (electron-updater
+  // events) and web/Android (GitHub Releases API).
+  let updInteractive = false;   // was the current check triggered by the button?
+  function updBanner() {
+    let b = document.getElementById('update-banner');
+    if (!b) { b = document.createElement('div'); b.id = 'update-banner'; b.className = 'update-banner'; document.body.appendChild(b); }
+    clearTimeout(updBanner._t);
+    return b;
+  }
+  function updClose() { clearTimeout(updBanner._t); const b = document.getElementById('update-banner'); if (b) b.remove(); }
+  function updWireDismiss() { const x = document.getElementById('ub-x'); if (x) x.onclick = updClose; }
+  function updChecking() { updBanner().innerHTML = '<span class="ub-msg"><span class="ub-spin"></span>Checking for updates…</span>'; }
+  function updNone() {
+    updBanner().innerHTML = '<span class="ub-msg">You’re on the latest version (v' + esc(APP_VERSION) + ').</span><button class="btn sm" id="ub-x">OK</button>';
+    updWireDismiss(); updBanner._t = setTimeout(updClose, 5000);
+  }
+  function updError(msg) {
+    updBanner().innerHTML = '<span class="ub-msg">' + esc(msg || 'Update check failed — try again later.') + '</span>' +
+      '<button class="btn sm primary" id="ub-retry">Retry</button><button class="btn sm" id="ub-x">Dismiss</button>';
+    const r = document.getElementById('ub-retry'); if (r) r.onclick = () => checkForUpdate(true);
+    updWireDismiss();
+  }
+  function updDownloading(pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct || 0)));
+    updBanner().innerHTML = '<span class="ub-msg">Downloading update… ' + pct + '%</span><div class="ub-bar"><i style="width:' + pct + '%"></i></div>';
+  }
+  function updReady(version) {
+    updBanner().innerHTML = '<span class="ub-msg">Update ' + (version ? 'v' + esc(version) + ' ' : '') + 'ready to install.</span>' +
+      '<button class="btn sm primary" id="ub-install">Restart &amp; update</button><button class="btn sm" id="ub-x">Later</button>';
+    const i = document.getElementById('ub-install'); if (i) i.onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
+    updWireDismiss();
+  }
+  // Web/Android can't self-install — point at the install screen.
+  function updWebAvailable(version) {
+    const ub = document.getElementById('update-btn'); if (ub) ub.classList.add('has-update');
+    updBanner().innerHTML = '<span class="ub-msg">New version available — v' + esc(version) + '.</span>' +
+      '<button class="btn sm primary" id="ub-get">Get it</button><button class="btn sm" id="ub-x">Later</button>';
+    const g = document.getElementById('ub-get'); if (g) g.onclick = () => { updClose(); go('#/get-app'); };
+    updWireDismiss();
+  }
+
+  // Desktop auto-update: drive the banner from main-process (electron-updater) events.
+  // 'available'/'downloading'/'ready' always show (a real update is worth surfacing);
+  // 'none'/'error' only show when the user actually pressed the button (so the silent
+  // launch check and the 6-hour timer don't nag).
   if (window.reeldeck && window.reeldeck.onUpdate) {
     window.reeldeck.onUpdate((d) => {
       if (!d) return;
-      const st = document.getElementById('set-update-status');
-      if (d.state === 'available') { toast('Update found — downloading in the background…'); if (st) st.textContent = 'Downloading…'; }
-      else if (d.state === 'ready') { showUpdateReady(d.version); if (st) st.textContent = 'Ready to install'; }
-      else if (d.state === 'none') { toast('You’re on the latest version.'); if (st) st.textContent = 'Up to date.'; }
-      else if (d.state === 'error') { if (st) st.textContent = 'Check failed — try again later.'; }
+      if (d.state === 'checking') { if (updInteractive) updChecking(); }
+      else if (d.state === 'available') updDownloading(0);
+      else if (d.state === 'downloading') updDownloading(d.percent);
+      else if (d.state === 'ready') { updReady(d.version); updInteractive = false; }
+      else if (d.state === 'none') { if (updInteractive) updNone(); updInteractive = false; }
+      else if (d.state === 'error') { if (updInteractive) updError('Update failed — ' + (d.message || 'try again later.')); updInteractive = false; }
     });
   }
-  function showUpdateReady(version) {
-    if ($('#update-banner')) return;
-    const b = document.createElement('div');
-    b.id = 'update-banner'; b.className = 'update-banner';
-    b.innerHTML = `<span>Update ${version ? 'v' + esc(version) + ' ' : ''}ready to install.</span>
-      <button class="btn sm primary" id="update-now">Restart &amp; update</button>
-      <button class="btn sm" id="update-later" aria-label="Dismiss update">Later</button>`;
-    document.body.appendChild(b);
-    $('#update-now').onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
-    $('#update-later').onclick = () => b.remove();
-  }
 
-  // Cross-platform update check. Desktop uses electron-updater; web/Android
-  // queries the GitHub Releases API and offers a manual install (the app can't
-  // silently self-install on Android).
   function verCmp(a, b) {
     const pa = String(a).replace(/^v/, '').split('.').map(Number), pb = String(b).replace(/^v/, '').split('.').map(Number);
     for (let i = 0; i < 3; i++) { if ((pa[i] || 0) > (pb[i] || 0)) return 1; if ((pa[i] || 0) < (pb[i] || 0)) return -1; }
     return 0;
   }
+  // Cross-platform update check. Desktop hands off to electron-updater (events above);
+  // web/Android queries the GitHub Releases API and offers a manual install.
   async function checkForUpdate(interactive) {
     if (IS_DESKTOP && window.reeldeck && window.reeldeck.checkForUpdates) {
+      updInteractive = !!interactive;
+      if (interactive) updChecking();
       window.reeldeck.checkForUpdates();
-      if (interactive) toast('Checking for updates…');
       return;
     }
+    if (interactive) updChecking();
     try {
       const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
       if (!r.ok) throw new Error('http ' + r.status);
       const d = await r.json();
       const latest = (d.tag_name || '').replace(/^v/, '');
-      if (latest && verCmp(latest, APP_VERSION) > 0) {
-        const ub = document.getElementById('update-btn'); if (ub) ub.classList.add('has-update');
-        showUpdateAvailable(latest);
-      } else if (interactive) {
-        toast('You’re on the latest version (v' + APP_VERSION + ').');
-      }
-    } catch (e) { if (interactive) toast('Update check failed — try again later.'); }
-  }
-  function showUpdateAvailable(version) {
-    if ($('#update-banner')) return;
-    const b = document.createElement('div');
-    b.id = 'update-banner'; b.className = 'update-banner';
-    b.innerHTML = `<span>New version available — v${esc(version)}.</span>
-      <button class="btn sm primary" id="ub-get">Get it</button>
-      <button class="btn sm" id="ub-later" aria-label="Dismiss">Later</button>`;
-    document.body.appendChild(b);
-    $('#ub-get').onclick = () => { b.remove(); go('#/get-app'); };
-    $('#ub-later').onclick = () => b.remove();
+      if (latest && verCmp(latest, APP_VERSION) > 0) updWebAvailable(latest);
+      else if (interactive) updNone();
+    } catch (e) { if (interactive) updError('Update check failed — check your connection.'); }
   }
 
   /* ---------- TV / D-pad navigation (Android TV, Google TV) ---------- */
