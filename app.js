@@ -137,6 +137,14 @@
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
   const APP_VERSION = '1.0.4';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
+
+  // TV / D-pad state — declared up here (not next to the nav functions further
+  // down) because route() and other render paths call tvFocusFirst()/tvSpatialNav()
+  // at boot, BEFORE those later lines would run. Declaring them there left them in
+  // the temporal dead zone, so the first call threw "Cannot access 'X' before
+  // initialization" and aborted the whole app on TV (blank home, dead D-pad).
+  const TV_FOCUSABLE = '[data-nav], button:not([disabled]), input:not([type="hidden"]), select, [tabindex="0"]';
+  let tvObserver = null, tvTimeout = 0;
   function openExternal(url) {
     if (IS_DESKTOP && window.reeldeck.openExternal) window.reeldeck.openExternal(url);
     else window.open(url, '_blank', 'noopener');
@@ -1255,12 +1263,23 @@
   }
 
   /* ---------- TV / D-pad navigation (Android TV, Google TV) ---------- */
-  const TV_FOCUSABLE = '[data-nav], button:not([disabled]), input:not([type="hidden"]), select, [tabindex="0"]';
-  let tvObserver, tvTimeout;
+  // TV_FOCUSABLE, tvObserver and tvTimeout are declared near the top of this file
+  // (right after IS_TV) so they're initialized before the first render calls these.
+
+  // Nav links are <a data-nav> with NO href and NO tabindex — which means they are
+  // NOT focusable, so el.focus() silently no-ops and the D-pad can never land on the
+  // header/bottom nav (the "can't reach Home/Movies/TV" bug). Give every [data-nav]
+  // that lacks an explicit tabindex one, so the whole nav surface is reachable.
+  function tvEnsureFocusable() {
+    if (!IS_TV) return;
+    document.querySelectorAll('[data-nav]:not([tabindex])').forEach(el => el.setAttribute('tabindex', '0'));
+  }
+
   function tvFocusFirst() {
     if (!IS_TV) return;
     if (tvObserver) { tvObserver.disconnect(); tvObserver = null; }
     clearTimeout(tvTimeout);
+    tvEnsureFocusable();
     const grab = () => {
       const el = (document.querySelector('.modal-back') || document.getElementById('view') || document).querySelector(TV_FOCUSABLE);
       if (el) { try { el.focus(); el.scrollIntoView({ block: 'center' }); } catch (e) {} return true; }
@@ -1288,23 +1307,31 @@
     }
     if (cur && cur.tagName === 'SELECT' && (dir === 'up' || dir === 'down')) return; // native option cycling
     e.preventDefault(); // TV owns focus — never let it escape into the cross-origin player iframe
+    tvEnsureFocusable();
     const scope = document.querySelector('.modal-back') || document;
     const items = [].slice.call(scope.querySelectorAll(TV_FOCUSABLE))
       .filter(el => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; });
     if (!items.length) return;
-    const cr = (cur && cur.getBoundingClientRect) ? cur.getBoundingClientRect() : { left: window.innerWidth / 2, top: 0, width: 0, height: 0 };
+    const cr = (cur && cur.getBoundingClientRect) ? cur.getBoundingClientRect()
+      : { left: window.innerWidth / 2, top: 0, width: 0, height: 0, right: window.innerWidth / 2, bottom: 0 };
     const cx = cr.left + cr.width / 2, cy = cr.top + cr.height / 2;
+    const horiz = (dir === 'left' || dir === 'right');
     let best = null, bestScore = Infinity;
     for (const el of items) {
       if (el === cur) continue;
       const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, dx = x - cx, dy = y - cy;
-      let ok, primary, secondary;
-      if (dir === 'up') { ok = dy < -4; primary = -dy; secondary = Math.abs(dx); }
-      else if (dir === 'down') { ok = dy > 4; primary = dy; secondary = Math.abs(dx); }
-      else if (dir === 'left') { ok = dx < -4; primary = -dx; secondary = Math.abs(dy); }
-      else { ok = dx > 4; primary = dx; secondary = Math.abs(dy); }
+      const ok = dir === 'up' ? dy < -4 : dir === 'down' ? dy > 4 : dir === 'left' ? dx < -4 : dx > 4;
       if (!ok) continue;
-      const score = primary + secondary * 2; // nearest, cross-axis-aligned wins
+      // primary = distance the way we're moving; cross = misalignment on the other axis.
+      const primary = horiz ? Math.abs(dx) : Math.abs(dy);
+      const cross   = horiz ? Math.abs(dy) : Math.abs(dx);
+      // Overlap on the cross axis = "same row" (L/R) or "same column" (U/D). A D-pad
+      // press should follow that line, so aligned candidates are cheap and off-axis
+      // ones are heavily penalized — otherwise a horizontally-near card in another
+      // row steals a LEFT press meant for the same-row nav bar (the header trap).
+      const overlap = horiz ? (r.top < cr.bottom && r.bottom > cr.top)
+                            : (r.left < cr.right && r.right > cr.left);
+      const score = primary + cross * (overlap ? 0.5 : 6);
       if (score < bestScore) { bestScore = score; best = el; }
     }
     if (best) { try { best.focus(); best.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e2) {} }
