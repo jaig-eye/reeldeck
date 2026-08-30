@@ -97,11 +97,12 @@ function setupUpdater() {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     const send = (data) => { if (win && !win.isDestroyed()) win.webContents.send('reeldeck:update', data); };
+    autoUpdater.on('checking-for-update', () => send({ state: 'checking' }));
     autoUpdater.on('update-available', (i) => send({ state: 'available', version: i && i.version }));
     autoUpdater.on('update-not-available', () => send({ state: 'none' }));
     autoUpdater.on('download-progress', (p) => send({ state: 'downloading', percent: Math.round(p.percent || 0) }));
     autoUpdater.on('update-downloaded', (i) => send({ state: 'ready', version: i && i.version }));
-    autoUpdater.on('error', (err) => { send({ state: 'error' }); console.warn('[reeldeck] updater:', err && err.message); });
+    autoUpdater.on('error', (err) => { send({ state: 'error', message: err && err.message }); console.warn('[reeldeck] updater:', err && err.message); });
     autoUpdater.checkForUpdates().catch(() => {});
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
   } catch (e) { console.warn('[reeldeck] updater unavailable:', e && e.message); }
