@@ -72,8 +72,7 @@
       "artifactName": "${productName}-Web-Setup-${version}.${ext}"
     },
     "publish": {
-      "provider": "generic",
-      "url": "https://REPLACE-WITH-YOUR-HOST/reeldeck/"
+      "provider": "github"
     }
   },
   "dependencies": {
