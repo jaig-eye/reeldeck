@@ -19,10 +19,14 @@
     "apk:open": "node scripts/build-web.js && npx cap copy android && npx cap open android",
     "dist": "electron-builder --win nsis portable",
     "dist:portable": "electron-builder --win portable",
+    "dist:web": "electron-builder --win nsis-web --publish never",
     "dist:mac": "electron-builder --mac",
     "dist:dir": "electron-builder --win dir"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
     "electron": "^35.2.1",
     "electron-builder": "^25.1.8"
   },
@@ -63,12 +67,16 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.exe"
+    },
+    "nsisWeb": {
+      "artifactName": "${productName}-Web-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://REPLACE-WITH-YOUR-HOST/reeldeck/"
     }
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.1",
-    "@capacitor/cli": "^6.2.1",
-    "@capacitor/core": "^6.2.1",
     "@ghostery/adblocker-electron": "^2.18.2"
   }
 }
