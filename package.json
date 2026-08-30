@@ -13,7 +13,7 @@
   "scripts": {
     "start": "electron .",
     "serve": "node scripts/serve.js",
-    "icons": "node scripts/make-icons.js",
+    "icons": "node scripts/gen-icons.js && npx --yes @capacitor/assets generate --android --iconBackgroundColor #000000 --iconBackgroundColorDark #000000",
     "web:build": "node scripts/build-web.js",
     "apk": "node scripts/build-web.js && npx cap copy android && cd android && gradlew.bat assembleDebug",
     "apk:open": "node scripts/build-web.js && npx cap copy android && npx cap open android",
@@ -28,7 +28,8 @@
     "@capacitor/cli": "^6.2.1",
     "@capacitor/core": "^6.2.1",
     "electron": "^35.2.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "sharp": "^0.35.4"
   },
   "build": {
     "appId": "com.reeldeck.app",

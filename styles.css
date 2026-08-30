@@ -123,6 +123,13 @@ header.top {
 }
 .brand .dot { color: var(--accent); }
 .brand svg { width: 26px; height: 26px; }
+.brand .txt { text-transform: lowercase; }
+.brand-mark {
+  width: 30px; height: 30px; flex: none; display: inline-block;
+  background-color: var(--text);   /* recolors the monochrome mark per theme */
+  -webkit-mask: url('assets/brand/mark-alpha.png') center / contain no-repeat;
+  mask: url('assets/brand/mark-alpha.png') center / contain no-repeat;
+}
 nav.main { display: flex; gap: 4px; align-items: center; }
 nav.main a {
   padding: 8px 13px; border-radius: 10px; color: var(--muted);
