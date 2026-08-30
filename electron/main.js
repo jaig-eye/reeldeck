@@ -98,9 +98,10 @@ function setupUpdater() {
     autoUpdater.autoInstallOnAppQuit = true;
     const send = (data) => { if (win && !win.isDestroyed()) win.webContents.send('reeldeck:update', data); };
     autoUpdater.on('update-available', (i) => send({ state: 'available', version: i && i.version }));
+    autoUpdater.on('update-not-available', () => send({ state: 'none' }));
     autoUpdater.on('download-progress', (p) => send({ state: 'downloading', percent: Math.round(p.percent || 0) }));
     autoUpdater.on('update-downloaded', (i) => send({ state: 'ready', version: i && i.version }));
-    autoUpdater.on('error', (err) => console.warn('[reeldeck] updater:', err && err.message));
+    autoUpdater.on('error', (err) => { send({ state: 'error' }); console.warn('[reeldeck] updater:', err && err.message); });
     autoUpdater.checkForUpdates().catch(() => {});
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
   } catch (e) { console.warn('[reeldeck] updater unavailable:', e && e.message); }
@@ -164,6 +165,8 @@ ipcMain.handle('reeldeck:open-external', (e, target) => {
 
 // Renderer asks to apply a downloaded update now.
 ipcMain.handle('reeldeck:install-update', () => { try { autoUpdater.quitAndInstall(); } catch (e) {} });
+// Renderer asks to check for updates now (Settings button).
+ipcMain.handle('reeldeck:check-update', () => { try { autoUpdater.checkForUpdates(); } catch (e) {} });
 
 // Single instance: focus the existing window instead of launching a second copy
 // (also avoids cache/port contention).

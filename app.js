@@ -127,6 +127,7 @@
 
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
+  const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
   function openExternal(url) {
     if (IS_DESKTOP && window.reeldeck.openExternal) window.reeldeck.openExternal(url);
     else window.open(url, '_blank', 'noopener');
@@ -661,7 +662,8 @@
     const tv = $('#tv-mode');
     if (tv) tv.onclick = toggleCinema;
     const fr = $('#player-iframe');
-    if (fr) fr.addEventListener('error', () => toast('This mirror failed — try another server'));
+    if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try another server')); }
+    if (IS_TV) tvFocusFirst();
   }
 
   // "TV mode": a full-viewport player, for casting / screen-mirroring to a TV.
@@ -756,17 +758,6 @@
   }
 
   function openSettings() {
-    const s = cfg;
-    const srcRows = () => s.sources.map((src, i) => `
-      <div class="set-row" style="border:1px solid var(--border);border-radius:12px;padding:12px" data-srcrow="${i}">
-        <div style="display:flex;gap:8px;align-items:center">
-          <input data-sf="name" data-i="${i}" value="${esc(src.name || '')}" placeholder="Source name" style="flex:1">
-          <button class="btn sm" data-rmsrc="${i}">Remove</button>
-        </div>
-        <input data-sf="movie" data-i="${i}" value="${esc(src.movie || '')}" placeholder="Movie template — https://host/embed/movie/{id}">
-        <input data-sf="tv" data-i="${i}" value="${esc(src.tv || '')}" placeholder="TV template — https://host/embed/tv/{id}/{season}/{episode}">
-      </div>`).join('');
-
     const themeCards = THEMES.map(t => `<button class="theme-card ${cfg.theme === t.id ? 'on' : ''}" data-theme-pick="${t.id}" aria-label="${t.name} theme">
         <span class="tprev">${t.preview.map(c => `<i style="background:${c}"></i>`).join('')}</span>
         <span class="tname">${t.name}</span>
@@ -777,74 +768,34 @@
     back.innerHTML = `<div class="modal">
       <div class="mh"><h3>${ICON.gear} &nbsp;Settings</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
       <div class="mb">
-
-        <div class="set-group">
-          <h4>Data source</h4>
-          <p class="hint">The app reads all titles, art and search from this backend (TMDB by default). Change it and everything follows.</p>
-          <div class="set-row"><label for="set-brand">App name</label><input id="set-brand" value="${esc(s.brand)}"></div>
-          <div class="set-row"><label for="set-base">API base URL</label><input id="set-base" value="${esc(s.tmdbBase)}"><span class="desc">Default: https://api.themoviedb.org/3</span></div>
-          <div class="set-row"><label for="set-key">API key</label><input id="set-key" value="${esc(s.apiKey)}"><span class="desc">Using a shared demo key. Get your own free one at themoviedb.org → Settings → API.</span></div>
-          <div class="set-row"><label for="set-img">Image CDN base</label><input id="set-img" value="${esc(s.imgBase)}"></div>
-          <div style="display:flex;gap:12px">
-            <div class="set-row" style="flex:1"><label for="set-lang">Language</label><input id="set-lang" value="${esc(s.language)}"></div>
-            <div class="set-row" style="flex:1"><label for="set-region">Region</label><input id="set-region" value="${esc(s.region)}"></div>
-          </div>
-        </div>
-
         <div class="set-group">
           <h4>Theme</h4>
           <p class="hint">Pick a look — applies instantly.</p>
           <div class="theme-grid" id="set-themes">${themeCards}</div>
         </div>
-
-        <div class="set-group">
-          <h4>Playback sources</h4>
-          <div class="warn-box">
-            <b>How playback works.</b> This app hosts no video. Like the original site, it just embeds a third-party
-            player URL in an iframe. Those providers carry their own ads and their own legal risk — that part is on the
-            source you choose, not on this app. You control exactly what URL loads here.
+        ${IS_DESKTOP ? `<div class="set-group">
+          <h4>Updates</h4>
+          <div class="set-row" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap">
+            <button class="btn sm" id="set-check-update">Check for updates</button>
+            <span class="desc" id="set-update-status">Auto-updates from GitHub Releases.</span>
           </div>
-          <p class="hint">Add one or more source templates. Placeholders: <code>{id}</code> (TMDB id), <code>{imdb}</code>, <code>{season}</code>, <code>{episode}</code>, <code>{color}</code>.</p>
-          <div id="set-sources" style="display:flex;flex-direction:column;gap:12px">${srcRows() || '<p class="muted" style="font-size:13px">No sources yet.</p>'}</div>
-          <button class="btn sm" id="add-source" style="margin-top:12px">+ Add source</button>
-          <div class="set-row" style="margin-top:16px;flex-direction:row;align-items:center;gap:10px">
-            <input type="checkbox" id="set-sandbox" ${s.blockPlayerAds ? 'checked' : ''} style="width:auto">
+        </div>` : ''}
+        <details class="set-group set-dev">
+          <summary>Developer</summary>
+          <div class="set-row" style="margin-top:12px;flex-direction:row;align-items:center;gap:10px">
+            <input type="checkbox" id="set-sandbox" ${cfg.blockPlayerAds ? 'checked' : ''} style="width:auto">
             <label for="set-sandbox" style="margin:0">Force iframe sandbox on the player</label>
           </div>
-          <p class="hint" style="margin-top:6px">Leave this <b>off</b>. The sandbox blocks pop-up ads, but most providers detect it and
-             show <b>“Iframe Sandbox Detected”</b> instead of playing. In the <b>desktop app</b>, ads are blocked at the network
-             layer instead (a real ad-blocker filter list), so video plays and the pop-unders are still gone. In a plain browser,
-             use an extension like uBlock Origin for the same effect.</p>
-        </div>
-
+          <p class="hint" style="margin-top:6px">Leave off — most providers detect the sandbox and refuse to play. The desktop app blocks ads at the network layer instead.</p>
+        </details>
         <div class="set-actions">
-          <button class="btn" data-close>Cancel</button>
-          <button class="btn" id="set-reset">Reset defaults</button>
-          <button class="btn primary" id="set-save">Save</button>
+          <button class="btn" id="set-reset">Reset</button>
+          <button class="btn primary" data-close>Done</button>
         </div>
       </div>
     </div>`;
     modalMount(back);
 
-    // add source
-    $('#add-source', back).onclick = () => {
-      s.sources.push({ name: 'Source ' + (s.sources.length + 1), movie: '', tv: '' });
-      const c = $('#set-sources', back);
-      if (c.querySelector('.muted')) c.innerHTML = '';
-      c.insertAdjacentHTML('beforeend', `
-        <div class="set-row" style="border:1px solid var(--border);border-radius:12px;padding:12px" data-srcrow="${s.sources.length - 1}">
-          <div style="display:flex;gap:8px;align-items:center">
-            <input data-sf="name" data-i="${s.sources.length - 1}" value="${esc(s.sources[s.sources.length - 1].name)}" style="flex:1">
-            <button class="btn sm" data-rmsrc="${s.sources.length - 1}">Remove</button>
-          </div>
-          <input data-sf="movie" data-i="${s.sources.length - 1}" placeholder="Movie template — https://host/embed/movie/{id}">
-          <input data-sf="tv" data-i="${s.sources.length - 1}" placeholder="TV template — https://host/embed/tv/{id}/{season}/{episode}">
-        </div>`);
-    };
-    $('#set-sources', back).onclick = (e) => {
-      const rm = e.target.closest('[data-rmsrc]');
-      if (rm) { s.sources.splice(parseInt(rm.dataset.rmsrc, 10), 1); openSettings.refresh(back); }
-    };
     // theme picker — applies + persists instantly
     $('#set-themes', back).onclick = (e) => {
       const card = e.target.closest('[data-theme-pick]'); if (!card) return;
@@ -853,35 +804,33 @@
       card.classList.add('on');
       saveConfig();  // applyTheme runs -> live switch
     };
-    $('#set-reset', back).onclick = () => { if (confirm('Reset all settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
-    $('#set-save', back).onclick = () => {
-      // collect source fields
-      back.querySelectorAll('[data-sf]').forEach(inp => {
-        const i = parseInt(inp.dataset.i, 10); if (!s.sources[i]) return;
-        s.sources[i][inp.dataset.sf] = inp.value.trim();
-      });
-      cfg.brand = $('#set-brand', back).value.trim() || 'Reeldeck';
-      cfg.tmdbBase = $('#set-base', back).value.trim() || DEFAULTS.tmdbBase;
-      cfg.apiKey = $('#set-key', back).value.trim() || DEFAULTS.apiKey;
-      cfg.imgBase = $('#set-img', back).value.trim() || DEFAULTS.imgBase;
-      cfg.language = $('#set-lang', back).value.trim() || 'en-US';
-      cfg.region = $('#set-region', back).value.trim() || 'US';
-      cfg.blockPlayerAds = $('#set-sandbox', back).checked;
-      if (cfg.activeSource >= cfg.sources.length) cfg.activeSource = 0;
-      saveConfig();
-      closeModal(back); toast('Settings saved'); route();
+    const sb = $('#set-sandbox', back);
+    if (sb) sb.onchange = () => { cfg.blockPlayerAds = sb.checked; saveConfig(); };
+    const cu = $('#set-check-update', back);
+    if (cu) cu.onclick = () => {
+      const st = $('#set-update-status', back);
+      if (st) st.textContent = 'Checking…';
+      if (window.reeldeck && window.reeldeck.checkForUpdates) window.reeldeck.checkForUpdates();
     };
+    $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
   }
-  // re-render settings body (used after removing a source)
-  openSettings.refresh = (back) => { closeModal(back); openSettings(); };
 
   function modalMount(back) {
+    back._opener = document.activeElement;
     document.body.appendChild(back);
     back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-close]')) closeModal(back); });
     document.addEventListener('keydown', escClose);
     function escClose(ev) { if (ev.key === 'Escape') { closeModal(back); document.removeEventListener('keydown', escClose); } }
+    // move focus into the modal (esp. for D-pad remotes)
+    const f = back.querySelector('[data-theme-pick], button, [href], input, select, [tabindex="0"]');
+    if (f) try { f.focus(); } catch (e) {}
   }
-  function closeModal(back) { if (back && back.parentNode) back.parentNode.removeChild(back); }
+  function closeModal(back) {
+    if (!back || !back.parentNode) return;
+    const opener = back._opener;
+    back.parentNode.removeChild(back);
+    if (opener && opener.focus && document.contains(opener)) { try { opener.focus(); } catch (e) {} }
+  }
 
   /* ============================================================
      ROUTER
@@ -913,6 +862,7 @@
   function route() {
     const { parts, params } = parseHash();
     closeSuggest();
+    if (IS_TV) tvFocusFirst();  // re-establish focus after every (re-)render
     const sec = parts[0] || 'home';
     setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? '' : 'home');
     syncSearchBox(params, parts);
@@ -1032,11 +982,13 @@
     if (!e.target.closest('.search-wrap')) closeSuggest();
   });
 
-  // Keyboard: activate focused cards (role="button") with Enter / Space
+  // Keyboard / D-pad OK: activate any focused [data-nav] element (cards, cast,
+  // episodes, nav links, search rows). Native buttons/inputs handle Enter themselves.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const el = document.activeElement;
-    const nav = el && el.matches && el.matches('.card[data-nav]') ? el : null;
+    if (!el || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(el.tagName)) return; // native handles these
+    const nav = el.closest && el.closest('[data-nav]');
     if (nav) { e.preventDefault(); go(nav.dataset.nav); }
   });
 
@@ -1057,8 +1009,11 @@
   if (window.reeldeck && window.reeldeck.onUpdate) {
     window.reeldeck.onUpdate((d) => {
       if (!d) return;
-      if (d.state === 'available') toast('Update found — downloading in the background…');
-      else if (d.state === 'ready') showUpdateReady(d.version);
+      const st = document.getElementById('set-update-status');
+      if (d.state === 'available') { toast('Update found — downloading in the background…'); if (st) st.textContent = 'Downloading…'; }
+      else if (d.state === 'ready') { showUpdateReady(d.version); if (st) st.textContent = 'Ready to install'; }
+      else if (d.state === 'none') { toast('You’re on the latest version.'); if (st) st.textContent = 'Up to date.'; }
+      else if (d.state === 'error') { if (st) st.textContent = 'Check failed — try again later.'; }
     });
   }
   function showUpdateReady(version) {
@@ -1071,6 +1026,80 @@
     document.body.appendChild(b);
     $('#update-now').onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
     $('#update-later').onclick = () => b.remove();
+  }
+
+  /* ---------- TV / D-pad navigation (Android TV, Google TV) ---------- */
+  const TV_FOCUSABLE = '[data-nav], button:not([disabled]), input:not([type="hidden"]), select, [tabindex="0"]';
+  let tvObserver, tvTimeout;
+  function tvFocusFirst() {
+    if (!IS_TV) return;
+    if (tvObserver) { tvObserver.disconnect(); tvObserver = null; }
+    clearTimeout(tvTimeout);
+    const grab = () => {
+      const el = (document.querySelector('.modal-back') || document.getElementById('view') || document).querySelector(TV_FOCUSABLE);
+      if (el) { try { el.focus(); el.scrollIntoView({ block: 'center' }); } catch (e) {} return true; }
+      return false;
+    };
+    if (grab()) return;
+    const target = document.querySelector('.modal-back') || document.getElementById('view') || document.body;
+    tvObserver = new MutationObserver(() => { if (grab()) { if (tvObserver) tvObserver.disconnect(); tvObserver = null; clearTimeout(tvTimeout); } });
+    tvObserver.observe(target, { childList: true, subtree: true });
+    tvTimeout = setTimeout(() => {
+      if (tvObserver) { tvObserver.disconnect(); tvObserver = null; }
+      if (!grab()) { const nav = document.querySelector('header.top nav.main a') || document.querySelector('[data-nav]'); if (nav) try { nav.focus(); } catch (e) {} }
+    }, 8000);
+  }
+  function tvSpatialNav(e) {
+    const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[e.key];
+    if (!dir) return;
+    const cur = document.activeElement;
+    // let editable text fields use Left/Right for the caret until it hits the edge
+    if (cur && /^(INPUT|TEXTAREA)$/.test(cur.tagName) && /^(text|search|url|email|tel|password|number|)$/i.test(cur.type || '') && (dir === 'left' || dir === 'right')) {
+      const len = (cur.value || '').length;
+      const atStart = cur.selectionStart === 0 && cur.selectionEnd === 0;
+      const atEnd = cur.selectionStart === len && cur.selectionEnd === len;
+      if ((dir === 'left' && !atStart) || (dir === 'right' && !atEnd)) return;
+    }
+    if (cur && cur.tagName === 'SELECT' && (dir === 'up' || dir === 'down')) return; // native option cycling
+    e.preventDefault(); // TV owns focus — never let it escape into the cross-origin player iframe
+    const scope = document.querySelector('.modal-back') || document;
+    const items = [].slice.call(scope.querySelectorAll(TV_FOCUSABLE))
+      .filter(el => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; });
+    if (!items.length) return;
+    const cr = (cur && cur.getBoundingClientRect) ? cur.getBoundingClientRect() : { left: window.innerWidth / 2, top: 0, width: 0, height: 0 };
+    const cx = cr.left + cr.width / 2, cy = cr.top + cr.height / 2;
+    let best = null, bestScore = Infinity;
+    for (const el of items) {
+      if (el === cur) continue;
+      const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, dx = x - cx, dy = y - cy;
+      let ok, primary, secondary;
+      if (dir === 'up') { ok = dy < -4; primary = -dy; secondary = Math.abs(dx); }
+      else if (dir === 'down') { ok = dy > 4; primary = dy; secondary = Math.abs(dx); }
+      else if (dir === 'left') { ok = dx < -4; primary = -dx; secondary = Math.abs(dy); }
+      else { ok = dx > 4; primary = dx; secondary = Math.abs(dy); }
+      if (!ok) continue;
+      const score = primary + secondary * 2; // nearest, cross-axis-aligned wins
+      if (score < bestScore) { bestScore = score; best = el; }
+    }
+    if (best) { try { best.focus(); best.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e2) {} }
+  }
+  if (IS_TV) {
+    document.body.classList.add('tv');
+    document.addEventListener('keydown', tvSpatialNav);
+    tvFocusFirst();
+  }
+
+  // Hardware BACK (Android) — the reliable escape hatch (fires even while focus
+  // is inside the cross-origin player iframe). modal -> cinema -> history -> exit.
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+    const App = window.Capacitor.Plugins.App;
+    App.addListener('backButton', () => {
+      const modal = document.querySelector('.modal-back');
+      if (modal) { closeModal(modal); return; }
+      if (document.body.classList.contains('cinema-on')) { exitCinema(); return; }
+      if (location.hash.indexOf('#/watch') === 0 || window.history.length > 1) { history.back(); return; }
+      App.exitApp();
+    });
   }
 
 })();

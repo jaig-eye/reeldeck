@@ -90,6 +90,7 @@
     }
   },
   "dependencies": {
+    "@capacitor/app": "^6.0.3",
     "@ghostery/adblocker-electron": "^2.18.2",
     "electron-updater": "^6.8.9"
   }
