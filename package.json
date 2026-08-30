@@ -72,7 +72,8 @@
       "artifactName": "${productName}-Web-Setup-${version}.${ext}"
     },
     "publish": {
-      "provider": "github"
+      "provider": "github",
+      "releaseType": "release"
     }
   },
   "dependencies": {
