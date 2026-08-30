@@ -10,6 +10,8 @@ try { isTop = window.top === window.self; } catch (e) { isTop = false; }
 if (isTop) {
   contextBridge.exposeInMainWorld('reeldeck', {
     desktop: true,
-    openExternal: (url) => ipcRenderer.invoke('reeldeck:open-external', String(url || ''))
+    openExternal: (url) => ipcRenderer.invoke('reeldeck:open-external', String(url || '')),
+    installUpdate: () => ipcRenderer.invoke('reeldeck:install-update'),
+    onUpdate: (cb) => ipcRenderer.on('reeldeck:update', (e, data) => { try { cb(data); } catch (_) {} })
   });
 }

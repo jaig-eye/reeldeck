@@ -5,6 +5,7 @@
 // (split tunneling) can route ONLY this app through the VPN.
 
 const { app, BrowserWindow, shell, Menu, session, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -74,6 +75,37 @@ async function setupAdblock() {
   }
 }
 
+// Security hardening around the third-party embeds. They already run in a
+// sandboxed, context-isolated renderer (no Node, no filesystem access). On top:
+//  - block EVERY download so an embed can't drop a file on disk (no drive-by installs)
+//  - deny every permission request (camera, mic, geolocation, notifications, USB…)
+// Combined with the ad/tracker/malware-domain blocker, this is what keeps embed
+// junk from reaching the machine.
+function setupSecurity() {
+  const ses = session.defaultSession;
+  ses.on('will-download', (e) => { e.preventDefault(); });                 // no downloads, ever
+  ses.setPermissionRequestHandler((wc, permission, cb) => cb(false));      // deny all requests
+  ses.setPermissionCheckHandler(() => false);
+  if (ses.setDevicePermissionHandler) ses.setDevicePermissionHandler(() => false);
+}
+
+// Auto-update via the GitHub Releases we publish to. Only runs in an installed
+// build; downloads in the background and applies on quit. Renderer shows a toast.
+function setupUpdater() {
+  if (!app.isPackaged) return;
+  try {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    const send = (data) => { if (win && !win.isDestroyed()) win.webContents.send('reeldeck:update', data); };
+    autoUpdater.on('update-available', (i) => send({ state: 'available', version: i && i.version }));
+    autoUpdater.on('download-progress', (p) => send({ state: 'downloading', percent: Math.round(p.percent || 0) }));
+    autoUpdater.on('update-downloaded', (i) => send({ state: 'ready', version: i && i.version }));
+    autoUpdater.on('error', (err) => console.warn('[reeldeck] updater:', err && err.message));
+    autoUpdater.checkForUpdates().catch(() => {});
+    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
+  } catch (e) { console.warn('[reeldeck] updater unavailable:', e && e.message); }
+}
+
 let win;
 
 async function createWindow() {
@@ -130,15 +162,24 @@ ipcMain.handle('reeldeck:open-external', (e, target) => {
   if (typeof target === 'string' && /^https?:\/\//i.test(target)) shell.openExternal(target);
 });
 
+// Renderer asks to apply a downloaded update now.
+ipcMain.handle('reeldeck:install-update', () => { try { autoUpdater.quitAndInstall(); } catch (e) {} });
+
 // Single instance: focus the existing window instead of launching a second copy
 // (also avoids cache/port contention).
 if (!app.requestSingleInstanceLock()) {
-  app.quit();
+  app.quit();  // another Reeldeck instance already running
 } else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.whenReady().then(() => {
-    setupAdblock();   // runs in parallel; ready well before the user opens a player
-    createWindow();
+  app.whenReady().then(async () => {
+    try {
+      setupSecurity();  // set session handlers before any content loads
+      setupAdblock();   // runs in parallel; ready well before the user opens a player
+      await createWindow();
+      setupUpdater();   // needs the window for update toasts
+    } catch (e) {
+      console.error('[reeldeck] startup error:', (e && e.stack) || e);
+    }
   });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
