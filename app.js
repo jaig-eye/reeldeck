@@ -43,7 +43,8 @@
     imgBase:  'https://image.tmdb.org/t/p',
     language: 'en-US',
     region:   'US',
-    accent:   '#f5c518',
+    theme:    'midnight',
+    accent:   '#f5c518',   // derived from the theme; used for the player {color} placeholder
     // OFF by default: the iframe sandbox trips "Iframe Sandbox Detected" on most
     // providers (it's their anti-adblock gate). The desktop app blocks pop-under/ad
     // requests at the network layer instead, so video plays AND the ads are gone.
@@ -55,6 +56,17 @@
     sources: DEFAULT_SOURCES,
     activeSource: 0
   };
+
+  // Theme catalog. Values live in CSS ([data-theme=...]); this drives the picker
+  // + the accent used for the player {color} param. preview = [bg, surface, accent].
+  const THEMES = [
+    { id: 'midnight', name: 'Midnight', accent: '#f5c518', preview: ['#0b0d12', '#1f2431', '#f5c518'] },
+    { id: 'onyx',     name: 'Onyx',     accent: '#22d3ee', preview: ['#000000', '#17171b', '#22d3ee'] },
+    { id: 'aurora',   name: 'Aurora',   accent: '#d946ef', preview: ['#0f0a1a', '#251a42', '#d946ef'] },
+    { id: 'ocean',    name: 'Ocean',    accent: '#2dd4bf', preview: ['#06121a', '#143240', '#2dd4bf'] },
+    { id: 'ember',    name: 'Ember',    accent: '#fb923c', preview: ['#14100d', '#2c211a', '#fb923c'] },
+    { id: 'daylight', name: 'Daylight', accent: '#4f46e5', preview: ['#f4f5f7', '#ffffff', '#4f46e5'] }
+  ];
 
   let cfg = loadConfig();
 
@@ -71,9 +83,17 @@
     applyTheme();
   }
   function applyTheme() {
-    document.documentElement.style.setProperty('--accent', cfg.accent);
+    const t = THEMES.find(x => x.id === cfg.theme) || THEMES[0];
+    document.documentElement.setAttribute('data-theme', t.id);
+    cfg.accent = t.accent;   // keep the player {color} in sync with the theme
     const b = document.querySelector('.brand .txt'); if (b) b.textContent = cfg.brand;
     document.title = cfg.brand;
+    // match the mobile browser chrome + PWA status bar to the theme background
+    const mc = document.querySelector('meta[name="theme-color"]');
+    if (mc) {
+      const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      if (bg) mc.setAttribute('content', bg);
+    }
   }
 
   /* ------------------------------------------------------------
@@ -646,21 +666,45 @@
 
   // "TV mode": a full-viewport player, for casting / screen-mirroring to a TV.
   // CSS-based so it works on iOS/Android/desktop; also tries native fullscreen.
+  let cinemaTimer, cinemaReveal;
+  function revealCinema() {
+    const ex = $('#cinema-exit'); if (ex) ex.classList.remove('faded');
+    clearTimeout(cinemaTimer);
+    cinemaTimer = setTimeout(() => { const e2 = $('#cinema-exit'); if (e2) e2.classList.add('faded'); }, 3000);
+  }
   function enterCinema() {
     const frame = $('.player-frame'); if (!frame) return;
     frame.classList.add('cinema'); document.body.classList.add('cinema-on');
     if (!$('#cinema-exit')) {
       const ex = document.createElement('button');
       ex.id = 'cinema-exit'; ex.className = 'cinema-exit'; ex.innerHTML = ICON.x + ' Exit';
+      ex.setAttribute('aria-label', 'Exit TV mode');
       ex.onclick = exitCinema; frame.appendChild(ex);
+      // Top hot-zone: reliably re-reveals the control on hover/tap even though the
+      // cross-origin <iframe> swallows pointer events over the video itself.
+      const hot = document.createElement('div');
+      hot.id = 'cinema-hot'; hot.className = 'cinema-hot';
+      ['mousemove', 'pointerdown', 'touchstart', 'click'].forEach(ev => hot.addEventListener(ev, revealCinema, { passive: true }));
+      frame.appendChild(hot);
     }
+    cinemaReveal = () => revealCinema();
+    document.addEventListener('mousemove', cinemaReveal, { passive: true });
+    document.addEventListener('keydown', cinemaReveal);
+    revealCinema();  // start visible, then fade after 3s
     const rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
     if (rq) { try { rq.call(frame); } catch (e) {} }
   }
   function exitCinema() {
+    clearTimeout(cinemaTimer);
+    if (cinemaReveal) {
+      document.removeEventListener('mousemove', cinemaReveal);
+      document.removeEventListener('keydown', cinemaReveal);
+      cinemaReveal = null;
+    }
     const frame = $('.player-frame'); if (frame) frame.classList.remove('cinema');
     document.body.classList.remove('cinema-on');
     const ex = $('#cinema-exit'); if (ex) ex.remove();
+    const hot = $('#cinema-hot'); if (hot) hot.remove();
     if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
   }
   function toggleCinema() { (document.body.classList.contains('cinema-on') ? exitCinema : enterCinema)(); }
@@ -723,8 +767,10 @@
         <input data-sf="tv" data-i="${i}" value="${esc(src.tv || '')}" placeholder="TV template — https://host/embed/tv/{id}/{season}/{episode}">
       </div>`).join('');
 
-    const swatches = ['#f5c518', '#7c5cff', '#22d3ee', '#4ade80', '#ff5470', '#fb923c']
-      .map(c => `<div class="swatch ${s.accent === c ? 'on' : ''}" style="background:${c}" data-accent="${c}"></div>`).join('');
+    const themeCards = THEMES.map(t => `<button class="theme-card ${cfg.theme === t.id ? 'on' : ''}" data-theme-pick="${t.id}" aria-label="${t.name} theme">
+        <span class="tprev">${t.preview.map(c => `<i style="background:${c}"></i>`).join('')}</span>
+        <span class="tname">${t.name}</span>
+      </button>`).join('');
 
     const back = document.createElement('div');
     back.className = 'modal-back';
@@ -746,8 +792,9 @@
         </div>
 
         <div class="set-group">
-          <h4>Appearance</h4>
-          <div class="set-row"><label>Accent color</label><div class="swatches" id="set-swatches">${swatches}</div></div>
+          <h4>Theme</h4>
+          <p class="hint">Pick a look — applies instantly.</p>
+          <div class="theme-grid" id="set-themes">${themeCards}</div>
         </div>
 
         <div class="set-group">
@@ -798,13 +845,15 @@
       const rm = e.target.closest('[data-rmsrc]');
       if (rm) { s.sources.splice(parseInt(rm.dataset.rmsrc, 10), 1); openSettings.refresh(back); }
     };
-    // swatches
-    $('#set-swatches', back).onclick = (e) => {
-      const sw = e.target.closest('.swatch'); if (!sw) return;
-      back.querySelectorAll('.swatch').forEach(x => x.classList.remove('on'));
-      sw.classList.add('on'); s._pendingAccent = sw.dataset.accent;
+    // theme picker — applies + persists instantly
+    $('#set-themes', back).onclick = (e) => {
+      const card = e.target.closest('[data-theme-pick]'); if (!card) return;
+      cfg.theme = card.dataset.themePick;
+      back.querySelectorAll('.theme-card').forEach(x => x.classList.remove('on'));
+      card.classList.add('on');
+      saveConfig();  // applyTheme runs -> live switch
     };
-    $('#set-reset', back).onclick = () => { if (confirm('Reset all settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS, { sources: [] }); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
+    $('#set-reset', back).onclick = () => { if (confirm('Reset all settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
     $('#set-save', back).onclick = () => {
       // collect source fields
       back.querySelectorAll('[data-sf]').forEach(inp => {
@@ -818,7 +867,6 @@
       cfg.language = $('#set-lang', back).value.trim() || 'en-US';
       cfg.region = $('#set-region', back).value.trim() || 'US';
       cfg.blockPlayerAds = $('#set-sandbox', back).checked;
-      if (s._pendingAccent) cfg.accent = s._pendingAccent;
       if (cfg.activeSource >= cfg.sources.length) cfg.activeSource = 0;
       saveConfig();
       closeModal(back); toast('Settings saved'); route();
@@ -1001,6 +1049,26 @@
   // No-ops on file:// (SW not allowed there) — serve over http/https or the desktop app.
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+
+  // Desktop auto-update (electron-updater) notifications.
+  if (window.reeldeck && window.reeldeck.onUpdate) {
+    window.reeldeck.onUpdate((d) => {
+      if (!d) return;
+      if (d.state === 'available') toast('Update found — downloading in the background…');
+      else if (d.state === 'ready') showUpdateReady(d.version);
+    });
+  }
+  function showUpdateReady(version) {
+    if ($('#update-banner')) return;
+    const b = document.createElement('div');
+    b.id = 'update-banner'; b.className = 'update-banner';
+    b.innerHTML = `<span>Update ${version ? 'v' + esc(version) + ' ' : ''}ready to install.</span>
+      <button class="btn sm primary" id="update-now">Restart &amp; update</button>
+      <button class="btn sm" id="update-later" aria-label="Dismiss update">Later</button>`;
+    document.body.appendChild(b);
+    $('#update-now').onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
+    $('#update-later').onclick = () => b.remove();
   }
 
 })();

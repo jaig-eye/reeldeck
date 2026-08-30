@@ -1,7 +1,7 @@
 {
   "name": "reeldeck",
   "productName": "Reeldeck",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A clean, ad-free movie & TV browser (TMDB) — desktop build for per-app VPN routing.",
   "author": {
     "name": "jaig-eye",
@@ -47,8 +47,20 @@
     },
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.entertainment",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
@@ -77,6 +89,7 @@
     }
   },
   "dependencies": {
-    "@ghostery/adblocker-electron": "^2.18.2"
+    "@ghostery/adblocker-electron": "^2.18.2",
+    "electron-updater": "^6.8.9"
   }
 }
