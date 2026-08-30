@@ -131,6 +131,8 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
+  const APP_VERSION = '1.0.2';   // bump with each release (matches package.json)
+  const REPO = 'jaig-eye/reeldeck';
   function openExternal(url) {
     if (IS_DESKTOP && window.reeldeck.openExternal) window.reeldeck.openExternal(url);
     else window.open(url, '_blank', 'noopener');
@@ -185,7 +187,8 @@
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>',
     ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>',
-    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+    download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>'
   };
 
   /* ------------------------------------------------------------
@@ -727,15 +730,11 @@
         <div class="source-bar">
           <span class="lbl">${src ? 'Now playing: <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try next server →</button>` : ''}
-          ${cfg.blockPlayerAds ? '<span class="lbl" style="color:var(--accent)">● Sandbox ON — some providers will refuse</span>' : '<span class="lbl" style="color:var(--good)">● Sandbox off (recommended)</span>'}
-          <button class="btn sm ghost" id="toggle-sandbox">${cfg.blockPlayerAds ? 'Turn sandbox off' : 'Force sandbox'}</button>
           <button class="btn sm ghost" id="tv-mode" title="Fill the screen — for casting / screen-mirroring to a TV">⛶ TV mode</button>
-          ${src ? `<button class="btn sm ghost" data-openext="${esc(buildSourceUrl(src, type, id, imdb, season, episode))}">${ICON.ext} Open</button>` : ''}
         </div>
         ${sources.length ? `
         <div class="rail-head" style="margin:26px 0 12px">
           <h2 style="font-size:16px">Server room <span class="muted" style="font-weight:600;font-size:13px">· ${sources.length} mirrors</span></h2>
-          <a class="more" id="manage-src">Manage in Settings →</a>
         </div>
         <div class="server-room">${roomTiles}</div>
         <p class="muted" style="font-size:12px;margin-top:12px;text-transform:uppercase;letter-spacing:.5px">Switch mirrors if a server stutters or the title won't load — no single mirror has everything.</p>
@@ -911,21 +910,6 @@
         <div class="set-group">
           <button class="btn sm" id="set-getapp" style="width:100%;justify-content:center">${ICON.tv} Install on TV / other devices</button>
         </div>
-        ${IS_DESKTOP ? `<div class="set-group">
-          <h4>Updates</h4>
-          <div class="set-row" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap">
-            <button class="btn sm" id="set-check-update">Check for updates</button>
-            <span class="desc" id="set-update-status">Auto-updates from GitHub Releases.</span>
-          </div>
-        </div>` : ''}
-        <details class="set-group set-dev">
-          <summary>Developer</summary>
-          <div class="set-row" style="margin-top:12px;flex-direction:row;align-items:center;gap:10px">
-            <input type="checkbox" id="set-sandbox" ${cfg.blockPlayerAds ? 'checked' : ''} style="width:auto">
-            <label for="set-sandbox" style="margin:0">Force iframe sandbox on the player</label>
-          </div>
-          <p class="hint" style="margin-top:6px">Leave off — most providers detect the sandbox and refuse to play. The desktop app blocks ads at the network layer instead.</p>
-        </details>
         <div class="set-actions">
           <button class="btn" id="set-reset">Reset</button>
           <button class="btn primary" data-close>Done</button>
@@ -944,14 +928,6 @@
     };
     const ga = $('#set-getapp', back);
     if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
-    const sb = $('#set-sandbox', back);
-    if (sb) sb.onchange = () => { cfg.blockPlayerAds = sb.checked; saveConfig(); };
-    const cu = $('#set-check-update', back);
-    if (cu) cu.onclick = () => {
-      const st = $('#set-update-status', back);
-      if (st) st.textContent = 'Checking…';
-      if (window.reeldeck && window.reeldeck.checkForUpdates) window.reeldeck.checkForUpdates();
-    };
     $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
   }
 
@@ -1048,6 +1024,7 @@
         <button class="clear" id="search-clear" title="Clear" aria-label="Clear search" style="display:none">${ICON.x}</button>
         <div class="suggest" id="suggest" style="display:none"></div>
       </div>
+      <button class="icon-btn" id="update-btn" title="Check for updates" aria-label="Check for updates">${ICON.download}</button>
       <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">${ICON.gear}</button>`;
 
     const inp = $('#search-input');
@@ -1062,6 +1039,7 @@
     });
     clear.addEventListener('click', () => { inp.value = ''; clear.style.display = 'none'; closeSuggest(); inp.focus(); });
     $('#settings-btn').addEventListener('click', openSettings);
+    $('#update-btn').addEventListener('click', () => checkForUpdate(true));
 
     // Mobile bottom tab bar (hidden on desktop via CSS)
     if (!$('.bottom-nav')) {
@@ -1156,6 +1134,9 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
+  // Silent update check on launch (web/Android). Desktop uses electron-updater.
+  if (!IS_DESKTOP) setTimeout(() => checkForUpdate(false), 1500);
+
   // Desktop auto-update (electron-updater) notifications.
   if (window.reeldeck && window.reeldeck.onUpdate) {
     window.reeldeck.onUpdate((d) => {
@@ -1177,6 +1158,45 @@
     document.body.appendChild(b);
     $('#update-now').onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
     $('#update-later').onclick = () => b.remove();
+  }
+
+  // Cross-platform update check. Desktop uses electron-updater; web/Android
+  // queries the GitHub Releases API and offers a manual install (the app can't
+  // silently self-install on Android).
+  function verCmp(a, b) {
+    const pa = String(a).replace(/^v/, '').split('.').map(Number), pb = String(b).replace(/^v/, '').split('.').map(Number);
+    for (let i = 0; i < 3; i++) { if ((pa[i] || 0) > (pb[i] || 0)) return 1; if ((pa[i] || 0) < (pb[i] || 0)) return -1; }
+    return 0;
+  }
+  async function checkForUpdate(interactive) {
+    if (IS_DESKTOP && window.reeldeck && window.reeldeck.checkForUpdates) {
+      window.reeldeck.checkForUpdates();
+      if (interactive) toast('Checking for updates…');
+      return;
+    }
+    try {
+      const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const d = await r.json();
+      const latest = (d.tag_name || '').replace(/^v/, '');
+      if (latest && verCmp(latest, APP_VERSION) > 0) {
+        const ub = document.getElementById('update-btn'); if (ub) ub.classList.add('has-update');
+        showUpdateAvailable(latest);
+      } else if (interactive) {
+        toast('You’re on the latest version (v' + APP_VERSION + ').');
+      }
+    } catch (e) { if (interactive) toast('Update check failed — try again later.'); }
+  }
+  function showUpdateAvailable(version) {
+    if ($('#update-banner')) return;
+    const b = document.createElement('div');
+    b.id = 'update-banner'; b.className = 'update-banner';
+    b.innerHTML = `<span>New version available — v${esc(version)}.</span>
+      <button class="btn sm primary" id="ub-get">Get it</button>
+      <button class="btn sm" id="ub-later" aria-label="Dismiss">Later</button>`;
+    document.body.appendChild(b);
+    $('#ub-get').onclick = () => { b.remove(); go('#/get-app'); };
+    $('#ub-later').onclick = () => b.remove();
   }
 
   /* ---------- TV / D-pad navigation (Android TV, Google TV) ---------- */
