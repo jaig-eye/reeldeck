@@ -171,6 +171,8 @@ nav.main a.active { color: var(--text); background: var(--surface-2); }
 }
 .icon-btn:hover { color: var(--text); background: var(--surface-2); }
 .icon-btn svg { width: 19px; height: 19px; }
+.icon-btn.has-update { position: relative; color: var(--accent); }
+.icon-btn.has-update::after { content: ''; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
 
 .menu-toggle { display: none; }
 
