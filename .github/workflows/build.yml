@@ -1,0 +1,60 @@
+name: Build Electron App
+
+# Builds Windows (.exe: nsis + portable) and macOS (.dmg + .zip) installers.
+# The macOS half MUST run on a macOS runner: a .dmg cannot be cross-built on
+# Windows/Linux (it needs hdiutil, plus Apple codesign/notarytool for signing).
+# electron-builder output dir for this project is "release/", so artifacts are
+# uploaded from release/ (not dist/).
+
+on:
+  push:
+    tags:
+      - 'v*'            # push a tag like v1.0.0 to trigger a release build
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false          # a Windows failure must not cancel the macOS job
+      matrix:
+        include:
+          - os: windows-latest
+            build_cmd: npx electron-builder --win --publish never
+          - os: macos-latest     # Apple Silicon (arm64); billed at 10x on private repos
+            build_cmd: npx electron-builder --mac --publish never
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7        # current major (v7.0.1, verified Aug 2026)
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7      # current major (v7.0.0, verified Aug 2026)
+        with:
+          node-version: 22               # active LTS; 20 is also fine
+          cache: npm                     # cache ~/.npm, keyed on package-lock.json
+
+      - name: Install dependencies
+        run: npm ci                      # clean, lockfile-exact install
+
+      - name: Build installer (OS-specific)
+        run: ${{ matrix.build_cmd }}
+        env:
+          # Only consumed if you later switch to --publish; harmless otherwise.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7   # current major (v7.0.1, verified Aug 2026)
+        with:
+          # UNIQUE per matrix job: v4+ artifacts are immutable, so a shared name
+          # would make the second job's upload fail.
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest*.yml

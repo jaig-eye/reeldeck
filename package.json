@@ -1,0 +1,74 @@
+{
+  "name": "reeldeck",
+  "productName": "Reeldeck",
+  "version": "1.0.0",
+  "description": "A clean, ad-free movie & TV browser (TMDB) — desktop build for per-app VPN routing.",
+  "author": {
+    "name": "jaig-eye",
+    "email": "jaig-eye@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node scripts/serve.js",
+    "icons": "node scripts/make-icons.js",
+    "web:build": "node scripts/build-web.js",
+    "apk": "node scripts/build-web.js && npx cap copy android && cd android && gradlew.bat assembleDebug",
+    "apk:open": "node scripts/build-web.js && npx cap copy android && npx cap open android",
+    "dist": "electron-builder --win nsis portable",
+    "dist:portable": "electron-builder --win portable",
+    "dist:mac": "electron-builder --mac",
+    "dist:dir": "electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "^35.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.reeldeck.app",
+    "productName": "Reeldeck",
+    "files": [
+      "electron/**",
+      "index.html",
+      "app.js",
+      "styles.css",
+      "sw.js",
+      "manifest.webmanifest",
+      "assets/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.entertainment",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    }
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@ghostery/adblocker-electron": "^2.18.2"
+  }
+}

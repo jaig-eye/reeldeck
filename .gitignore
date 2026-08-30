@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+release/
+dist-electron/
+www/
+Reeldeck.apk
+
+# Android (Capacitor) build outputs & machine-specific config
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+
+# OS / IDE
+.DS_Store
+.idea/
+*.iml
+*.log
