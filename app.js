@@ -939,7 +939,9 @@
   function buildHeader() {
     const hdr = $('header.top');
     hdr.innerHTML = `
-      <a class="brand" data-nav="#/">${ICON.film}<span class="txt">${esc(cfg.brand)}</span><span class="dot">.</span></a>
+      <a class="brand" data-nav="#/" aria-label="${esc(cfg.brand)} — home">
+        <span class="brand-mark" aria-hidden="true"></span><span class="txt">${esc(cfg.brand)}</span>
+      </a>
       <nav class="main">
         <a data-nav="#/" data-section="home">Home</a>
         <a data-nav="#/movies" data-section="movies">Movies</a>
