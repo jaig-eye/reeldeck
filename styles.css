@@ -612,7 +612,38 @@ body.tv .player-enter {
   background: linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.42));
   border: 0; cursor: pointer; color: #fff;
 }
-body.tv.player-focused .player-enter { display: none; }
+body.tv.player-focused .player-enter, body.tv.cursor-on .player-enter { display: none; }
+
+/* ---- D-pad pointer ---------------------------------------------------------
+   The only way to press a control inside a cross-origin player. Fixed-positioned so
+   its CSS coordinates map 1:1 to the viewport the native layer taps into, and
+   pointer-events:none so it can never intercept the tap it is aiming. */
+.tv-cursor { display: none; }
+body.tv.cursor-on .tv-cursor {
+  display: block; position: fixed; top: 0; left: 0; z-index: 400;
+  width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
+  border: 3px solid #fff; background: rgba(255,255,255,.18);
+  box-shadow: 0 0 0 2px rgba(0,0,0,.7), 0 6px 20px rgba(0,0,0,.55);
+  pointer-events: none; outline: none; will-change: transform;
+}
+body.tv.cursor-on .tv-cursor::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff;
+}
+/* The press flash must NOT animate transform — that is what positions the cursor,
+   and animating it would snap the ring back to the origin mid-tap. */
+body.tv.cursor-on .tv-cursor.tap { animation: cur-tap .28s ease-out; }
+@keyframes cur-tap {
+  0%   { border-color: var(--accent); background: rgba(255,255,255,.55); }
+  100% { border-color: #fff; background: rgba(255,255,255,.18); }
+}
+.tv-cursor-hint {
+  position: fixed; left: 50%; bottom: 7vh; transform: translateX(-50%);
+  z-index: 401; padding: 10px 20px; border-radius: 99px;
+  background: rgba(0,0,0,.78); color: #fff; font-size: 15px; font-weight: 700;
+  opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap;
+}
+.tv-cursor-hint.show { opacity: 1; }
 .player-enter .pe-pill {
   display: inline-flex; align-items: center; gap: 10px;
   font-size: 22px; font-weight: 800; color: #000;
@@ -701,14 +732,22 @@ body.tv .player-enter:focus .pe-pill { outline: 4px solid #fff; outline-offset: 
 
 body.tv {
   --tvpad: clamp(28px, 4vw, 64px);
-  --header-h: 74px;
+  --header-h: clamp(54px, 11vh, 74px);
+  --tv-pad-top: clamp(10px, 2.4vh, 24px);
+  /* one knob for tile scale: a poster is 1.5x this, plus ~66px of caption, and that
+     has to stay near half the screen so the next row always peeks */
+  --tile: clamp(120px, 26vh, 190px);
+  /* one anchor for the hero text block and the dot strip, so they stay on one D-pad row */
+  --bb-bottom: clamp(26px, 7vh, 56px);
   cursor: none;
   font-size: 18px;
   padding-bottom: 0 !important;      /* the mobile tab-bar reservation never applies */
 
   /* The shared ring from :root, scaled up for a 10-foot viewing distance. */
   --ring: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent);
-  --ring-glow: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent), 0 0 34px -4px var(--accent);
+  /* A 34px blur on a transformed element is re-rasterised every frame of the scroll;
+     18px reads the same across a room and costs far less on a TV dongle. */
+  --ring-glow: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent), 0 0 18px -6px var(--accent);
 }
 /* The sticky bar is opaque here, so anything scrolled to by the browser (rather than
    by tvFocusEl) still clears it. */
@@ -720,10 +759,19 @@ html { scroll-padding-top: 90px; }
    edge and the page grew a horizontal scrollbar). The top padding keeps the nav row
    out of the overscan crop band. */
 body.tv header.top {
-  height: auto; min-height: calc(var(--header-h) + 20px);
-  padding: 22px var(--tvpad) 10px;
+  height: auto; min-height: var(--header-h);
+  padding: var(--tv-pad-top) var(--tvpad) 8px;
   background: var(--bg); backdrop-filter: none; gap: clamp(8px, 1.7vw, 22px);
 }
+/* Over the home hero the bar FLOATS: an opaque band sitting on top of the artwork
+   read as the image being cut off. A scrim keeps the nav legible over bright
+   backdrops, and the existing .scrolled toggle brings the solid bar back the moment
+   you leave the top of the page. */
+body.tv.home header.top:not(.scrolled) {
+  background: linear-gradient(180deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.45) 55%, rgba(0,0,0,0) 100%);
+  border-bottom-color: transparent;
+}
+body.tv.home header.top:not(.scrolled) .icon-btn { background: rgba(0,0,0,.42); border-color: rgba(255,255,255,.16); }
 body.tv nav.main { display: flex !important; }
 body.tv .bottom-nav, body.tv .menu-toggle, body.tv .rail-arrow { display: none !important; }
 body.tv .brand { font-size: clamp(17px, 1.8vw, 23px); }
@@ -760,12 +808,12 @@ body.tv .modal-back { backdrop-filter: none; }
 /* ---- Overscan-safe page frame ---------------------------------------------- */
 /* The generous bottom padding is not decoration: it is what lets the LAST row
    scroll to the middle of the screen like every row above it. */
-body.tv main { padding: 24px var(--tvpad) clamp(120px, 26vh, 300px); }
+body.tv main { padding: var(--tv-pad-top) var(--tvpad) clamp(120px, 30vh, 300px); }
 body.tv .section { padding: 0; max-width: none; margin-top: 42px; }
 body.tv .player-shell { max-width: none; }
-body.tv .rail h2 { font-size: 26px; }
-body.tv .section h3 { font-size: 24px; }
-body.tv .page-title { font-size: 34px; }
+body.tv .rail h2 { font-size: clamp(18px, 3.6vh, 26px); }
+body.tv .section h3 { font-size: clamp(17px, 3.3vh, 24px); }
+body.tv .page-title { font-size: clamp(22px, 4.6vh, 34px); margin-bottom: clamp(10px, 2vh, 18px); }
 body.tv .rail { margin-bottom: 14px; }
 /* The rail you are in announces itself before you even find the poster. Both forms:
    :focus-within dies with window focus, and .tv-row-active is set on .rail by tvMark. */
@@ -781,8 +829,10 @@ body.tv .rail a.more { display: none; }
 body.tv .detail-body { flex-direction: row; align-items: flex-end; padding-top: 0; }
 body.tv .detail-body .poster { width: clamp(180px, 16vw, 260px); }
 body.tv .detail-hero { margin: -24px calc(-1 * var(--tvpad)) 28px; min-height: 480px; }
+/* Pull the hero up BEHIND the floating bar so the artwork runs to the top edge. */
 body.tv .billboard, body.tv .billboard-sk {
-  height: min(70vh, 640px); min-height: 0; margin-top: -24px;
+  height: min(74vh, 640px); min-height: 0;
+  margin-top: calc(-1 * (var(--header-h) + var(--tv-pad-top)));
 }
 body.tv .card .poster .wl { width: 34px; height: 34px; }
 
@@ -793,26 +843,29 @@ body.tv .card .poster .wl { width: 34px; height: 34px; }
    first tile still lines up with the headline above it. Snap points are off: they
    fight the centring we do ourselves and yank the selection back off-centre. */
 body.tv .rail .track {
-  grid-auto-columns: 210px; gap: 26px;
-  padding: 44px var(--tvpad) 60px;
-  margin: -36px calc(-1 * var(--tvpad)) -50px;
+  grid-auto-columns: var(--tile); gap: clamp(14px, 2vh, 26px);
+  padding: clamp(26px, 5vh, 44px) var(--tvpad) clamp(34px, 7vh, 60px);
+  margin: calc(-1 * clamp(20px, 4vh, 36px)) calc(-1 * var(--tvpad)) calc(-1 * clamp(28px, 6vh, 50px));
   scroll-snap-type: none;
 }
-body.tv .rank-rail .track { grid-auto-columns: 310px; }
-body.tv .rank-num { font-size: 176px; }
-body.tv .rank-item .poster { width: 158px; }
+body.tv .rank-rail .track { grid-auto-columns: calc(var(--tile) * 1.48); }
+body.tv .rank-num { font-size: calc(var(--tile) * 0.84); }
+body.tv .rank-item .poster { width: calc(var(--tile) * 0.75); }
 body.tv .cast-track {
-  grid-auto-columns: 150px; gap: 22px;
-  padding: 34px var(--tvpad) 38px;
-  margin: -28px calc(-1 * var(--tvpad)) -28px;
+  grid-auto-columns: calc(var(--tile) * 0.72); gap: clamp(12px, 1.8vh, 22px);
+  padding: clamp(22px, 4vh, 34px) var(--tvpad) clamp(24px, 4vh, 38px);
+  margin: calc(-1 * clamp(18px, 3vh, 28px)) calc(-1 * var(--tvpad)) calc(-1 * clamp(18px, 3vh, 28px));
 }
-body.tv .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 46px 28px; padding: 26px 0; }
+body.tv .grid {
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile), 1fr));
+  gap: clamp(22px, 4vh, 40px) clamp(14px, 2vw, 26px); padding: clamp(16px, 3vh, 26px) 0;
+}
 
 /* Episodes become a carousel on TV. As a vertical stack a 22-episode season is 22
    D-pad rows, which put the top bar ~27 presses away from the bottom of the page;
    as one row it is two. app.js lists .ep-list in TV_ROW_CONTAINERS to match. */
 body.tv .ep-list {
-  display: grid; grid-auto-flow: column; grid-auto-columns: 330px; gap: 22px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: clamp(230px, 58vh, 330px); gap: clamp(14px, 2vh, 22px);
   overflow-x: auto; scroll-behavior: smooth; scrollbar-width: none;
   padding: 30px var(--tvpad) 34px;
   margin: -24px calc(-1 * var(--tvpad)) -24px;
@@ -861,8 +914,7 @@ body.tv .mirror.tv-focus, body.tv .theme-card.tv-focus, body.tv .chip.tv-focus, 
 }
 body.tv .chip:focus, body.tv .chip.tv-focus { border-radius: 20px; }
 body.tv .btn:focus, body.tv .btn.tv-focus { transform: scale(1.05); }
-body.tv .mirror, body.tv .chip, body.tv .ep, body.tv .person { transition: transform .18s ease, box-shadow .18s ease; }
-body.tv .btn { transition: transform .18s ease; }
+body.tv .btn { transition: transform .16s ease; }
 /* The player overlay fills a frame with overflow:hidden, so an outer ring is clipped
    away entirely — the ring goes on the inset pill instead. */
 body.tv .player-enter:focus, body.tv .player-enter.tv-focus { box-shadow: none; }
@@ -871,8 +923,9 @@ body.tv .player-enter:focus .pe-pill, body.tv .player-enter.tv-focus .pe-pill {
 }
 
 /* ---- Focus: cards ---------------------------------------------------------- */
-body.tv .card { transition: opacity .2s ease; }
-body.tv .card .poster { transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease; }
+/* Only the SELECTED poster animates. Transitioning opacity on the twenty row-mates
+   meant every press started twenty more compositor animations. */
+body.tv .card .poster { transition: transform .16s cubic-bezier(.2,.7,.3,1); }
 /* the ring belongs on the artwork, not on the card box (which includes the caption) */
 body.tv .card:focus, body.tv .card.tv-focus { outline: none; box-shadow: none; z-index: 6; }
 /* 1.10, not 1.14: scaling about the centre pushes the poster's bottom edge down by
@@ -884,9 +937,11 @@ body.tv .card:focus .poster, body.tv .card.tv-focus .poster {
   box-shadow: var(--ring-glow), 0 26px 70px rgba(0,0,0,.75);
   position: relative; z-index: 6;
 }
-body.tv .card .cap { padding: 26px 3px 0; }
-body.tv .card .cap .t { font-size: 15.5px; }
-body.tv .card .cap .y { font-size: 14px; }
+/* the focused poster grows downward by height x 0.05 plus its ring, so the caption
+   needs that much clearance or the selection covers its own title */
+body.tv .card .cap { padding: clamp(16px, 3vh, 26px) 3px 0; }
+body.tv .card .cap .t { font-size: clamp(13px, 2.5vh, 15.5px); }
+body.tv .card .cap .y { font-size: clamp(12px, 2.2vh, 14px); }
 body.tv .card:focus .cap .t, body.tv .card.tv-focus .cap .t { color: var(--text); font-weight: 800; }
 body.tv .card:focus .cap .y, body.tv .card.tv-focus .cap .y { color: var(--accent); }
 /* On TV the poster overlay only covers the art we just scaled up, and the title is
@@ -897,6 +952,7 @@ body.tv .card .poster .card-hover { display: none; }
    2.3:1, i.e. unreadable, while they are still meant to be scannable. */
 body.tv .track.tv-row-active .card:not(.tv-focus) .poster { opacity: .45; }
 body.tv .cast-track.tv-row-active .person:not(.tv-focus) img { opacity: .45; }
+body.tv .mirror, body.tv .chip, body.tv .ep, body.tv .person { transition: transform .16s ease; }
 /* The Top 10 numeral lights up with its poster. */
 body.tv .rank-item:focus .rank-num, body.tv .rank-item.tv-focus .rank-num {
   color: var(--surface-2); -webkit-text-stroke-color: var(--accent);
@@ -941,15 +997,22 @@ body.tv .theme-card { padding: 14px; font-size: 16px; }
 body.tv #tv-mode { display: none; }
 
 /* ---- Billboard ------------------------------------------------------------- */
-body.tv .bb-info { padding: 0 var(--tvpad); max-width: min(760px, 58vw); }
-body.tv .bb-ovw { font-size: 19px; -webkit-line-clamp: 2; }
-body.tv .bb-cta .btn.lg { font-size: 19px; padding: 16px 30px; }
+/* On a 540px-tall panel the stock hero type ran up underneath the floating nav bar.
+   Everything in the block scales with the viewport and sits on --bb-bottom, which is
+   also clear of the overscan crop. */
+body.tv .bb-info { bottom: var(--bb-bottom); padding: 0 var(--tvpad); max-width: min(760px, 62vw); }
+body.tv .bb-logo { max-height: clamp(60px, 15vh, 140px); margin-bottom: clamp(6px, 1.5vh, 18px); }
+body.tv .bb-title { font-size: clamp(23px, 6.2vh, 52px); margin-bottom: clamp(6px, 1.5vh, 18px); }
+body.tv .bb-meta { font-size: clamp(12px, 2.3vh, 15px); gap: clamp(8px, 1.6vw, 14px); margin-bottom: clamp(5px, 1.2vh, 14px); }
+body.tv .bb-ovw { margin-bottom: clamp(9px, 2.1vh, 22px); }
+body.tv .bb-ovw { font-size: clamp(14px, 2.8vh, 19px); -webkit-line-clamp: 2; }
+body.tv .bb-cta .btn.lg { font-size: clamp(15px, 2.9vh, 19px); padding: clamp(10px, 2.2vh, 16px) clamp(18px, 3vw, 30px); }
 /* Give the dot strip the same height as the CTA buttons and centre inside it, so the
    dots land on the SAME row as Play / More Info for the row model — the hero is one
    row you walk across, not two you have to discover. The 58px is tied to the button
    height above: the row model clusters within max(18px, …) of vertical centre, so
    changing either by more than ~18px splits the hero into two rows. */
-body.tv .bb-dots { right: var(--tvpad); bottom: 9%; gap: 12px; height: 58px; align-items: center; }
+body.tv .bb-dots { right: var(--tvpad); bottom: var(--bb-bottom); gap: 12px; height: clamp(38px, 7vh, 58px); align-items: center; }
 body.tv .bb-dot { width: 18px; height: 18px; }
 body.tv .bb-dot.on { width: 44px; border-radius: 9px; }
 /* Same ring as everything else — a bespoke outline here made the selection change
