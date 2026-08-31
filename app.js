@@ -135,7 +135,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.7';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.8';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
 
   // TV / D-pad state — declared up here (not next to the nav functions further
@@ -155,7 +155,7 @@
   // already opened the Watchlist and replaces the page under you. Declared up here with
   // the rest of the module state so no view can reach it in the temporal dead zone.
   let routeSeq = 0;
-  let routeSection = null, routeParts = -1;   // to tell a filter change from a navigation
+  let routeKey = null;      // identifies the view, to tell a filter change from a navigation
   const routeIs = (n) => n === routeSeq;
   let tvUserMoved = false;  // the user has taken over — stop placing the ring for them
   const TV_ROW_CONTAINERS = '.track, .cast-track, .ep-list';   // a carousel is ONE D-pad row
@@ -163,7 +163,11 @@
   // press. This is a PRIORITY ORDER, tried one selector at a time: as a single
   // querySelectorAll it would have returned document order instead, which only
   // happened to agree with the intent on today's markup.
-  const TV_LANDING = ['#tv-search-input', '#player-enter', '.bb-slide.on .bb-cta .btn.primary',
+  // NB: the search field is deliberately absent. It is the first focusable in the
+  // search page's markup, so the generic fallback still lands on it when there are no
+  // results — but once results exist they win, instead of trapping the ring on the box
+  // you just typed into and making you press Back to reach what you searched for.
+  const TV_LANDING = ['#player-enter', '.bb-slide.on .bb-cta .btn.primary',
                       '.detail-hero .cta .btn.primary', '.grid .card', '.rail .track .card'];
   // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
   // offset so its row keeps a fixed place in the order — otherwise the update
@@ -172,6 +176,8 @@
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
+  let tvDomGen = 0;                                  // bumped whenever measured geometry can have changed
+  let tvRowCache = null;                             // { gen, scope, rows } — see tvRowModel
   let tvMarked = null;                               // element currently wearing .tv-focus
   function openExternal(url) {
     if (IS_DESKTOP && window.reeldeck.openExternal) window.reeldeck.openExternal(url);
@@ -271,7 +277,7 @@
     const on = isInWatch(item.id, type);
     return `<div class="card" data-nav="#/${type}/${item.id}" tabindex="0" role="button" aria-label="${esc(title)}${y ? ', ' + y : ''}">
       <div class="poster">
-        <img loading="lazy" src="${img(item.poster_path, 'w342')}" alt="${esc(title)}"
+        <img loading="lazy" decoding="async" src="${img(item.poster_path, 'w342')}" alt="${esc(title)}"
              onerror="this.src='${PLACEHOLDER}'">
         ${rating ? `<span class="rate">${ICON.star} ${rating}</span>` : ''}
         <span class="typebadge">${type === 'tv' ? 'TV' : 'Movie'}</span>
@@ -289,6 +295,10 @@
 
   function railHTML(title, items, moreHref, type) {
     if (!items || !items.length) return '';
+    // Home renders five rails. Twenty tiles each is ~100 cards and ~1900 DOM nodes to
+    // lay out, restyle and composite on every D-pad press; fourteen is still more than
+    // anyone scrolls through before taking the "See all" tile at the end.
+    if (IS_TV) items = items.slice(0, 14);
     // On TV the "See all" link leaves the D-pad order and comes back as the LAST TILE
     // of the rail. One focusable row per rail is what keeps Up/Down predictable, and a
     // poster-sized target beats 13px of header text from across the room.
@@ -441,6 +451,7 @@
         });
       });
       dots.forEach((d, i) => { d.classList.toggle('on', i === idx); d.setAttribute('aria-current', i === idx ? 'true' : 'false'); });
+      tvInvalidate();   // a different slide's buttons are focusable now
     };
     show(0);   // apply the off-state to slides 2..n before anything can focus them
     if (slides.length < 2) return;   // nothing to rotate between
@@ -906,8 +917,8 @@
           <div style="font-weight:800;font-size:18px">${esc(title)}${isTV ? ` <span class="muted">· S${season} E${episode}</span>` : ''}</div>
           ${epNav}
         </div>
-        <div class="player-frame">${frameInner}${IS_TV && src ? `<button class="player-enter" id="player-enter" aria-label="Open player — use the remote to control playback">
-            <span class="pe-pill">${ICON.play} Open player</span><small>Press OK to control · Back to exit</small></button>` : ''}</div>
+        <div class="player-frame">${frameInner}${IS_TV && src ? `<button class="player-enter" id="player-enter" aria-label="Control the player with the remote">
+            <span class="pe-pill">${ICON.play} Control player</span><small>OK turns the remote into a pointer</small></button>` : ''}</div>
         <div class="source-bar">
           <span class="lbl">${src ? 'Now playing: <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try next server →</button>` : ''}
@@ -971,7 +982,7 @@
     const fr = $('#player-iframe');
     if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
     const pe = $('#player-enter');
-    if (pe) pe.onclick = enterPlayerFocus;
+    if (pe) pe.onclick = cursorOn;
     // On TV land focus on the player entry so OK immediately hands control to the embed.
     // The router also places the ring here (#player-enter is a landing target), but
     // do it explicitly too so the highlight class and remembered position are set even
@@ -1012,6 +1023,7 @@
     if (rq) { try { Promise.resolve(rq.call(frame)).catch(() => {}); } catch (e) {} }
   }
   function exitCinema() {
+    cursorOff();
     clearTimeout(cinemaTimer);
     if (cinemaReveal) {
       document.removeEventListener('mousemove', cinemaReveal);
@@ -1031,17 +1043,107 @@
   // playback. We can't script inside a cross-origin iframe, so once focus is in it
   // the browser's OWN spatial navigation moves between the embed's controls; the
   // ONLY way back to our UI is the hardware Back button (handled below) or Exit.
+  /* ---- D-pad pointer --------------------------------------------------------
+     Handing DOM focus to the player never worked, and could not: the mirrors are
+     cross-origin iframes whose play/pause controls are plain <div>s with click
+     handlers. They are not focusable, so no amount of focus lands on them, and we
+     cannot script into the frame to click one. The only thing that reaches inside is
+     a real touch event, which only the native layer can synthesise — so on the TV
+     build we draw a cursor, drive it with the D-pad, and tap through it.
+
+     MainActivity exposes this over an ORIGIN-SCOPED WebMessageListener, so the
+     embedded players cannot call it. Where it is missing (the browser build, or an
+     old WebView) the cursor still works on our own UI and says so.                */
+  const NATIVE_TAP = !!(window.ReeldeckNative && typeof window.ReeldeckNative.postMessage === 'function');
+  let curEl = null, curHint = null, curX = 0, curY = 0, curStep = 14, curLast = 0;
+
+  function cursorActive() { return document.body.classList.contains('cursor-on'); }
+
+  function cursorOn() {
+    if (!IS_TV) return;
+    if (!document.body.classList.contains('cinema-on')) enterCinema();
+    if (!curEl) {
+      curEl = document.createElement('div');
+      curEl.className = 'tv-cursor'; curEl.id = 'tv-cursor';
+      curEl.tabIndex = -1; curEl.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(curEl);
+    }
+    document.body.classList.add('cursor-on');
+    // Start where a play button usually is, rather than dead centre.
+    curX = Math.round(window.innerWidth / 2);
+    curY = Math.round(window.innerHeight * 0.58);
+    curStep = 14;
+    cursorDraw();
+    if (!curHint) {
+      curHint = document.createElement('div');
+      curHint.className = 'tv-cursor-hint';
+      document.body.appendChild(curHint);
+    }
+    curHint.textContent = NATIVE_TAP
+      ? 'Move with the D-pad · OK to press · Back to exit'
+      : 'Pointer control needs the Reeldeck TV app · Back to exit';
+    curHint.classList.add('show');
+    clearTimeout(cursorOn._t);
+    cursorOn._t = setTimeout(() => { if (curHint) curHint.classList.remove('show'); }, 4500);
+    // Keep DOM focus in OUR document: if it were inside the iframe we would stop
+    // receiving the arrow keys that drive the cursor.
+    try { curEl.focus({ preventScroll: true }); } catch (e) { try { curEl.focus(); } catch (e2) {} }
+    tvInvalidate();
+  }
+
+  function cursorOff() {
+    if (!cursorActive()) return;
+    document.body.classList.remove('cursor-on');
+    if (curHint) { curHint.classList.remove('show'); }
+    clearTimeout(cursorOn._t);
+    tvInvalidate();
+  }
+
+  function cursorDraw() {
+    if (curEl) curEl.style.transform = 'translate3d(' + curX + 'px,' + curY + 'px,0)';
+  }
+
+  // Held direction accelerates, so crossing the screen is a flick rather than a chore.
+  function cursorMove(dir) {
+    const t = (window.performance && performance.now) ? performance.now() : Date.now();
+    curStep = (t - curLast < 260) ? Math.min(curStep + 7, 78) : 14;
+    curLast = t;
+    if (dir === 'left') curX -= curStep;
+    else if (dir === 'right') curX += curStep;
+    else if (dir === 'up') curY -= curStep;
+    else curY += curStep;
+    curX = Math.max(6, Math.min(curX, window.innerWidth - 6));
+    curY = Math.max(6, Math.min(curY, window.innerHeight - 6));
+    cursorDraw();
+  }
+
+  function cursorTap() {
+    if (curEl) { curEl.classList.remove('tap'); void curEl.offsetWidth; curEl.classList.add('tap'); }
+    if (NATIVE_TAP) {
+      // Native works in device pixels; the page thinks in CSS pixels.
+      const dpr = window.devicePixelRatio || 1;
+      try { window.ReeldeckNative.postMessage('tap:' + Math.round(curX * dpr) + ',' + Math.round(curY * dpr)); } catch (e) {}
+      return;
+    }
+    // No bridge: a synthetic click still drives our own UI, never a cross-origin embed.
+    const el = document.elementFromPoint(curX, curY);
+    if (el && el.click) { try { el.click(); } catch (e) {} }
+    else toast('Pointer control needs the Reeldeck app on your TV');
+  }
+
   function enterPlayerFocus() {
     const fr = document.getElementById('player-iframe');
     if (!fr) return;
     if (!document.body.classList.contains('cinema-on')) enterCinema();
     document.body.classList.add('player-focused');
+    tvInvalidate();   // the Open-player overlay is gone from the row model now
     fr.setAttribute('tabindex', '0');
     try { fr.focus(); } catch (e) {}
   }
   function releasePlayerFocus() {
     if (!document.body.classList.contains('player-focused')) return;
     document.body.classList.remove('player-focused');
+    tvInvalidate();
     const fr = document.getElementById('player-iframe');
     if (fr) { try { fr.blur(); } catch (e) {} fr.setAttribute('tabindex', '-1'); }
     // Route through tvFocusEl so the selection class, the remembered position and the
@@ -1186,7 +1288,7 @@
     // no control over it at all. Same pattern as the player's "Open player" overlay.
     const handoff = IS_TV
       ? `<button class="player-enter" id="trailer-enter" aria-label="Control the trailer with the remote">
-           <span class="pe-pill">${ICON.play} Use the remote</span><small>Press OK to control · Back to close</small>
+           <span class="pe-pill">${ICON.play} Control trailer</span><small>OK turns the remote into a pointer</small>
          </button>`
       : '';
     back.innerHTML = `<div class="modal wide">
@@ -1197,13 +1299,7 @@
       </div>
     </div>`;
     const te = back.querySelector('#trailer-enter');
-    if (te) te.onclick = () => {
-      const fr = back.querySelector('#trailer-iframe');
-      if (!fr) return;
-      te.style.display = 'none';
-      fr.setAttribute('tabindex', '0');
-      try { fr.focus(); } catch (e) {}
-    };
+    if (te) te.onclick = cursorOn;
     modalMount(back);
   }
 
@@ -1331,8 +1427,11 @@
     window.scrollTo(0, 0);
     // Same section, different parameters = a filter/sort/page change, not a real
     // navigation, so the ring stays where the user left it.
-    const sameSection = (parts[0] || '') === routeSection && parts.length === routeParts;
-    routeSection = parts[0] || ''; routeParts = parts.length;
+    // A filter/sort/page change keeps your place; a different SEARCH TERM does not —
+    // that is a new result set and the ring belongs on it.
+    const viewKey = parts.join('/') + '|' + (params.q || '');
+    const sameSection = viewKey === routeKey;
+    routeKey = viewKey;
     if (IS_TV) tvFocusFirst(true, sameSection);  // re-establish focus once the new view has rendered
     const sec = parts[0] || 'home';
     setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? 'search' : 'home');
@@ -1489,8 +1588,13 @@
 
   // Keyboard / D-pad OK: activate any focused [data-nav] element (cards, cast,
   // episodes, nav links, search rows). Native buttons/inputs handle Enter themselves.
+  // The browser build has no hardware Back, so Escape is the way out of the player.
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && (cursorActive() || document.body.classList.contains('cinema-on'))) {
+      if (!document.querySelector('.modal-back')) { e.preventDefault(); exitCinema(); return; }
+    }
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (cursorActive()) { e.preventDefault(); cursorTap(); return; }
     const el = document.activeElement;
     if (!el || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(el.tagName)) return; // native handles these
     const nav = el.closest && el.closest('[data-nav]');
@@ -1628,8 +1732,10 @@
   // NOT focusable, so el.focus() silently no-ops and the D-pad can never land on the
   // header/bottom nav (the "can't reach Home/Movies/TV" bug). Give every [data-nav]
   // that lacks an explicit tabindex one, so the whole nav surface is reachable.
+  let tvFocusableGen = -1;
   function tvEnsureFocusable() {
-    if (!IS_TV) return;
+    if (!IS_TV || tvFocusableGen === tvDomGen) return;   // nothing new since the last sweep
+    tvFocusableGen = tvDomGen;
     document.querySelectorAll('[data-nav]:not([tabindex])').forEach(el => el.setAttribute('tabindex', '0'));
   }
 
@@ -1672,7 +1778,11 @@
      simply row 0, which puts it a bounded number of presses from anywhere, and
      makes "what am I on?" a question with an answer.                            */
 
+  // Invalidate the cached geometry. Cheap enough to call liberally.
+  function tvInvalidate() { tvDomGen++; tvRowCache = null; }
+
   function tvRowModel(scope) {
+    if (tvRowCache && tvRowCache.gen === tvDomGen && tvRowCache.scope === scope) return tvRowCache.rows;
     // Rows are measured in DOCUMENT space (rect + scrollY) so their order never
     // changes as the page scrolls. Two exceptions: a modal scrolls its own body, so
     // it stays in viewport space; and the sticky header is pinned to the viewport,
@@ -1689,6 +1799,9 @@
       // `.suggest` lives inside the header but drops down over the page, so it is
       // content, not chrome: it keeps its own rows.
       const pinned = !inModal && !!el.closest(TV_PINNED) && !el.closest('.suggest');
+      // A carousel scrolls under the cached x, so remember which one this item is in
+      // and what its scrollLeft was; tvColOf() corrects for the difference later.
+      const sc = el.closest('.track, .cast-track, .ep-list');
       let cy;
       if (inModal || pinned) {
         cy = r.top + r.height / 2;
@@ -1698,7 +1811,8 @@
       } else {
         cy = r.top + sy + r.height / 2;
       }
-      metas.push({ el: el, x: r.left + r.width / 2, cy: cy, h: r.height, pinned: pinned });
+      metas.push({ el: el, x: r.left + r.width / 2, cy: cy, h: r.height, pinned: pinned,
+                   sc: sc, sl: sc ? sc.scrollLeft : 0 });
     });
 
     const keyed = new Map(), loose = [];
@@ -1727,8 +1841,13 @@
     const mid = (row) => row.items.reduce((t, m) => t + m.cy, 0) / row.items.length;
     rows.forEach(row => row.items.sort((a, b) => a.x - b.x));
     rows.sort((a, b) => mid(a) - mid(b));
+    tvRowCache = { gen: tvDomGen, scope: scope, rows: rows };
     return rows;
   }
+
+  // Cached x, corrected for however far its carousel has scrolled since capture.
+  // Vertical (cy) needs no correction: it is stored in document space.
+  function tvColOf(m) { return m.sc ? m.x - (m.sc.scrollLeft - m.sl) : m.x; }
 
   // The CSS reduced-motion block can only override scrolls whose behavior is 'auto';
   // an explicit 'smooth' option wins over it. So the most frequent motion in the whole
@@ -1762,7 +1881,11 @@
     const safeTop = (hdr ? hdr.getBoundingClientRect().height : 0) + 16;
     if (r2.top >= safeTop && r2.bottom <= vh - 16) return;
     const max = Math.max(0, (document.documentElement.scrollHeight || 0) - vh);
-    const top = Math.max(0, Math.min(window.scrollY + r2.top - (vh - r2.height) / 2, max));
+    let top = Math.max(0, Math.min(window.scrollY + r2.top - (vh - r2.height) / 2, max));
+    // Anywhere near the top, snap to the very top. Leaving the page a hundred pixels
+    // down is what made the hero look sliced off under the bar — the first row should
+    // always show the whole hero, not most of it.
+    if (top < vh * 0.42) top = 0;
     try { window.scrollTo({ top: top, behavior: tvEase() }); } catch (e) { window.scrollTo(0, top); }
   }
 
@@ -1771,6 +1894,9 @@
   // on a TV a selection that silently vanishes is indistinguishable from a crash.
   // Driven from a focusin listener so EVERY path that moves focus keeps it in sync.
   function tvMark(el) {
+    // The pointer holds DOM focus so the arrows keep reaching us, but it is not a
+    // selection — it must not wear the focus ring.
+    if (el && el.id === 'tv-cursor') return;
     if (tvMarked === el) return;
     // Only CAROUSELS are rows. A .grid is one container holding many visual rows, so
     // marking it dimmed every poster on the page instead of the neighbours on the
@@ -1802,7 +1928,7 @@
     let ri = 0, best = Infinity;
     rows.forEach((row, i) => { const d = Math.abs(mid(row) - pos.cy); if (d < best) { best = d; ri = i; } });
     let ci = 0; best = Infinity;
-    rows[ri].items.forEach((m, j) => { const d = Math.abs(m.x - pos.x); if (d < best) { best = d; ci = j; } });
+    rows[ri].items.forEach((m, j) => { const d = Math.abs(tvColOf(m) - pos.x); if (d < best) { best = d; ci = j; } });
     return { ri: ri, ci: ci };
   }
 
@@ -1888,6 +2014,8 @@
   function tvSpatialNav(e) {
     const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[e.key];
     if (!dir) return;
+    // Pointer mode owns the D-pad outright.
+    if (cursorActive()) { e.preventDefault(); cursorMove(dir); return; }
     const cur = document.activeElement;
     // Player has focus: the remote is driving the embed. Don't hijack arrows — let
     // the browser's own spatial nav move between the (cross-origin) player's controls.
@@ -1934,15 +2062,15 @@
       const ni = ri + (dir === 'down' ? 1 : -1);
       if (ni < 0 || ni >= rows.length) return;              // top/bottom of page: stay put
       const from = rows[ri], to = rows[ni];
-      if (from.kind === 'track' && to.kind === 'track') {
+      if (from.kind === 'track' && to.kind === 'track') {   // carry the index, not the column
         // Carousel to carousel: carry the POSITION IN THE ROW, the way every TV app
         // does — item 5 of one rail lands on item 5 of the next, not on whatever
         // happens to sit under it after the two rails scrolled independently.
         target = to.items[Math.min(ci, to.items.length - 1)];
         tvColX = null;
       } else {
-        const x = (tvColX == null) ? from.items[ci].x : tvColX;
-        target = to.items.reduce((b, m) => (b === null || Math.abs(m.x - x) < Math.abs(b.x - x)) ? m : b, null);
+        const x = (tvColX == null) ? tvColOf(from.items[ci]) : tvColX;
+        target = to.items.reduce((b, m) => (b === null || Math.abs(tvColOf(m) - x) < Math.abs(tvColOf(b) - x)) ? m : b, null);
         tvColX = x;                                         // hold the column down a grid
       }
     }
@@ -1953,11 +2081,18 @@
     document.body.classList.add('tv');
     document.addEventListener('keydown', tvSpatialNav);
     document.addEventListener('focusin', (e) => tvMark(e.target));
+    // The cached geometry is only stale when the DOM or the viewport changes.
+    if (window.MutationObserver) {
+      const mo = new MutationObserver(tvInvalidate);
+      mo.observe(document.body, { childList: true, subtree: true });
+    }
+    window.addEventListener('resize', tvInvalidate);
+    window.addEventListener('load', tvInvalidate);
     // Safety net: if anything drops focus all the way to <body> the remote looks
     // dead, so catch it on the way down and put the ring back. (An iframe holding
     // focus is the player doing its job — leave that alone.)
     document.addEventListener('focusout', () => setTimeout(() => {
-      if (tvObserver) return;   // a route change is already placing the ring
+      if (tvObserver || cursorActive()) return;   // a route change or the pointer owns focus
       const a = document.activeElement;
       if (!a || a === document.body || a === document.documentElement) tvRestoreFocus();
     }, 0));
@@ -1971,9 +2106,9 @@
     App.addListener('backButton', () => {
       const modal = document.querySelector('.modal-back');
       if (modal) { closeModal(modal); return; }
-      // In the player (focus handed to the embed, and/or full-screen): first Back
-      // returns to our UI rather than leaving the page.
-      if (document.body.classList.contains('player-focused') || document.body.classList.contains('cinema-on')) { exitCinema(); return; }
+      // In the player (pointer up, and/or full-screen): first Back returns to our UI
+      // rather than leaving the page.
+      if (cursorActive() || document.body.classList.contains('player-focused') || document.body.classList.contains('cinema-on')) { exitCinema(); return; }
       // history.length never decreases, so testing it meant exitApp() was unreachable
       // after the very first navigation and Back became inert on the home screen.
       // Track our own depth instead: Android TV's contract is "Back on root exits".
