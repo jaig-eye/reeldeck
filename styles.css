@@ -264,7 +264,7 @@ body::before {
 }
 .rail-arrow.left { left: 0; }
 .rail-arrow.right { right: 0; background: linear-gradient(270deg, rgba(0,0,0,.5), transparent); }
-.rail-wrap:hover .rail-arrow { opacity: 1; }
+@media (hover: hover) { .rail-wrap:hover .rail-arrow { opacity: 1; } }
 .rail-arrow svg { width: 30px; height: 30px; }
 .rail-arrow:hover { color: var(--accent); }
 
@@ -275,10 +275,16 @@ body::before {
 .card .poster .card-hover { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
   background: linear-gradient(0deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.15) 52%, transparent 100%);
   opacity: 0; pointer-events: none; transition: opacity .2s; padding: 12px; }
-.card:hover .poster .card-hover { opacity: 1; pointer-events: auto; }
+/* hover: hover ONLY. Touch browsers latch :hover on tap and hold it until something
+   else is tapped, which left this overlay interactive over the poster -- and it holds
+   a play button that goes straight to /watch, so the next tap on the same card jumped
+   into the player instead of the detail page. */
+@media (hover: hover) {
+  .card:hover .poster .card-hover { opacity: 1; pointer-events: auto; }
+}
 .ch-play { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(.6); width: 52px; height: 52px; border-radius: 50%;
   background: var(--accent); color: var(--accent-ink); border: 0; display: grid; place-items: center; cursor: pointer; transition: .2s; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
-.card:hover .poster .ch-play { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+@media (hover: hover) { .card:hover .poster .ch-play { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
 .ch-play svg { width: 25px; height: 25px; margin-left: 2px; }
 .ch-play:hover { filter: brightness(1.08); }
 .ch-title { color: #fff; font-weight: 700; font-size: 13px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -369,7 +375,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
   transition: transform .18s ease, box-shadow .18s ease;
   border: 1px solid rgba(255,255,255,.04);
 }
-.card:hover .poster { transform: translateY(-4px); box-shadow: 0 14px 34px rgba(0,0,0,.5); }
+@media (hover: hover) { .card:hover .poster { transform: translateY(-4px); box-shadow: 0 14px 34px rgba(0,0,0,.5); } }
 .card .poster img { width: 100%; height: 100%; object-fit: cover; }
 .card .poster .rate {
   position: absolute; top: 8px; left: 8px; background: rgba(11,13,18,.82);
@@ -909,7 +915,7 @@ body.tv nav.main a.active:focus, body.tv nav.main a.active.tv-focus {
 }
 body.tv .mirror:focus, body.tv .theme-card:focus, body.tv .chip:focus, body.tv .ep:focus, body.tv .person:focus,
 body.tv .mirror.tv-focus, body.tv .theme-card.tv-focus, body.tv .chip.tv-focus, body.tv .ep.tv-focus, body.tv .person.tv-focus {
-  box-shadow: var(--ring-glow), 0 12px 34px rgba(0,0,0,.55);
+  box-shadow: var(--ring-glow), 0 10px 20px rgba(0,0,0,.55);
   transform: scale(1.03); position: relative; z-index: 4;
 }
 body.tv .chip:focus, body.tv .chip.tv-focus { border-radius: 20px; }
@@ -922,10 +928,53 @@ body.tv .player-enter:focus .pe-pill, body.tv .player-enter.tv-focus .pe-pill {
   outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05);
 }
 
+/* The D-pad runs its own interruptible scroll (tvGlide). CSS smooth-scroll has to be
+   off wherever it does: setting scrollLeft/scrollTop obeys scroll-behavior, so leaving
+   it on stacks a second, non-retargetable animation on top of ours — which is exactly
+   the lag-then-bounce it was meant to remove. <html> is handled in app.js. */
+body.tv .track, body.tv .cast-track, body.tv .ep-list { scroll-behavior: auto; }
+
+/* ---- Settings > About: the update panel ------------------------------------
+   The banner announces; THIS is the control. The banner is pinned chrome that lands
+   wherever the row model puts it, so acting on it meant hunting for it with a remote.
+   Inside the Settings modal the ring is already here. */
+.upd-box { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.upd-box .upd-t { margin: 0; font-size: 13.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
+.upd-box .upd-warn { color: var(--accent); }
+.upd-box .ub-bar { width: 100%; height: 6px; border-radius: 99px; background: var(--surface); overflow: hidden; }
+.upd-box .ub-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); transition: width .25s ease; }
+.upd-box .ub-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: ub-spin .7s linear infinite; flex: none; }
+
+/* ---- TV: our own player controls -------------------------------------------
+   One flex row, so the D-pad row model reads the whole set as a single row and
+   Left/Right walks it. Volume, full screen and the pointer are genuinely ours; play
+   and seek are forwarded into the embed and depend on it binding them, which is why
+   the hint below says so rather than letting a dead button look broken. */
+.tv-controls, .tv-controls-hint { display: none; }
+body.tv .tv-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+/* Cinema mode fixes .player-frame over the whole viewport at z-index 300 and locks
+   body scrolling, so a control bar left in normal flow is buried underneath it --
+   pressing our own Full screen button would have thrown the controls away. Float it
+   above the frame instead, where a TV viewer expects it. */
+body.tv.cinema-on .tv-controls {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(16px + 3vh); z-index: 310; margin: 0;
+  max-width: 94vw; justify-content: center;
+  background: rgba(11,13,18,.82); border: 1px solid rgba(255,255,255,.2);
+  border-radius: 16px; padding: 14px 18px; backdrop-filter: blur(6px);
+  transition: opacity .35s ease;
+}
+body.tv.cinema-on .tv-controls.faded { opacity: 0; pointer-events: none; }
+/* The pointer owns the D-pad outright while it is up. */
+body.tv.cursor-on .tv-controls { display: none; }
+/* One full-screen control, not two: the source bar's "TV mode" does the same job. */
+body.tv .source-bar #tv-mode { display: none; }
+body.tv .tv-controls-hint { display: block; font-size: 13px; margin: 10px 0 0; max-width: 78ch; line-height: 1.5; }
+
 /* ---- Focus: cards ---------------------------------------------------------- */
 /* Only the SELECTED poster animates. Transitioning opacity on the twenty row-mates
    meant every press started twenty more compositor animations. */
-body.tv .card .poster { transition: transform .16s cubic-bezier(.2,.7,.3,1); }
+body.tv .card .poster { transition: transform .13s cubic-bezier(.2,.7,.3,1); }
 /* the ring belongs on the artwork, not on the card box (which includes the caption) */
 body.tv .card:focus, body.tv .card.tv-focus { outline: none; box-shadow: none; z-index: 6; }
 /* 1.10, not 1.14: scaling about the centre pushes the poster's bottom edge down by
@@ -934,7 +983,7 @@ body.tv .card:focus, body.tv .card.tv-focus { outline: none; box-shadow: none; z
    is written out on TV. */
 body.tv .card:focus .poster, body.tv .card.tv-focus .poster {
   transform: scale(1.10);
-  box-shadow: var(--ring-glow), 0 26px 70px rgba(0,0,0,.75);
+  box-shadow: var(--ring-glow), 0 14px 30px rgba(0,0,0,.7);
   position: relative; z-index: 6;
 }
 /* the focused poster grows downward by height x 0.05 plus its ring, so the caption
