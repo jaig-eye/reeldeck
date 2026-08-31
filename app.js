@@ -17,21 +17,31 @@
   // Mirror list lifted verbatim from the source site's own player module.
   // These are third-party embed providers — the app just frames them. Fully
   // editable/removable in Settings. Placeholders resolved by buildSourceUrl().
+  // Autoplay: the WebView is started with setMediaPlaybackRequiresUserGesture(false)
+  // (Capacitor's Bridge does it) and the player iframe carries allow="autoplay", so a
+  // mirror that asks to autoplay is permitted to. Whether it ASKS is per-provider:
+  //   verified   - VidSrc family (autoplay=1), VidKing (autoPlay=true), VidLink
+  //                (autoplay defaults to ON; passing autoplay=false is what disables it)
+  //   unverified - Cinemaos, MultiEmbed, AutoEmbed, 111Movies, VidFast publish no
+  //                parameter we could confirm, so none is invented here. An unknown
+  //                query parameter would be ignored, but so would our claim to know it.
+  // Ad-free tiers commonly ignore autoplay on purpose, and no parameter overrides a
+  // browser's own block on unmuted autoplay — this raises the odds, it is not a promise.
   const DEFAULT_SOURCES = [
-    { name: 'VidSrcMe',   movie: 'https://vidsrcme.su/embed/movie/{id}',                      tv: 'https://vidsrcme.su/embed/tv/{id}/{season}/{episode}' },
+    { name: 'VidSrcMe',   movie: 'https://vidsrcme.su/embed/movie/{id}?autoplay=1',           tv: 'https://vidsrcme.su/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'VidKing',    movie: 'https://www.vidking.net/embed/movie/{id}?autoPlay=true',    tv: 'https://www.vidking.net/embed/tv/{id}/{season}/{episode}?autoPlay=true&nextEpisode=true&episodeSelector=true' },
     { name: 'VidEasy',    movie: 'https://player.videasy.net/movie/{id}?color=%23{color}',    tv: 'https://player.videasy.net/tv/{id}/{season}/{episode}?color=%23{color}&nextEpisode=true&autoplayNextEpisode=true&episodeSelector=true' },
     { name: 'Cinemaos',   movie: 'https://cinemaos.tech/player/{id}',                         tv: 'https://cinemaos.tech/player/{id}/{season}/{episode}' },
-    { name: 'VidSrc RU',  movie: 'https://vidsrc-embed.ru/embed/movie/{id}',                  tv: 'https://vidsrc-embed.ru/embed/tv/{id}/{season}/{episode}' },
-    { name: 'VidSrc SU',  movie: 'https://vidsrc-embed.su/embed/movie/{id}',                  tv: 'https://vidsrc-embed.su/embed/tv/{id}/{season}/{episode}' },
+    { name: 'VidSrc RU',  movie: 'https://vidsrc-embed.ru/embed/movie/{id}?autoplay=1',       tv: 'https://vidsrc-embed.ru/embed/tv/{id}/{season}/{episode}?autoplay=1' },
+    { name: 'VidSrc SU',  movie: 'https://vidsrc-embed.su/embed/movie/{id}?autoplay=1',       tv: 'https://vidsrc-embed.su/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'MultiEmbed', movie: 'https://multiembed.mov/?video_id={id}&tmdb=1',              tv: 'https://multiembed.mov/?video_id={id}&tmdb=1&s={season}&e={episode}' },
-    { name: 'Vsrc',       movie: 'https://vsrc.su/embed/movie/{id}',                          tv: 'https://vsrc.su/embed/tv/{id}/{season}/{episode}' },
+    { name: 'Vsrc',       movie: 'https://vsrc.su/embed/movie/{id}?autoplay=1',               tv: 'https://vsrc.su/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'VidLink',    movie: 'https://vidlink.pro/movie/{id}',                            tv: 'https://vidlink.pro/tv/{id}/{season}/{episode}' },
-    { name: 'AutoEmbed',  movie: 'https://player.autoembed.app/embed/movie/{id}',            tv: 'https://player.autoembed.app/embed/tv/{id}/{season}/{episode}' },
+    { name: 'AutoEmbed',  movie: 'https://player.autoembed.app/embed/movie/{id}',             tv: 'https://player.autoembed.app/embed/tv/{id}/{season}/{episode}' },
     { name: 'VidFast',    movie: 'https://vidfast.pro/movie/{id}',                            tv: 'https://vidfast.pro/tv/{id}/{season}/{episode}' },
     { name: '111Movies',  movie: 'https://111movies.com/movie/{id}',                          tv: 'https://111movies.com/tv/{id}/{season}/{episode}' },
-    { name: 'Vidora',     movie: 'https://vidora.su/movie/{id}',                              tv: 'https://vidora.su/tv/{id}/{season}/{episode}?autoplay=true' },
-    { name: 'Smashy',     movie: 'https://player.smashystream.com/movie/{id}?autoplay=true',  tv: 'https://player.smashystream.com/tv/{id}?s={season}&e={episode}' }
+    { name: 'Vidora',     movie: 'https://vidora.su/movie/{id}?autoplay=true',                tv: 'https://vidora.su/tv/{id}/{season}/{episode}?autoplay=true' },
+    { name: 'Smashy',     movie: 'https://player.smashystream.com/movie/{id}?autoplay=true',  tv: 'https://player.smashystream.com/tv/{id}?s={season}&e={episode}&autoplay=true' }
   ];
 
   const DEFAULTS = {
@@ -83,6 +93,18 @@
     catch (e) { c = Object.assign({}, DEFAULTS); }
     // deep-copy sources so editing them never mutates DEFAULT_SOURCES
     c.sources = (Array.isArray(c.sources) ? c.sources : DEFAULT_SOURCES).map(s => Object.assign({}, s));
+    // Sources are snapshotted into localStorage on first run, so a shipped fix to a
+    // provider's URL (an autoplay parameter, a moved domain) would never reach anyone
+    // who already has the app. Refresh the entries we ship by name and leave anything
+    // the user added themselves alone.
+    c.sources = c.sources.map(s => {
+      const std = DEFAULT_SOURCES.find(d => d.name === s.name);
+      return std ? Object.assign({}, s, { movie: std.movie, tv: std.tv }) : s;
+    });
+    // ...and pick up providers added in a later release.
+    DEFAULT_SOURCES.forEach(d => {
+      if (!c.sources.some(s => s.name === d.name)) c.sources.push(Object.assign({}, d));
+    });
     return c;
   }
   function saveConfig() {
@@ -981,6 +1003,7 @@
     if (tv) tv.onclick = toggleCinema;
     const fr = $('#player-iframe');
     if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
+    nativeSetPlayer(!!fr);
     const pe = $('#player-enter');
     if (pe) pe.onclick = cursorOn;
     // On TV land focus on the player entry so OK immediately hands control to the embed.
@@ -1057,6 +1080,50 @@
   const NATIVE_TAP = !!(window.ReeldeckNative && typeof window.ReeldeckNative.postMessage === 'function');
   let curEl = null, curHint = null, curX = 0, curY = 0, curStep = 14, curLast = 0;
 
+  function nativeSend(msg) {
+    if (!NATIVE_TAP) return;
+    try { window.ReeldeckNative.postMessage(msg); } catch (e) {}
+  }
+  // Tell the native layer whether a player is on screen, so it only claims the
+  // remote's MEDIA keys where they mean something.
+  function nativeSetPlayer(on) { nativeSend('player:' + (on ? '1' : '0')); }
+
+  // A tap that lands inside the player moves DOM focus INTO the cross-origin iframe.
+  // Every key listener we have is on OUR document, and key events raised in another
+  // browsing context never reach it — so the first tap that actually works would kill
+  // the D-pad driving the cursor. Take the focus back. The click has already been
+  // dispatched by then; only the focus is reclaimed.
+  function cursorRefocus() {
+    if (!cursorActive() || !curEl) return;
+    if (document.activeElement === curEl) return;
+    try { curEl.focus({ preventScroll: true }); } catch (e) { try { curEl.focus(); } catch (e2) {} }
+  }
+  // Primary guard: the iframe ELEMENT lives in our document, so it does raise focusin
+  // here when the embed takes focus. Deliberately scoped to cursor mode — player-focus
+  // mode wants focus in the iframe and must not be fought.
+  document.addEventListener('focusin', (e) => {
+    if (cursorActive() && e.target && e.target.id === 'player-iframe') cursorRefocus();
+  });
+  if (NATIVE_TAP) {
+    try {
+      window.ReeldeckNative.onmessage = (ev) => {
+        const d = ev && ev.data;
+        // Backstop for the guard above: the native layer acks once the MotionEvent has
+        // actually been dispatched. Acking earlier would race the focus change.
+        if (d === 'tapped') return cursorRefocus();
+        // The remote's play/pause key. Our own document cannot script the embed, but a
+        // key event delivered while the iframe holds focus reaches the player's own
+        // handler — most bind Space. Focus it, then have native send a real Space.
+        if (d === 'key:playpause') {
+          if (!document.getElementById('player-iframe')) return;
+          cursorOff();
+          enterPlayerFocus();
+          nativeSend('space');
+        }
+      };
+    } catch (e) {}
+  }
+
   function cursorActive() { return document.body.classList.contains('cursor-on'); }
 
   function cursorOn() {
@@ -1120,9 +1187,11 @@
   function cursorTap() {
     if (curEl) { curEl.classList.remove('tap'); void curEl.offsetWidth; curEl.classList.add('tap'); }
     if (NATIVE_TAP) {
-      // Native works in device pixels; the page thinks in CSS pixels.
-      const dpr = window.devicePixelRatio || 1;
-      try { window.ReeldeckNative.postMessage('tap:' + Math.round(curX * dpr) + ',' + Math.round(curY * dpr)); } catch (e) {}
+      // Send a FRACTION of the viewport, not pixels. Converting CSS px to view px means
+      // trusting devicePixelRatio to be the exact page-to-view scale, which only holds
+      // while the page sits at scale 1; a fraction needs no such assumption.
+      const fx = curX / (window.innerWidth || 1), fy = curY / (window.innerHeight || 1);
+      try { window.ReeldeckNative.postMessage('tap:' + fx.toFixed(5) + ',' + fy.toFixed(5)); } catch (e) {}
       return;
     }
     // No bridge: a synthetic click still drives our own UI, never a cross-origin embed.
@@ -1414,6 +1483,7 @@
 
   function route() {
     routeSeq++;
+    nativeSetPlayer(false);      // every view starts with no player; watchView re-arms it
     const { parts, params } = parseHash();
     closeSuggest();
     clearHero();                 // stop billboard rotation when leaving Home

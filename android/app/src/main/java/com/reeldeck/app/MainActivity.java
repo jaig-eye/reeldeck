@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -24,12 +25,19 @@ import java.util.Set;
 
 public class MainActivity extends BridgeActivity {
 
+    /** Set once the web layer first talks to us; the only way to talk back. */
+    private volatile JavaScriptReplyProxy replyProxy;
+    /** True only while a player iframe is on screen — see nativeSetPlayer() in app.js. */
+    private volatile boolean playerOpen;
+    private WebView bridgeWebView;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         final WebView webView = getBridge().getWebView();
         if (webView == null) return;
+        bridgeWebView = webView;
 
         // Block pop-up / new-window ads spawned from the player iframe.
         webView.getSettings().setSupportMultipleWindows(false);
@@ -112,15 +120,46 @@ public class MainActivity extends BridgeActivity {
                             } catch (RuntimeException e) {
                                 return;
                             }
-                            if (data == null || !data.startsWith("tap:")) return;
+                            if (data == null) return;
 
+                            MainActivity.this.replyProxy = replyProxy;
+
+                            // The web layer tells us when a player is actually on
+                            // screen. Without it we would have to guess, and claiming
+                            // the remote's media keys on the wrong screen makes them
+                            // look broken.
+                            if (data.startsWith("player:")) {
+                                playerOpen = data.endsWith("1");
+                                return;
+                            }
+                            // Asked for after we hand it the play/pause key: focus is
+                            // in the embed by then, so a real Space reaches the
+                            // player's own key handler.
+                            if (data.equals("space")) {
+                                sendKeyToWeb(KeyEvent.KEYCODE_SPACE);
+                                return;
+                            }
+                            if (!data.startsWith("tap:")) return;
+
+                            // Normalised 0..1, deliberately: the page thinks in CSS
+                            // pixels and the view in physical ones, and the ratio
+                            // between them is only devicePixelRatio while the page
+                            // sits at scale 1. A fraction of the view needs no such
+                            // assumption and cannot drift.
                             final float[] p = parsePoint(data.substring(4));
                             if (p == null) return;
 
+                            final JavaScriptReplyProxy proxy = replyProxy;
                             webView.post(new Runnable() {
                                 @Override
                                 public void run() {
                                     dispatchTap(webView, p[0], p[1]);
+                                    // Ack only AFTER dispatch. A tap landing inside the
+                                    // embed pulls DOM focus in with it, and the web
+                                    // layer has to take it back or the D-pad goes dead;
+                                    // acking any earlier would race that focus change.
+                                    try { proxy.postMessage("tapped"); }
+                                    catch (RuntimeException e) { /* page went away */ }
                                 }
                             });
                         }
@@ -131,23 +170,58 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    /**
+     * The remote's dedicated media keys. WebView does not route these into page
+     * content, so left alone they do nothing at all on the watch screen. We only
+     * claim them while a player is up, and we do not act on them here: the web
+     * layer has to move focus into the embed first, then asks us for the Space.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        boolean isPlayPause = code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                || code == KeyEvent.KEYCODE_MEDIA_PLAY
+                || code == KeyEvent.KEYCODE_MEDIA_PAUSE;
+        if (playerOpen && isPlayPause) {
+            JavaScriptReplyProxy proxy = replyProxy;
+            if (proxy != null && event.getAction() == KeyEvent.ACTION_DOWN) {
+                try { proxy.postMessage("key:playpause"); }
+                catch (RuntimeException e) { /* page went away */ }
+            }
+            return true;   // consume DOWN and UP together, or the pair splits
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void sendKeyToWeb(int keyCode) {
+        WebView wv = bridgeWebView;
+        if (wv == null) return;
+        long t = SystemClock.uptimeMillis();
+        wv.dispatchKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, keyCode, 0));
+        wv.dispatchKeyEvent(new KeyEvent(t, t + 40, KeyEvent.ACTION_UP, keyCode, 0));
+    }
+
+    /** Parses "x,y" as two fractions of the view, each 0..1. */
     private static float[] parsePoint(String csv) {
         int comma = csv.indexOf(',');
         if (comma <= 0) return null;
         try {
             float x = Float.parseFloat(csv.substring(0, comma));
             float y = Float.parseFloat(csv.substring(comma + 1));
-            if (Float.isNaN(x) || Float.isNaN(y) || x < 0 || y < 0) return null;
+            if (Float.isNaN(x) || Float.isNaN(y)) return null;
+            if (x < 0 || x > 1 || y < 0 || y > 1) return null;
             return new float[]{x, y};
         } catch (NumberFormatException e) {
             return null;
         }
     }
 
-    private static void dispatchTap(WebView webView, float x, float y) {
+    private static void dispatchTap(WebView webView, float fx, float fy) {
+        int w = webView.getWidth(), h = webView.getHeight();
+        if (w <= 0 || h <= 0) return;
         // Clamp inside the view so a bad coordinate can never be dispatched elsewhere.
-        float cx = Math.max(0, Math.min(x, webView.getWidth() - 1));
-        float cy = Math.max(0, Math.min(y, webView.getHeight() - 1));
+        float cx = Math.max(0, Math.min(fx * w, w - 1));
+        float cy = Math.max(0, Math.min(fy * h, h - 1));
 
         long down = SystemClock.uptimeMillis();
         MotionEvent d = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, cx, cy, 0);
