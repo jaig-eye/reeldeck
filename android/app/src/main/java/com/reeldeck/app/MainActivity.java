@@ -1,16 +1,22 @@
 package com.reeldeck.app;
 
 import android.app.UiModeManager;
+import android.content.Context;
+import android.content.Intent;
 import android.content.res.Configuration;
+import android.media.AudioManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 
+import androidx.core.content.FileProvider;
 import androidx.webkit.JavaScriptReplyProxy;
 import androidx.webkit.WebMessageCompat;
 import androidx.webkit.WebViewCompat;
@@ -19,6 +25,11 @@ import androidx.webkit.WebViewFeature;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -29,6 +40,10 @@ public class MainActivity extends BridgeActivity {
     private volatile JavaScriptReplyProxy replyProxy;
     /** True only while a player iframe is on screen — see nativeSetPlayer() in app.js. */
     private volatile boolean playerOpen;
+    private volatile boolean downloading;
+    /** Media keys are a REMOTE affordance; on a phone they belong to whatever the
+     *  user was actually listening to, so we never take them there. */
+    private volatile boolean isTelevision;
     private WebView bridgeWebView;
 
     @Override
@@ -43,11 +58,16 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setSupportMultipleWindows(false);
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
 
+        // Hardware volume keys should move MEDIA volume, not the ringer — the app is
+        // a video player and there is nothing else on a TV for them to mean.
+        setVolumeControlStream(AudioManager.STREAM_MUSIC);
+
         // On a TV, flag it to the web layer (via UA) so it can switch on the
         // 10-foot / D-pad experience. Set before the queued page load runs.
         UiModeManager uiMode = (UiModeManager) getSystemService(UI_MODE_SERVICE);
         boolean isTv = uiMode != null
                 && uiMode.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+        isTelevision = isTv;
         if (isTv) {
             String ua = webView.getSettings().getUserAgentString();
             if (ua != null && !ua.contains("ReeldeckTV")) {
@@ -55,7 +75,10 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
-        if (isTv) installPointerBridge(webView);
+        // Installed on EVERY Android build, not just TV: the pointer is only one of the
+        // things that rides this channel, and self-updating matters just as much on a
+        // phone. The web layer decides what to use.
+        installNativeBridge(webView);
 
         // Block the other ad vector: a framed player trying to navigate the WHOLE
         // app (top frame) to an ad URL. Allow the iframe's own sub-frame loads
@@ -79,14 +102,15 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * A D-pad-driven pointer for the video players.
+     * The app's one channel to the web layer.
      *
-     * The mirrors are cross-origin iframes and their play/pause controls are plain
-     * <div>s with click handlers — not focusable, so no amount of DOM focus will ever
-     * land on one, and the web layer cannot script into the frame to click it. The one
-     * thing that does reach inside is a real MotionEvent: the compositor hit-tests it
-     * exactly like a finger and routes it to whichever frame is under the point. So the
-     * web layer draws a cursor, moves it with the D-pad, and asks us to tap through it.
+     * The headline user of it is a D-pad-driven pointer for the video players. The
+     * mirrors are cross-origin iframes and their play/pause controls are plain <div>s
+     * with click handlers — not focusable, so no amount of DOM focus will ever land on
+     * one, and the web layer cannot script into the frame to click it. The one thing
+     * that does reach inside is a real MotionEvent: the compositor hit-tests it exactly
+     * like a finger and routes it to whichever frame is under the point. So the web
+     * layer draws a cursor, moves it with the D-pad, and asks us to tap through it.
      *
      * Deliberately WebMessageListener rather than addJavascriptInterface: a JS interface
      * is injected into every frame, which would hand a synthetic-tap primitive to the
@@ -95,7 +119,7 @@ public class MainActivity extends BridgeActivity {
      * is unavailable (WebView < 88) the bridge is simply absent and the web layer says
      * pointer control is not supported rather than falling back to the unsafe API.
      */
-    private void installPointerBridge(final WebView webView) {
+    private void installNativeBridge(final WebView webView) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return;
 
         // Capacitor serves the app from https://localhost (androidScheme in
@@ -132,13 +156,22 @@ public class MainActivity extends BridgeActivity {
                                 playerOpen = data.endsWith("1");
                                 return;
                             }
-                            // Asked for after we hand it the play/pause key: focus is
-                            // in the embed by then, so a real Space reaches the
-                            // player's own key handler.
-                            if (data.equals("space")) {
-                                sendKeyToWeb(KeyEvent.KEYCODE_SPACE);
+                            // Asked for after we hand it a media key: focus is in the
+                            // embed by then, so a real key press reaches the player's
+                            // own handler.
+                            if (data.equals("space")) { sendKeyToWeb(KeyEvent.KEYCODE_SPACE); return; }
+                            if (data.equals("left"))  { sendKeyToWeb(KeyEvent.KEYCODE_DPAD_LEFT); return; }
+                            if (data.equals("right")) { sendKeyToWeb(KeyEvent.KEYCODE_DPAD_RIGHT); return; }
+
+                            // Volume is the one player control we can work the whole
+                            // way ourselves — it is the device's, not the embed's.
+                            if (data.startsWith("vol:")) { adjustVolume(data.substring(4)); return; }
+
+                            if (data.startsWith("update:")) {
+                                downloadAndInstall(data.substring(7));
                                 return;
                             }
+
                             if (!data.startsWith("tap:")) return;
 
                             // Normalised 0..1, deliberately: the page thinks in CSS
@@ -170,11 +203,25 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    /** Send one line back to the web layer. Safe to call from any thread. */
+    private void toWeb(final String msg) {
+        final WebView wv = bridgeWebView;
+        if (wv == null) return;
+        wv.post(new Runnable() {
+            @Override
+            public void run() {
+                JavaScriptReplyProxy p = replyProxy;
+                if (p == null) return;
+                try { p.postMessage(msg); } catch (RuntimeException e) { /* page went away */ }
+            }
+        });
+    }
+
     /**
      * The remote's dedicated media keys. WebView does not route these into page
      * content, so left alone they do nothing at all on the watch screen. We only
      * claim them while a player is up, and we do not act on them here: the web
-     * layer has to move focus into the embed first, then asks us for the Space.
+     * layer has to move focus into the embed first, then asks us for the key.
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
@@ -182,11 +229,12 @@ public class MainActivity extends BridgeActivity {
         boolean isPlayPause = code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
                 || code == KeyEvent.KEYCODE_MEDIA_PLAY
                 || code == KeyEvent.KEYCODE_MEDIA_PAUSE;
-        if (playerOpen && isPlayPause) {
-            JavaScriptReplyProxy proxy = replyProxy;
-            if (proxy != null && event.getAction() == KeyEvent.ACTION_DOWN) {
-                try { proxy.postMessage("key:playpause"); }
-                catch (RuntimeException e) { /* page went away */ }
+        boolean isSeek = code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+                || code == KeyEvent.KEYCODE_MEDIA_REWIND;
+        if (isTelevision && playerOpen && (isPlayPause || isSeek)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                toWeb(isPlayPause ? "key:playpause"
+                        : (code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? "key:forward" : "key:rewind"));
             }
             return true;   // consume DOWN and UP together, or the pair splits
         }
@@ -199,6 +247,109 @@ public class MainActivity extends BridgeActivity {
         long t = SystemClock.uptimeMillis();
         wv.dispatchKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, keyCode, 0));
         wv.dispatchKeyEvent(new KeyEvent(t, t + 40, KeyEvent.ACTION_UP, keyCode, 0));
+        // Delivered. The web layer has to take focus back off the embed now, or the
+        // cross-origin frame keeps the remote and the D-pad is gone until Back.
+        toWeb("keysent");
+    }
+
+    private void adjustVolume(String what) {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
+        int dir;
+        if ("up".equals(what)) dir = AudioManager.ADJUST_RAISE;
+        else if ("down".equals(what)) dir = AudioManager.ADJUST_LOWER;
+        else if ("mute".equals(what)) dir = AudioManager.ADJUST_TOGGLE_MUTE;
+        else return;
+        try {
+            am.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI);
+        } catch (SecurityException e) {
+            return;   // some TV builds refuse ADJUST_TOGGLE_MUTE
+        }
+        int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int cur = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+        toWeb("vol:" + (max > 0 ? (cur * 100 / max) : 0));
+    }
+
+    /**
+     * Fetch a release APK and hand it to the package installer.
+     *
+     * A TV has no browser to fall back on and no file manager to find a download in,
+     * so "go to the website and sideload it" is not an instruction anyone can follow
+     * with a remote. Progress goes back to the web layer because a silent 7 MB
+     * download on a slow connection is indistinguishable from a hang.
+     */
+    private void downloadAndInstall(final String url) {
+        if (downloading) return;
+        if (url == null || !url.startsWith("https://")) { toWeb("upd:err:Bad update URL."); return; }
+        // On O+ the install intent is refused outright unless the user has granted
+        // this app the right to install. Ask FIRST — failing after the download
+        // wastes it and explains nothing.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+            toWeb("upd:err:Allow Reeldeck to install apps, then press Update again.");
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (RuntimeException e) { /* no such settings screen on this build */ }
+            return;
+        }
+        downloading = true;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                HttpURLConnection c = null;
+                InputStream in = null;
+                FileOutputStream out = null;
+                File apk = new File(getCacheDir(), "update.apk");
+                try {
+                    c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setInstanceFollowRedirects(true);
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(30000);
+                    c.connect();
+                    if (c.getResponseCode() / 100 != 2) throw new Exception("HTTP " + c.getResponseCode());
+                    int total = c.getContentLength();
+                    in = c.getInputStream();
+                    out = new FileOutputStream(apk);
+                    byte[] buf = new byte[65536];
+                    long got = 0;
+                    int last = -1, n;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                        got += n;
+                        if (total > 0) {
+                            int pct = (int) (got * 100 / total);
+                            // Only on change: a message per 64 KB chunk would be
+                            // hundreds of pointless hops across the bridge.
+                            if (pct != last) { last = pct; toWeb("upd:" + pct); }
+                        }
+                    }
+                    out.flush();
+                    out.close(); out = null;
+                    install(apk);
+                } catch (Exception e) {
+                    String m = e.getMessage();
+                    toWeb("upd:err:" + (m == null ? "Download failed." : m));
+                } finally {
+                    downloading = false;
+                    try { if (out != null) out.close(); } catch (Exception ignored) {}
+                    try { if (in != null) in.close(); } catch (Exception ignored) {}
+                    if (c != null) c.disconnect();
+                }
+            }
+        }).start();
+    }
+
+    private void install(File apk) {
+        try {
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(uri, "application/vnd.android.package-archive");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+            toWeb("upd:done");
+        } catch (RuntimeException e) {
+            toWeb("upd:err:Could not start the installer.");
+        }
     }
 
     /** Parses "x,y" as two fractions of the view, each 0..1. */

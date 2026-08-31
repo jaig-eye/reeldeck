@@ -40,4 +40,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Self-update: a TV has no browser to sideload from and no file manager to
+         find a download in, so the app fetches its own APK and hands it to the
+         package installer. The user still confirms in the system installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>

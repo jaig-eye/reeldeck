@@ -157,8 +157,14 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.8';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.9';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
+  // The universal APK the CI attaches to every release — the same file Downloader
+  // fetches when installing on a TV by hand.
+  const APK_URL = 'https://github.com/' + REPO + '/releases/latest/download/Reeldeck.apk';
+  // One state object drives the Settings panel AND the banner, so they can never
+  // disagree about whether an update is waiting.
+  let updState = { s: 'idle', v: null, pct: 0, msg: '' };
 
   // TV / D-pad state — declared up here (not next to the nav functions further
   // down) because route() and other render paths call tvFocusFirst()/tvSpatialNav()
@@ -194,10 +200,23 @@
   // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
   // offset so its row keeps a fixed place in the order — otherwise the update
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
-  const TV_PINNED = 'header.top, #update-banner, #cinema-exit, .toast';
+  // #tv-controls only counts as pinned while cinema mode has it fixed over the
+  // player; in normal flow it is an ordinary row and must be measured as one.
+  const TV_PINNED = 'header.top, #update-banner, #cinema-exit, .toast, body.cinema-on #tv-controls';
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
+  // Selection movement. The browser's own smooth scroll CANNOT be retargeted: press
+  // Down again mid-animation and it starts a second one from wherever the first got
+  // to, so a held D-pad reads as lag and then bounce. Ours keeps one animation per
+  // scroller and just moves its target. Declared up here for the same reason as
+  // everything else in this block — tvFocusEl runs on the boot render.
+  const TV_GLIDE_MS = 170;
+  const tvScrolls = [];
+  let tvScrollRAF = 0;
+  // Setting scrollTop/scrollLeft obeys scroll-behavior, so the CSS smooth-scroll on
+  // <html> would animate every frame we write. Off on TV; styles.css does the rails.
+  if (IS_TV) { try { document.documentElement.style.scrollBehavior = 'auto'; } catch (e) {} }
   let tvDomGen = 0;                                  // bumped whenever measured geometry can have changed
   let tvRowCache = null;                             // { gen, scope, rows } — see tvRowModel
   let tvMarked = null;                               // element currently wearing .tv-focus
@@ -941,6 +960,18 @@
         </div>
         <div class="player-frame">${frameInner}${IS_TV && src ? `<button class="player-enter" id="player-enter" aria-label="Control the player with the remote">
             <span class="pe-pill">${ICON.play} Control player</span><small>OK turns the remote into a pointer</small></button>` : ''}</div>
+        ${IS_TV && src ? `
+        <div class="tv-controls" id="tv-controls" role="group" aria-label="Player controls">
+          <button class="btn sm" data-pk="space">${ICON.play} Play / Pause</button>
+          <button class="btn sm" data-pk="left" aria-label="Back 10 seconds">« 10s</button>
+          <button class="btn sm" data-pk="right" aria-label="Forward 10 seconds">10s »</button>
+          <button class="btn sm" data-vol="down" aria-label="Volume down">Vol −</button>
+          <button class="btn sm" data-vol="up" aria-label="Volume up">Vol +</button>
+          <button class="btn sm" data-vol="mute" aria-label="Mute">Mute</button>
+          <button class="btn sm" id="tvc-pointer">Pointer</button>
+          <button class="btn sm" id="tvc-full">⛶ Full screen</button>
+        </div>
+        <p class="tv-controls-hint muted">Volume, full screen and the pointer are ours and always work. Play and seek are passed to the mirror — if one ignores them, use <b>Pointer</b> to press its own controls.</p>` : ''}
         <div class="source-bar">
           <span class="lbl">${src ? 'Now playing: <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try next server →</button>` : ''}
@@ -1004,6 +1035,17 @@
     const fr = $('#player-iframe');
     if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
     nativeSetPlayer(!!fr);
+    const tvc = $('#tv-controls');
+    if (tvc) tvc.onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.pk) {
+        if (!playerKey(b.dataset.pk)) toast('Player control needs the Reeldeck app on your TV');
+        return;
+      }
+      if (b.dataset.vol) { nativeSend('vol:' + b.dataset.vol); return; }
+      if (b.id === 'tvc-pointer') { cursorOn(); return; }
+      if (b.id === 'tvc-full') { toggleCinema(); return; }
+    };
     const pe = $('#player-enter');
     if (pe) pe.onclick = cursorOn;
     // On TV land focus on the player entry so OK immediately hands control to the embed.
@@ -1018,8 +1060,16 @@
   let cinemaTimer, cinemaReveal;
   function revealCinema() {
     const ex = $('#cinema-exit'); if (ex) ex.classList.remove('faded');
+    // The TV control bar rides the same timer — parked permanently over the film it
+    // would be worse than not having it.
+    const tc = $('#tv-controls'); if (tc) tc.classList.remove('faded');
     clearTimeout(cinemaTimer);
-    cinemaTimer = setTimeout(() => { const e2 = $('#cinema-exit'); if (e2) e2.classList.add('faded'); }, 3000);
+    cinemaTimer = setTimeout(() => {
+      const e2 = $('#cinema-exit'); if (e2) e2.classList.add('faded');
+      const t2 = $('#tv-controls');
+      // Never fade it out from under the ring — that is a dead remote.
+      if (t2 && !t2.contains(document.activeElement)) t2.classList.add('faded');
+    }, 3000);
   }
   function enterCinema() {
     const frame = $('.player-frame'); if (!frame) return;
@@ -1108,17 +1158,30 @@
     try {
       window.ReeldeckNative.onmessage = (ev) => {
         const d = ev && ev.data;
+        if (typeof d !== 'string') return;
         // Backstop for the guard above: the native layer acks once the MotionEvent has
         // actually been dispatched. Acking earlier would race the focus change.
         if (d === 'tapped') return cursorRefocus();
-        // The remote's play/pause key. Our own document cannot script the embed, but a
-        // key event delivered while the iframe holds focus reaches the player's own
-        // handler — most bind Space. Focus it, then have native send a real Space.
-        if (d === 'key:playpause') {
-          if (!document.getElementById('player-iframe')) return;
-          cursorOff();
-          enterPlayerFocus();
-          nativeSend('space');
+        // The remote's own media keys, handed to us by MainActivity because WebView
+        // will not route them into page content on its own.
+        if (d === 'key:playpause') return void playerKey('space');
+        if (d === 'key:forward') return void playerKey('right');
+        if (d === 'key:rewind') return void playerKey('left');
+        // The key has been dispatched into the embed; take the remote back, or the
+        // cross-origin frame keeps it and the D-pad is gone until Back.
+        if (d === 'keysent') return playerKeyReturn();
+        if (d.indexOf('vol:') === 0) {
+          const pct = parseInt(d.slice(4), 10);
+          if (!isNaN(pct)) toast('Volume ' + pct + '%');
+          return;
+        }
+        if (d.indexOf('upd:') === 0) {
+          const rest = d.slice(4);
+          if (rest.indexOf('err:') === 0) return updSet('error', { msg: rest.slice(4) });
+          if (rest === 'done') return updSet('done');
+          const pct = parseInt(rest, 10);
+          if (!isNaN(pct)) updSet('downloading', { pct: pct });
+          return;
         }
       };
     } catch (e) {}
@@ -1182,6 +1245,47 @@
     curX = Math.max(6, Math.min(curX, window.innerWidth - 6));
     curY = Math.max(6, Math.min(curY, window.innerHeight - 6));
     cursorDraw();
+  }
+
+  // Where the ring was before we borrowed focus for a key press.
+  let pkReturn = null;
+  /**
+   * Work one of the EMBED's own controls.
+   *
+   * We cannot script a cross-origin frame, but a key event delivered while that frame
+   * holds focus reaches the player's own handler, and most bind Space to play/pause
+   * and the arrows to seek. So: focus the frame, have native dispatch a real key, and
+   * take focus back the moment it acks. Best-effort by nature — a mirror that binds
+   * nothing will ignore it, which is what the Pointer button is for.
+   */
+  function playerKey(which) {
+    const fr = document.getElementById('player-iframe');
+    // TV only. This exists so a REMOTE can reach controls it cannot touch; on a phone
+    // you just tap them, and enterPlayerFocus() would force the app into cinema mode.
+    if (!fr || !NATIVE_TAP || !IS_TV) return false;
+    const a = document.activeElement;
+    // Keep the LAST real target. A second press lands while focus is already inside
+    // the embed, and overwriting with null there is what stranded the remote.
+    const cand = (a && a !== document.body && a.id !== 'player-iframe') ? a : null;
+    if (cand) pkReturn = cand;
+    cursorOff();
+    enterPlayerFocus();
+    nativeSend(which);
+    // If the ack never lands (an old WebView, a page swapped underneath us) focus is
+    // stranded in the embed and the D-pad is dead until Back. Reclaim it anyway.
+    clearTimeout(playerKey._t);
+    playerKey._t = setTimeout(playerKeyReturn, 700);
+    return true;
+  }
+  function playerKeyReturn() {
+    clearTimeout(playerKey._t);
+    const el = pkReturn; pkReturn = null;
+    // Release FIRST and unconditionally: bailing early here left focus in the
+    // cross-origin frame, which takes the D-pad with it until Back.
+    releasePlayerFocus();
+    if (el && document.body.contains(el)) {
+      if (IS_TV) tvFocusEl(el); else { try { el.focus(); } catch (e) {} }
+    }
   }
 
   function cursorTap() {
@@ -1391,6 +1495,11 @@
         <div class="set-group">
           <button class="btn sm" id="set-getapp" style="width:100%;justify-content:center">${ICON.tv} Install on TV / other devices</button>
         </div>
+        <div class="set-group">
+          <h4>About</h4>
+          <p class="hint">Reeldeck <b>v${APP_VERSION}</b> · ${IS_TV ? 'Android TV' : IS_DESKTOP ? 'Desktop' : 'Web'}</p>
+          <div class="upd-box" id="set-upd"></div>
+        </div>
         <div class="set-actions">
           <button class="btn" id="set-reset">Reset</button>
           <button class="btn primary" data-close>Done</button>
@@ -1407,6 +1516,7 @@
       card.classList.add('on');
       saveConfig();  // applyTheme runs -> live switch
     };
+    renderUpdBox();
     const ga = $('#set-getapp', back);
     if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
     $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
@@ -1483,6 +1593,7 @@
 
   function route() {
     routeSeq++;
+    tvGlideStop();               // the nodes we were animating are about to be replaced
     nativeSetPlayer(false);      // every view starts with no player; watchView re-arms it
     const { parts, params } = parseHash();
     closeSuggest();
@@ -1744,13 +1855,91 @@
     const i = document.getElementById('ub-install'); if (i) i.onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
     updWireDismiss();
   }
-  // Web/Android can't self-install — point at the install screen.
+  // The banner ANNOUNCES; Settings is where you act. On a TV the banner is pinned
+  // chrome that lands wherever the row model puts it, so hunting for its button with
+  // a remote was the worst part of updating — and the button went to the sideload
+  // instructions, which is not something you can follow on the device you are holding.
   function updWebAvailable(version) {
     const ub = document.getElementById('update-btn'); if (ub) ub.classList.add('has-update');
+    updSet('available', { v: version });
     updBanner().innerHTML = '<span class="ub-msg">New version available — v' + esc(version) + '.</span>' +
-      '<button class="btn sm primary" id="ub-get">Get it</button><button class="btn sm" id="ub-x">Later</button>';
-    const g = document.getElementById('ub-get'); if (g) g.onclick = () => { updClose(); go('#/get-app'); };
+      '<button class="btn sm primary" id="ub-get">' + (updCanInstall() ? 'Update' : 'Get it') + '</button>' +
+      '<button class="btn sm" id="ub-x">Later</button>';
+    const g = document.getElementById('ub-get');
+    if (g) g.onclick = () => { updClose(); openSettings(); };
     updWireDismiss();
+  }
+
+  function updSet(st, extra) {
+    updState = Object.assign({ s: st, v: updState.v, pct: 0, msg: '' }, extra || {});
+    updState.s = st;
+    renderUpdBox();
+  }
+  // Only the Android build can install itself: it has the bridge, the permission and
+  // a package installer. Desktop hands off to electron-updater; the plain web build
+  // has nowhere to put an APK.
+  function updCanInstall() { return !IS_DESKTOP && NATIVE_TAP; }
+
+  function renderUpdBox() {
+    const box = document.getElementById('set-upd');
+    if (!box) return;
+    const st = updState;
+    // A percentage tick must not replace the DOM the ring is standing on — at one
+    // re-render per percent that would fight the remote a hundred times a download.
+    if (st.s === 'downloading' && box.dataset.s === 'downloading') {
+      const bar = box.querySelector('.ub-bar i'); if (bar) bar.style.width = st.pct + '%';
+      const t = box.querySelector('.upd-t'); if (t) t.textContent = 'Downloading update… ' + st.pct + '%';
+      return;
+    }
+    const hadFocus = box.contains(document.activeElement);
+    let html;
+    if (st.s === 'checking') {
+      html = '<p class="upd-t"><span class="ub-spin"></span>Checking for updates…</p>';
+    } else if (st.s === 'downloading') {
+      html = '<p class="upd-t">Downloading update… ' + st.pct + '%</p>' +
+             '<div class="ub-bar"><i style="width:' + st.pct + '%"></i></div>';
+    } else if (st.s === 'ready') {
+      html = '<p class="upd-t">Update ready.</p><button class="btn sm primary" id="upd-go">Restart &amp; update</button>';
+    } else if (st.s === 'done') {
+      html = '<p class="upd-t">Installer opened — confirm it on screen to finish.</p>';
+    } else if (st.s === 'error') {
+      html = '<p class="upd-t upd-warn">' + esc(st.msg || 'Update failed.') + '</p>' +
+             '<button class="btn sm primary" id="upd-go">Try again</button>';
+    } else if (st.s === 'available') {
+      html = '<p class="upd-t">Version <b>v' + esc(st.v || '') + '</b> is available.</p>' +
+             '<button class="btn sm primary" id="upd-go">' +
+             (updCanInstall() ? 'Download &amp; install' : IS_DESKTOP ? 'Download &amp; restart' : 'How to install') +
+             '</button>';
+    } else if (st.s === 'none') {
+      html = '<p class="upd-t">You are on the latest version.</p><button class="btn sm" id="upd-check">Check again</button>';
+    } else {
+      html = '<button class="btn sm" id="upd-check">Check for updates</button>';
+    }
+    box.innerHTML = html;
+    box.dataset.s = st.s;
+    const c = box.querySelector('#upd-check'); if (c) c.onclick = () => checkForUpdate(true, true);
+    const g = box.querySelector('#upd-go');    if (g) g.onclick = updInstall;
+    if (IS_TV) tvInvalidate();
+    // The button we were standing on has just been replaced. Put the ring on its
+    // successor, or focus falls back to <body> and the remote goes dead mid-update.
+    if (hadFocus) {
+      const b = box.querySelector('button');
+      if (b) { if (IS_TV) tvFocusEl(b); else { try { b.focus(); } catch (e) {} } }
+    }
+  }
+
+  function updInstall() {
+    if (IS_DESKTOP) {
+      if (updState.s === 'ready' && window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate();
+      else checkForUpdate(true, true);
+      return;
+    }
+    if (!updCanInstall()) {   // plain web build: nowhere to put an APK
+      const m = document.querySelector('.modal-back'); if (m) closeModal(m);
+      go('#/get-app'); return;
+    }
+    updSet('downloading', { pct: 0 });
+    nativeSend('update:' + APK_URL);
   }
 
   // Desktop auto-update: drive the banner from main-process (electron-updater) events.
@@ -1760,12 +1949,13 @@
   if (window.reeldeck && window.reeldeck.onUpdate) {
     window.reeldeck.onUpdate((d) => {
       if (!d) return;
-      if (d.state === 'checking') { if (updInteractive) updChecking(); }
-      else if (d.state === 'available') updDownloading(0);
-      else if (d.state === 'downloading') updDownloading(d.percent);
-      else if (d.state === 'ready') { updReady(d.version); updInteractive = false; }
-      else if (d.state === 'none') { if (updInteractive) updNone(); updInteractive = false; }
-      else if (d.state === 'error') { if (updInteractive) updError('Update failed — ' + (d.message || 'try again later.')); updInteractive = false; }
+      // Drive the Settings panel from the same events, so the two cannot disagree.
+      if (d.state === 'checking') { updSet('checking'); if (updInteractive) updChecking(); }
+      else if (d.state === 'available') { updSet('downloading', { pct: 0, v: d.version }); updDownloading(0); }
+      else if (d.state === 'downloading') { updSet('downloading', { pct: d.percent || 0 }); updDownloading(d.percent); }
+      else if (d.state === 'ready') { updSet('ready', { v: d.version }); updReady(d.version); updInteractive = false; }
+      else if (d.state === 'none') { updSet('none'); if (updInteractive) updNone(); updInteractive = false; }
+      else if (d.state === 'error') { updSet('error', { msg: 'Update failed — ' + (d.message || 'try again later.') }); if (updInteractive) updError('Update failed — ' + (d.message || 'try again later.')); updInteractive = false; }
     });
   }
 
@@ -1776,22 +1966,29 @@
   }
   // Cross-platform update check. Desktop hands off to electron-updater (events above);
   // web/Android queries the GitHub Releases API and offers a manual install.
-  async function checkForUpdate(interactive) {
+  // `quiet` = the Settings panel is already showing progress, so don't also float a
+  // banner over it saying the same thing.
+  async function checkForUpdate(interactive, quiet) {
     if (IS_DESKTOP && window.reeldeck && window.reeldeck.checkForUpdates) {
-      updInteractive = !!interactive;
-      if (interactive) updChecking();
+      updInteractive = !!interactive && !quiet;
+      if (interactive && !quiet) updChecking();
       window.reeldeck.checkForUpdates();
       return;
     }
-    if (interactive) updChecking();
+    if (interactive) { updSet('checking'); if (!quiet) updChecking(); }
     try {
       const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
       if (!r.ok) throw new Error('http ' + r.status);
       const d = await r.json();
       const latest = (d.tag_name || '').replace(/^v/, '');
       if (latest && verCmp(latest, APP_VERSION) > 0) updWebAvailable(latest);
-      else if (interactive) updNone();
-    } catch (e) { if (interactive) updError('Update check failed — check your connection.'); }
+      else if (interactive) { updSet('none'); if (!quiet) updNone(); }
+    } catch (e) {
+      if (interactive) {
+        updSet('error', { msg: 'Update check failed — check your connection.' });
+        if (!quiet) updError('Update check failed — check your connection.');
+      }
+    }
   }
 
   /* ---------- TV / D-pad navigation (Android TV, Google TV) ---------- */
@@ -1924,7 +2121,36 @@
   // app — a page scroll on every D-pad press — was the one the preference could not
   // switch off. Ask directly instead.
   const tvReduceMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  function tvEase() { return (tvReduceMQ && tvReduceMQ.matches) ? 'auto' : 'smooth'; }
+  function tvNow() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  function tvScrollGet(el) { return el === window ? (window.scrollY || window.pageYOffset || 0) : el.scrollLeft; }
+  function tvScrollSet(el, v) { if (el === window) window.scrollTo(0, v); else el.scrollLeft = v; }
+  // Move `el` to `to`, retargeting instead of stacking. One rAF loop drives every
+  // active scroller, so a vertical page move and a horizontal rail move during the
+  // same keypress stay in step rather than racing.
+  function tvGlide(el, to) {
+    to = Math.round(to);
+    const from = tvScrollGet(el);
+    if (tvReduceMQ && tvReduceMQ.matches) { tvScrollSet(el, to); return; }
+    if (Math.abs(to - from) < 2) { tvScrollSet(el, to); return; }
+    let a = null;
+    for (let i = 0; i < tvScrolls.length; i++) { if (tvScrolls[i].el === el) { a = tvScrolls[i]; break; } }
+    if (a) { a.from = from; a.to = to; a.t0 = tvNow(); }
+    else tvScrolls.push({ el: el, from: from, to: to, t0: tvNow() });
+    if (!tvScrollRAF) tvScrollRAF = requestAnimationFrame(tvGlideStep);
+  }
+  function tvGlideStep() {
+    const t = tvNow();
+    for (let i = tvScrolls.length - 1; i >= 0; i--) {
+      const a = tvScrolls[i];
+      const k = Math.min(1, (t - a.t0) / TV_GLIDE_MS);
+      const e = 1 - Math.pow(1 - k, 3);        // ease-out: fast off the mark, settles
+      tvScrollSet(a.el, a.from + (a.to - a.from) * e);
+      if (k >= 1) tvScrolls.splice(i, 1);
+    }
+    tvScrollRAF = tvScrolls.length ? requestAnimationFrame(tvGlideStep) : 0;
+  }
+  // A re-render replaces the scrollers we were animating; keep no handles on them.
+  function tvGlideStop() { tvScrolls.length = 0; }
 
   // Focus WITHOUT the browser's own scroll, then place the selection ourselves: a
   // carousel centres its item sideways, the page centres the row vertically, and the
@@ -1938,9 +2164,9 @@
     if (hs && hs.scrollWidth > hs.clientWidth + 4) {
       const r = el.getBoundingClientRect(), hr = hs.getBoundingClientRect();
       const left = Math.max(0, hs.scrollLeft + (r.left - hr.left) - (hr.width - r.width) / 2);
-      try { hs.scrollTo({ left: left, behavior: tvEase() }); } catch (e) { hs.scrollLeft = left; }
+      tvGlide(hs, left);
     }
-    if (el.closest(TV_PINNED)) { if (el.closest('header.top')) window.scrollTo({ top: 0, behavior: tvEase() }); return; }
+    if (el.closest(TV_PINNED)) { if (el.closest('header.top')) tvGlide(window, 0); return; }
     if (el.closest('.modal-back')) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} return; }
     const r2 = el.getBoundingClientRect();
     const vh = window.innerHeight || 0;
@@ -1956,7 +2182,7 @@
     // down is what made the hero look sliced off under the bar — the first row should
     // always show the whole hero, not most of it.
     if (top < vh * 0.42) top = 0;
-    try { window.scrollTo({ top: top, behavior: tvEase() }); } catch (e) { window.scrollTo(0, top); }
+    tvGlide(window, top);
   }
 
   // The highlight is a class we own, not just :focus. A WebView that loses window
