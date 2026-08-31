@@ -135,7 +135,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.6';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.7';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
 
   // TV / D-pad state — declared up here (not next to the nav functions further
@@ -143,8 +143,36 @@
   // at boot, BEFORE those later lines would run. Declaring them there left them in
   // the temporal dead zone, so the first call threw "Cannot access 'X' before
   // initialization" and aborted the whole app on TV (blank home, dead D-pad).
-  const TV_FOCUSABLE = '[data-nav], button:not([disabled]), input:not([type="hidden"]), select, [tabindex="0"]';
-  let tvObserver = null, tvTimeout = 0;
+  // Exclude tabindex="-1" so the D-pad treats a card as ONE unit and never lands on
+  // its inner controls (play overlay, watchlist toggle, rail arrows, billboard dots).
+  const TV_FOCUSABLE = '[data-nav]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), input:not([type="hidden"]), select, [tabindex="0"]';
+  let tvObserver = null, tvTimeout = 0, tvGiveUp = 0;
+  let tvGen = 0;            // generation, so a stale cycle's timers can't touch the live one
+  let modalSeq = 0;         // ids for aria-labelledby on dialog headings
+  let heroStopOnce = null;  // the billboard's one-shot 'user is driving' key listener
+  // Bumped on every navigation. Views capture it before their awaits and refuse to write
+  // into the DOM if it has moved on — otherwise a slow Home request lands after you have
+  // already opened the Watchlist and replaces the page under you. Declared up here with
+  // the rest of the module state so no view can reach it in the temporal dead zone.
+  let routeSeq = 0;
+  let routeSection = null, routeParts = -1;   // to tell a filter change from a navigation
+  const routeIs = (n) => n === routeSeq;
+  let tvUserMoved = false;  // the user has taken over — stop placing the ring for them
+  const TV_ROW_CONTAINERS = '.track, .cast-track, .ep-list';   // a carousel is ONE D-pad row
+  // Where a freshly rendered page should put the ring — the thing the user came to
+  // press. This is a PRIORITY ORDER, tried one selector at a time: as a single
+  // querySelectorAll it would have returned document order instead, which only
+  // happened to agree with the intent on today's markup.
+  const TV_LANDING = ['#tv-search-input', '#player-enter', '.bb-slide.on .bb-cta .btn.primary',
+                      '.detail-hero .cta .btn.primary', '.grid .card', '.rail .track .card'];
+  // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
+  // offset so its row keeps a fixed place in the order — otherwise the update
+  // banner's row slides down through the rails by exactly scrollY on every rebuild.
+  const TV_PINNED = 'header.top, #update-banner, #cinema-exit, .toast';
+  let tvRowSeq = 0;                                  // stable ids for carousel rows
+  let tvColX = null;                                 // column held while moving vertically
+  let tvLastPos = null;                              // where the ring was, for re-render recovery
+  let tvMarked = null;                               // element currently wearing .tv-focus
   function openExternal(url) {
     if (IS_DESKTOP && window.reeldeck.openExternal) window.reeldeck.openExternal(url);
     else window.open(url, '_blank', 'noopener');
@@ -168,9 +196,15 @@
   function debounce(fn, ms) { let t; return function () { clearTimeout(t); const a = arguments, c = this; t = setTimeout(() => fn.apply(c, a), ms); }; }
 
   let toastTimer;
+  // role="status" so the confirmation is actually announced — on TV the toast is the
+  // only feedback the hero's Save button gives.
   function toast(msg) {
     let t = $('#toast');
-    if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+    if (!t) {
+      t = document.createElement('div'); t.id = 'toast'; t.className = 'toast';
+      t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite');
+      document.body.appendChild(t);
+    }
     t.textContent = msg; t.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
   }
@@ -230,7 +264,9 @@
     const type = forcedType || item.media_type || (item.first_air_date || item.name && !item.title ? 'tv' : 'movie');
     itemCache[ck(type, item.id)] = item;
     const title = item.title || item.name || 'Untitled';
-    const y = year(item.release_date || item.first_air_date);
+    // `date` is what toggleWatch persists, so watchlist cards read that too — without
+    // it every saved title showed a bare dash where its year should be.
+    const y = year(item.release_date || item.first_air_date || item.date);
     const rating = item.vote_average ? Number(item.vote_average).toFixed(1) : null;
     const on = isInWatch(item.id, type);
     return `<div class="card" data-nav="#/${type}/${item.id}" tabindex="0" role="button" aria-label="${esc(title)}${y ? ', ' + y : ''}">
@@ -239,11 +275,11 @@
              onerror="this.src='${PLACEHOLDER}'">
         ${rating ? `<span class="rate">${ICON.star} ${rating}</span>` : ''}
         <span class="typebadge">${type === 'tv' ? 'TV' : 'Movie'}</span>
-        <button class="wl ${on ? 'on' : ''}" data-wl="${item.id}" data-type="${type}" title="Toggle watchlist" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">
+        <button class="wl ${on ? 'on' : ''}" data-wl="${item.id}" data-type="${type}"${IS_TV ? ' tabindex="-1" aria-hidden="true"' : ''} aria-pressed="${on}" title="${on ? 'Remove from' : 'Add to'} watchlist" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">
           ${on ? ICON.bookmarkFill : ICON.bookmark}
         </button>
         <div class="card-hover">
-          <button class="ch-play" data-nav="#/watch/${type}/${item.id}" tabindex="-1" aria-label="Play ${esc(title)}">${ICON.play}</button>
+          <button class="ch-play" data-nav="#/watch/${type}/${item.id}" tabindex="-1" aria-hidden="true">${ICON.play}</button>
           <div class="ch-cap"><div class="ch-title">${esc(title)}</div><div class="ch-meta">${y || ''}${rating ? ' · ★ ' + rating : ''}</div></div>
         </div>
       </div>
@@ -253,11 +289,23 @@
 
   function railHTML(title, items, moreHref, type) {
     if (!items || !items.length) return '';
+    // On TV the "See all" link leaves the D-pad order and comes back as the LAST TILE
+    // of the rail. One focusable row per rail is what keeps Up/Down predictable, and a
+    // poster-sized target beats 13px of header text from across the room.
+    const more = moreHref ? `<a class="more" href="${moreHref}" data-nav="${moreHref}"${IS_TV ? ' tabindex="-1"' : ''}>See all ${ICON.chevR}</a>` : '';
+    // The LAST tile of the rail, never the first: a leading tile would take the slot
+    // the top title should occupy. Reaching it costs a held Right, which is how every
+    // other 10-foot app does an end-of-row "see everything" affordance.
+    const moreTile = (IS_TV && moreHref)
+      ? `<div class="card more-card" data-nav="${moreHref}" tabindex="0" role="button" aria-label="See all — ${esc(title)}">
+          <div class="poster"><span class="mc-in">${ICON.chevR}<span>See all</span></span></div>
+        </div>`
+      : '';
     return `<section class="rail">
-      <div class="rail-head"><h2>${esc(title)}</h2>${moreHref ? `<a class="more" data-nav="${moreHref}">See all ${ICON.chevR}</a>` : ''}</div>
+      <div class="rail-head"><h2>${esc(title)}</h2>${more}</div>
       <div class="rail-wrap">
         <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
-        <div class="track">${items.map(i => cardHTML(i, type)).join('')}</div>
+        <div class="track">${items.map(i => cardHTML(i, type)).join('')}${moreTile}</div>
         <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
       </div>
     </section>`;
@@ -278,7 +326,7 @@
             <span class="rank-num">${i + 1}</span>
             <div class="poster">
               <img loading="lazy" src="${img(it.poster_path, 'w342')}" onerror="this.src='${PLACEHOLDER}'" alt="${esc(it.title || it.name)}">
-              <div class="card-hover"><button class="ch-play" data-nav="#/watch/${type}/${it.id}" tabindex="-1" aria-label="Play">${ICON.play}</button></div>
+              <div class="card-hover"><button class="ch-play" data-nav="#/watch/${type}/${it.id}" tabindex="-1" aria-hidden="true">${ICON.play}</button></div>
             </div>
           </div>`;
         }).join('')}</div>
@@ -316,7 +364,12 @@
 
   /* ---------- Home ---------- */
   let heroTimer = null;
-  function clearHero() { if (heroTimer) { clearInterval(heroTimer); heroTimer = null; } }
+  function clearHero() {
+    if (heroTimer) { clearInterval(heroTimer); heroTimer = null; }
+    // The 'stop rotating, the user is driving' listener is one-shot, but if it never
+    // fires it would otherwise outlive its billboard — one more on every visit Home.
+    if (heroStopOnce) { document.removeEventListener('keydown', heroStopOnce); heroStopOnce = null; }
+  }
 
   async function heroLogo(item) {
     try {
@@ -351,7 +404,7 @@
         <div class="bb-cta">
           <button class="btn primary lg" data-nav="#/watch/${type}/${it.id}">${ICON.play} Play</button>
           <button class="btn glass lg" data-nav="#/${type}/${it.id}">${ICON.info} More Info</button>
-          <button class="btn glass icon" data-wl="${it.id}" data-type="${type}" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">${on ? ICON.check : ICON.plus}</button>
+          <button class="btn glass icon" data-wl="${it.id}" data-type="${type}" aria-pressed="${on}" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">${on ? ICON.check : ICON.plus}</button>
         </div>
       </div>
     </div>`;
@@ -361,7 +414,7 @@
     if (!items.length) return '';
     return `<div class="billboard" id="billboard">
       ${items.map(billboardSlide).join('')}
-      <div class="bb-dots">${items.map((it, i) => `<button class="bb-dot ${i === 0 ? 'on' : ''}" data-dot="${i}" tabindex="-1" aria-label="Featured ${i + 1}"></button>`).join('')}</div>
+      <div class="bb-dots">${items.map((it, i) => `<button class="bb-dot ${i === 0 ? 'on' : ''}" data-dot="${i}" tabindex="${IS_TV ? '0' : '-1'}" aria-label="Featured ${i + 1}${(it.title || it.name) ? ': ' + esc(it.title || it.name) : ''}"></button>`).join('')}</div>
     </div>`;
   }
 
@@ -370,21 +423,58 @@
     if (!bb) return;
     const slides = [].slice.call(bb.querySelectorAll('.bb-slide'));
     const dots = [].slice.call(bb.querySelectorAll('.bb-dot'));
-    if (slides.length < 2) return;
     let idx = 0;
     const show = (n) => {
       idx = (n + slides.length) % slides.length;
-      slides.forEach((s, i) => s.classList.toggle('on', i === idx));
-      dots.forEach((d, i) => d.classList.toggle('on', i === idx));
+      slides.forEach((s, i) => {
+        const on = i === idx;
+        s.classList.toggle('on', on);
+        // Keep the OFF slides out of the focus order and out of the accessibility
+        // tree as well — CSS alone only stops the pointer and the D-pad.
+        s.setAttribute('aria-hidden', on ? 'false' : 'true');
+        if ('inert' in s) s.inert = !on;
+        // `inert` only landed in Chromium 102 and TV boxes ship well behind that, so
+        // without this an off slide keeps aria-hidden AND keeps its buttons in the tab
+        // order — an aria-hidden-containing-focusable violation.
+        else s.querySelectorAll('button, a, input, select').forEach(c => {
+          if (on) c.removeAttribute('tabindex'); else c.setAttribute('tabindex', '-1');
+        });
+      });
+      dots.forEach((d, i) => { d.classList.toggle('on', i === idx); d.setAttribute('aria-current', i === idx ? 'true' : 'false'); });
     };
-    const start = () => { clearHero(); heroTimer = setInterval(() => show(idx + 1), 8000); };
+    show(0);   // apply the off-state to slides 2..n before anything can focus them
+    if (slides.length < 2) return;   // nothing to rotate between
+    // Rotation is a courtesy for someone who is just looking. It stops for good the
+    // moment the user acts — a hero that rotates between "I want that one" and the
+    // button press is how you start the wrong film — and it never starts at all when
+    // the viewer has asked for reduced motion (there is no pause control, so an
+    // 8-second auto-advance would fail WCAG 2.2.2).
+    let stopped = tvReduceMQ ? tvReduceMQ.matches : false;
+    const start = () => { const keep = heroStopOnce; clearHero(); heroStopOnce = keep; if (!stopped) heroTimer = setInterval(() => show(idx + 1), 8000); };
+    const stopForGood = () => { stopped = true; clearHero(); };
+    if (heroStopOnce) document.removeEventListener('keydown', heroStopOnce);
+    heroStopOnce = stopForGood;
+    document.addEventListener('keydown', heroStopOnce, { once: true });
     start();
     bb.addEventListener('mouseenter', clearHero);
     bb.addEventListener('mouseleave', start);
-    dots.forEach((d, i) => d.addEventListener('click', () => { show(i); start(); }));
+    // Choosing a slide by hand does NOT re-arm the timer; focusout does that, and only
+    // once focus has actually left the hero.
+    dots.forEach((d, i) => d.addEventListener('click', () => { stopForGood(); show(i); }));
+    // A hero that rotates out from under you is how you press Play and get the wrong
+    // film — and rotating a slide away now also makes it inert, which would throw a
+    // keyboard user's focus to the body. So whoever is holding focus owns the hero.
+    bb.addEventListener('focusin', clearHero);
+    bb.addEventListener('focusout', () => setTimeout(() => {
+      if (document.body.contains(bb) && !bb.contains(document.activeElement)) start();
+    }, 0));
+    // On TV the dots are real D-pad targets, sitting on the same row as Play / More
+    // Info, so the remote can walk right off the buttons into the featured picker.
+    if (IS_TV) dots.forEach((d, i) => d.addEventListener('focus', () => { clearHero(); show(i); }));
   }
 
   async function homeView() {
+    const my = routeSeq;
     clearHero();
     view().innerHTML = `<div class="billboard-sk sk"></div><div class="rows">${skeletonRow()}${skeletonRow()}</div>`;
     try {
@@ -395,6 +485,7 @@
       const trendItems = (trend.results || []).filter(x => x.media_type !== 'person');
       const heroItems = trendItems.filter(x => x.backdrop_path).slice(0, 5);
       const logos = await Promise.all(heroItems.map(heroLogo));
+      if (!routeIs(my)) return;   // the user has navigated away — this response is stale
       heroItems.forEach((h, i) => { h._logo = logos[i]; itemCache[ck(h.media_type, h.id)] = h; });
       let html = buildBillboard(heroItems);
       html += '<div class="rows">';
@@ -406,7 +497,7 @@
       html += '</div>';
       view().innerHTML = html;
       wireBillboard();
-    } catch (e) { errorState(e); }
+    } catch (e) { if (routeIs(my)) errorState(e); }
   }
 
   /* ---------- Discover / search (movies & tv share this) ---------- */
@@ -425,6 +516,7 @@
   ];
 
   async function discoverView(type, params) {
+    const my = routeSeq;
     const isTV = type === 'tv';
     const q = params.q || '';
     const page = Math.max(1, parseInt(params.page || '1', 10));
@@ -435,8 +527,15 @@
     const sortSel = SORTS.map(s => `<option value="${s.v}" ${params.sort === s.v ? 'selected' : ''}>${s.label}</option>`).join('');
     const langSel = LANGS.map(l => `<option value="${l.v}" ${params.lang === l.v ? 'selected' : ''}>${l.label}</option>`).join('');
     const yNow = new Date().getFullYear();
-    let yearOpts = '<option value="">Any</option>';
-    for (let y = yNow + 1; y >= 1950; y--) yearOpts += `<option value="${y}">${y}</option>`;
+    // Build the <select>s by marking the selected option while generating them. The old
+    // blind String.replace could not match a year outside 1950…yNow+1, so an
+    // out-of-range ?yfrom= showed "Any" and was then deleted by the next filter change.
+    const yearOptsFor = (v) => {
+      let out = `<option value=""${v ? '' : ' selected'}>Any</option>`;
+      for (let y = yNow + 1; y >= 1950; y--) out += `<option value="${y}"${String(v) === String(y) ? ' selected' : ''}>${y}</option>`;
+      if (v && !(v >= 1950 && v <= yNow + 1)) out = `<option value="${esc(String(v))}" selected>${esc(String(v))}</option>` + out;
+      return out;
+    };
 
     const toolbar = q ? `
       <div class="toolbar"><div class="field" style="flex:1">
@@ -446,15 +545,15 @@
       <button class="btn sm" data-nav="#/${isTV ? 'tv' : 'movies'}">Clear search</button></div>` : `
       <div class="toolbar">
         <div class="field"><label for="f-sort">Sort</label><select id="f-sort">${sortSel}</select></div>
-        <div class="field"><label for="f-yfrom">From year</label><select id="f-yfrom">${yearOpts.replace(`value="${params.yfrom}"`, `value="${params.yfrom}" selected`)}</select></div>
-        <div class="field"><label for="f-yto">To year</label><select id="f-yto">${yearOpts.replace(`value="${params.yto}"`, `value="${params.yto}" selected`)}</select></div>
+        <div class="field"><label for="f-yfrom">From year</label><select id="f-yfrom">${yearOptsFor(params.yfrom)}</select></div>
+        <div class="field"><label for="f-yto">To year</label><select id="f-yto">${yearOptsFor(params.yto)}</select></div>
         <div class="field"><label for="f-rating">Min rating</label><select id="f-rating">
           ${['', '5', '6', '7', '8', '9'].map(r => `<option value="${r}" ${params.rating === r ? 'selected' : ''}>${r ? r + '+' : 'Any'}</option>`).join('')}
         </select></div>
         <div class="field"><label for="f-lang">Language</label><select id="f-lang">${langSel}</select></div>
-        <div class="field" style="flex:1;min-width:200px"><label>Genres</label>
+        <div class="field genres-field"><label>Genres</label>
           <div class="chips" id="f-genres">
-            ${gl.map(g => `<button class="chip ${selGenres.includes(String(g.id)) ? 'on' : ''}" data-genre="${g.id}">${esc(g.name)}</button>`).join('')}
+            ${gl.map(g => `<button class="chip ${selGenres.includes(String(g.id)) ? 'on' : ''}" data-genre="${g.id}" aria-pressed="${selGenres.includes(String(g.id))}">${esc(g.name)}</button>`).join('')}
           </div>
         </div>
       </div>`;
@@ -477,7 +576,10 @@
       };
       ['f-sort', 'f-yfrom', 'f-yto', 'f-rating', 'f-lang'].forEach(id => { const el = $('#' + id); if (el) el.onchange = upd; });
       const gEl = $('#f-genres');
-      if (gEl) gEl.onclick = e => { const c = e.target.closest('.chip'); if (c) { c.classList.toggle('on'); upd(); } };
+      if (gEl) gEl.onclick = e => {
+        const c = e.target.closest('.chip');
+        if (c) { c.classList.toggle('on'); c.setAttribute('aria-pressed', String(c.classList.contains('on'))); upd(); }
+      };
     }
 
     // Build request
@@ -503,9 +605,17 @@
       const results = (data.results || []).filter(x => x.poster_path || x.backdrop_path);
       const totalPages = Math.min(data.total_pages || 1, 500);
       const box = $('#results');
-      if (!results.length) { box.innerHTML = `<div class="center-note">No results found.</div>`; return; }
+      if (!box || !routeIs(my)) return;   // navigated away while the request was in flight
+      if (!results.length) {
+        box.innerHTML = `<div class="center-note">Nothing matched those filters.
+          <div class="note-cta"><button class="btn primary" data-nav="#/${isTV ? 'tv' : 'movies'}">Clear filters</button></div></div>`;
+        return;
+      }
       box.innerHTML = `<div class="grid">${results.map(i => cardHTML(i, isTV ? 'tv' : 'movie')).join('')}</div>` + pagerHTML(page, totalPages, params, isTV ? 'tv' : 'movies');
-    } catch (e) { $('#results').innerHTML = ''; errorState(e, '#results'); }
+    } catch (e) {
+      const box = $('#results');
+      if (box && routeIs(my)) { box.innerHTML = ''; errorState(e, '#results'); }
+    }
   }
 
   function pagerHTML(page, totalPages, params, route) {
@@ -519,23 +629,63 @@
   }
 
   /* ---------- Multi search page ---------- */
+  // On TV this page carries its own search field (the header has none) — a big,
+  // unmissable target that opens the platform keyboard when you press OK.
+  function tvSearchBar(q) {
+    if (!IS_TV) return '';
+    return `<div class="tv-search">
+      <span class="ico">${ICON.search}</span>
+      <input id="tv-search-input" type="search" value="${esc(q)}" autocomplete="off"
+             placeholder="Search movies, shows and people…" aria-label="Search movies, shows and people">
+      <button class="btn primary" id="tv-search-go">Search</button>
+    </div>`;
+  }
+  function wireTvSearch() {
+    const inp = $('#tv-search-input'), btn = $('#tv-search-go');
+    if (!inp) return;
+    const submit = () => { const v = inp.value.trim(); if (v) go('#/search?q=' + encodeURIComponent(v)); };
+    // The D-pad centre arrives as an Enter keydown, and on Android that is also the
+    // gesture that raises the soft keyboard for a focused input — programmatic focus()
+    // does not. Swallowing it unconditionally left the page telling the user to press
+    // OK while OK did nothing, so only take the key when there is something to submit.
+    inp.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      if (!inp.value.trim()) return;   // let the platform open its keyboard
+      e.preventDefault(); submit();
+    });
+    // Land with the previous query selected, so typing replaces it and the caret is at
+    // the end (escaping right otherwise costs one press per character).
+    inp.addEventListener('focus', () => { try { inp.select(); } catch (e) {} });
+    if (btn) btn.addEventListener('click', submit);
+  }
+
+  // The shell (title + TV search field) is rendered ONCE and only #results is swapped
+  // when the fetch lands. Replacing all of #view a second time destroyed the element
+  // the ring was on — and on TV that also tore down the input the platform keyboard
+  // was attached to, mid-typing.
   async function searchView(params) {
+    const my = routeSeq;
     const q = params.q || '';
-    view().innerHTML = `<h1 class="page-title">Search</h1>${q ? skeletonGrid(12) : '<div class="center-note">Type in the search box above to find movies, shows and people.</div>'}`;
+    const empty = `<div class="center-note">${IS_TV ? 'Press OK on the box above to type.' : 'Use the search box above to find movies, shows and people.'}
+      <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div></div>`;
+    view().innerHTML = `<h1 class="page-title">${q ? 'Results for “' + esc(q) + '”' : 'Search'}</h1>${tvSearchBar(q)}
+      <div id="results">${q ? skeletonGrid(12) : empty}</div>`;
+    wireTvSearch();
     if (!q) return;
     try {
       const data = await tmdb('/search/multi', { query: q, page: 1, include_adult: 'false' });
       const results = (data.results || []).filter(x => x.media_type !== 'person' && (x.poster_path || x.backdrop_path));
-      const people = (data.results || []).filter(x => x.media_type === 'person' && x.profile_path).slice(0, 8);
-      let html = '';
-      if (results.length) html += `<div class="grid">${results.map(i => cardHTML(i)).join('')}</div>`;
-      else html += `<div class="center-note">No titles found for “${esc(q)}”.</div>`;
-      view().innerHTML = `<h1 class="page-title">Results for “${esc(q)}”</h1>${html}`;
-    } catch (e) { errorState(e); }
+      const box = $('#results');
+      if (!box || !routeIs(my)) return;   // navigated away while the request was in flight
+      box.innerHTML = results.length
+        ? `<div class="grid">${results.map(i => cardHTML(i)).join('')}</div>`
+        : `<div class="center-note">No titles found for “${esc(q)}”.
+            <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div></div>`;
+    } catch (e) { const box = $('#results'); if (box && routeIs(my)) { box.innerHTML = ''; errorState(e, '#results'); } }
   }
-
   /* ---------- Detail (movie & tv) ---------- */
   async function detailView(type, id) {
+    const my = routeSeq;
     const isTV = type === 'tv';
     view().innerHTML = `<div class="sk" style="height:480px;border-radius:0;margin:-22px -22px 24px"></div><div class="section">${skeletonGrid(6)}</div>`;
     try {
@@ -613,8 +763,8 @@
       const cast = (credits.cast || []).slice(0, 14);
       if (cast.length) {
         html += `<div class="section"><h3>Cast</h3><div class="cast-track">
-          ${cast.map(c => `<div class="person" data-nav="#/person/${c.id}">
-            <img loading="lazy" src="${img(c.profile_path, 'w185')}" alt="${esc(c.name)}" onerror="this.src='${PLACEHOLDER}'">
+          ${cast.map(c => `<div class="person" data-nav="#/person/${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}${c.character ? ' as ' + esc(c.character) : ''}">
+            <img loading="lazy" src="${img(c.profile_path, 'w185')}" alt="" onerror="this.src='${PLACEHOLDER}'">
             <div class="n">${esc(c.name)}</div><div class="c">${esc(c.character || '')}</div>
           </div>`).join('')}
         </div></div>`;
@@ -624,32 +774,48 @@
       const sim = (similar.results || []).filter(x => x.poster_path).slice(0, 14);
       if (sim.length) html += `<div class="section">${railHTML(isTV ? 'Similar shows' : 'Similar movies', sim, null, type)}</div>`;
 
+      if (!routeIs(my)) return;   // stale response — the user is on another page now
       view().innerHTML = html;
       window.scrollTo(0, 0);
 
       // Wire seasons
       if (isTV) {
         const sel = $('#season-sel');
+        // Season changes are not cancellable, so without a sequence number whichever
+        // response lands LAST wins — pick S1, S2, S3 quickly and a slow S2 can end up
+        // rendered under a select reading "Season 3", with every episode link pointing
+        // at the wrong season.
+        let seasonSeq = 0;
         const loadSeason = async (n) => {
-          const box = $('#ep-list'); box.innerHTML = skeletonGrid(4);
+          const mine = ++seasonSeq, myRoute = routeSeq;
+          const box = $('#ep-list'); if (!box) return;
+          box.innerHTML = skeletonGrid(4);
           try {
             const s = await tmdb('/tv/' + id + '/season/' + n);
+            if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
             box.innerHTML = (s.episodes || []).map(ep => `
-              <div class="ep" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}">
-                <img class="thumb" loading="lazy" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+              <div class="ep" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}" tabindex="0" role="button"
+                   aria-label="Play season ${n} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}">
+                <img class="thumb" alt="" loading="lazy" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
                 <div style="min-width:0">
                   <div class="en">S${n} · E${ep.episode_number}</div>
                   <div class="et">${esc(ep.name || 'Episode ' + ep.episode_number)}</div>
                   <div class="eo">${esc(ep.overview || '')}</div>
                 </div>
-                <button class="btn primary sm play">${ICON.play} Play</button>
+                <button class="btn primary sm play" tabindex="-1" aria-hidden="true">${ICON.play} Play</button>
               </div>`).join('') || '<div class="center-note">No episode data.</div>';
-          } catch (e) { box.innerHTML = ''; errorState(e, '#ep-list'); }
+          } catch (e) {
+            if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
+            box.innerHTML = ''; errorState(e, '#ep-list');
+          }
         };
         sel.onchange = () => loadSeason(sel.value);
-        loadSeason(sel.value || 1);
+        // A specials-only show leaves the select empty, and requesting season 1 then
+        // renders a raw TMDB 404 under the "Episodes" heading.
+        if (sel.options.length) loadSeason(sel.value || 1);
+        else $('#ep-list').innerHTML = '<div class="center-note">No regular seasons listed for this title.</div>';
       }
-    } catch (e) { errorState(e); }
+    } catch (e) { if (routeIs(my)) errorState(e); }
   }
 
   /* ---------- Person ---------- */
@@ -681,8 +847,10 @@
   /* ---------- Player ---------- */
   async function watchView(type, id, params) {
     const isTV = type === 'tv';
-    const season = parseInt(params.s || '1', 10);
-    const episode = parseInt(params.e || '1', 10);
+    // A non-numeric ?e= used to yield NaN: Prev stayed enabled, the header printed
+    // "S1 · ENaN", and buildSourceUrl's `episode || 1` quietly played episode 1.
+    const season = Math.max(1, parseInt(params.s, 10) || 1);
+    const episode = Math.max(1, parseInt(params.e, 10) || 1);
     view().innerHTML = `<div class="player-shell"><div class="sk" style="height:60vh;border-radius:16px"></div></div>`;
 
     let d = itemCache[ck(type, id)];
@@ -714,7 +882,7 @@
     } else {
       const url = buildSourceUrl(src, type, id, imdb, season, episode);
       const sandbox = cfg.blockPlayerAds ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"' : '';
-      frameInner = `<iframe id="player-iframe" src="${esc(url)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
+      frameInner = `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
     }
 
     const epNav = isTV ? `
@@ -725,7 +893,7 @@
       </div>` : '';
 
     const roomTiles = sources.map((s, i) => `
-      <button class="mirror ${i === cfg.activeSource ? 'on' : ''}" data-src="${i}">
+      <button class="mirror ${i === cfg.activeSource ? 'on' : ''}" data-src="${i}" aria-pressed="${i === cfg.activeSource}">
         <span class="num">${String(i + 1).padStart(2, '0')}</span>
         <span class="mn">${esc(s.name || ('Source ' + (i + 1)))}</span>
         <span class="ms">${i === cfg.activeSource ? '● Projecting' : 'Mirror ' + (i + 1)}</span>
@@ -738,10 +906,14 @@
           <div style="font-weight:800;font-size:18px">${esc(title)}${isTV ? ` <span class="muted">· S${season} E${episode}</span>` : ''}</div>
           ${epNav}
         </div>
-        <div class="player-frame">${frameInner}</div>
+        <div class="player-frame">${frameInner}${IS_TV && src ? `<button class="player-enter" id="player-enter" aria-label="Open player — use the remote to control playback">
+            <span class="pe-pill">${ICON.play} Open player</span><small>Press OK to control · Back to exit</small></button>` : ''}</div>
         <div class="source-bar">
           <span class="lbl">${src ? 'Now playing: <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try next server →</button>` : ''}
+          <button class="btn sm ghost" id="toggle-sandbox" aria-pressed="${!!cfg.blockPlayerAds}"
+                  title="Restrict what the embedded player is allowed to do (may break some mirrors)">
+            ${cfg.blockPlayerAds ? '🛡 Player locked down' : '🛡 Lock down player'}</button>
           <button class="btn sm ghost" id="tv-mode" title="Fill the screen — for casting / screen-mirroring to a TV">⛶ TV mode</button>
         </div>
         ${sources.length ? `
@@ -754,14 +926,38 @@
       </div>`;
     window.scrollTo(0, 0);
 
+    // Switch mirror IN PLACE — swap the iframe src instead of re-rendering the whole
+    // page, so D-pad focus stays on the tile the user is on (no focus jump on TV).
+    // Switching a mirror swaps the iframe src IN PLACE rather than re-rendering the
+    // page, so the D-pad ring stays on the tile the user is on.
     const room = $('.server-room');
-    if (room) room.onclick = e => { const m = e.target.closest('.mirror'); if (m) { cfg.activeSource = parseInt(m.dataset.src, 10); saveConfig(); watchView(type, id, params); } };
-    const next = $('#next-src');
-    if (next) next.onclick = () => { cfg.activeSource = (cfg.activeSource + 1) % sources.length; saveConfig(); toast('Switched to ' + (sources[cfg.activeSource].name || 'next server')); watchView(type, id, params); };
+    const switchTo = (i) => {
+      if (isNaN(i) || i === cfg.activeSource || !sources[i]) return;
+      cfg.activeSource = i; saveConfig();
+      const s2 = sources[i];
+      const fr2 = document.getElementById('player-iframe');
+      if (fr2) { releasePlayerFocus(); fr2.setAttribute('tabindex', '-1'); fr2.src = buildSourceUrl(s2, type, id, imdb, season, episode); }
+      const lbl = document.querySelector('.source-bar .lbl');
+      if (lbl) lbl.innerHTML = 'Now playing: <b style="color:var(--text)">' + esc(s2.name) + '</b>';
+      if (room) room.querySelectorAll('.mirror').forEach((el, idx) => {
+        el.classList.toggle('on', idx === i);
+        el.setAttribute('aria-pressed', String(idx === i));
+        const ms = el.querySelector('.ms'); if (ms) ms.textContent = idx === i ? '● Projecting' : 'Mirror ' + (idx + 1);
+      });
+    };
+    if (room) room.onclick = e => {
+      const m = e.target.closest('.mirror'); if (!m) return;
+      switchTo(parseInt(m.dataset.src, 10));
+    };
+    // One-press failover — the control the "this mirror failed" toast points at.
+    const nx = $('#next-src');
+    if (nx) nx.onclick = () => {
+      const i = (cfg.activeSource + 1) % sources.length;
+      switchTo(i);
+      toast('Switched to ' + (sources[i].name || 'the next server'));
+    };
     const tgl = $('#toggle-sandbox');
     if (tgl) tgl.onclick = () => { cfg.blockPlayerAds = !cfg.blockPlayerAds; saveConfig(); watchView(type, id, params); };
-    const manage = $('#manage-src');
-    if (manage) manage.onclick = openSettings;
     const qa = $('#quick-add');
     if (qa) qa.onclick = () => {
       const val = $('#quick-src').value.trim();
@@ -773,8 +969,14 @@
     const tv = $('#tv-mode');
     if (tv) tv.onclick = toggleCinema;
     const fr = $('#player-iframe');
-    if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try another server')); }
-    if (IS_TV) tvFocusFirst();
+    if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
+    const pe = $('#player-enter');
+    if (pe) pe.onclick = enterPlayerFocus;
+    // On TV land focus on the player entry so OK immediately hands control to the embed.
+    // The router also places the ring here (#player-enter is a landing target), but
+    // do it explicitly too so the highlight class and remembered position are set even
+    // when this view is re-rendered without a route change.
+    if (IS_TV && pe) tvFocusEl(pe);
   }
 
   // "TV mode": a full-viewport player, for casting / screen-mirroring to a TV.
@@ -804,8 +1006,10 @@
     document.addEventListener('mousemove', cinemaReveal, { passive: true });
     document.addEventListener('keydown', cinemaReveal);
     revealCinema();  // start visible, then fade after 3s
+    // requestFullscreen returns a promise; try/catch alone leaves an unhandled
+    // rejection whenever the gesture requirement is not met.
     const rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
-    if (rq) { try { rq.call(frame); } catch (e) {} }
+    if (rq) { try { Promise.resolve(rq.call(frame)).catch(() => {}); } catch (e) {} }
   }
   function exitCinema() {
     clearTimeout(cinemaTimer);
@@ -818,9 +1022,33 @@
     document.body.classList.remove('cinema-on');
     const ex = $('#cinema-exit'); if (ex) ex.remove();
     const hot = $('#cinema-hot'); if (hot) hot.remove();
-    if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
+    if (document.fullscreenElement) { try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (e) {} }
+    releasePlayerFocus();   // hand D-pad focus back to our UI
   }
   function toggleCinema() { (document.body.classList.contains('cinema-on') ? exitCinema : enterCinema)(); }
+
+  // TV: hand keyboard/D-pad focus to the cross-origin player so the remote drives
+  // playback. We can't script inside a cross-origin iframe, so once focus is in it
+  // the browser's OWN spatial navigation moves between the embed's controls; the
+  // ONLY way back to our UI is the hardware Back button (handled below) or Exit.
+  function enterPlayerFocus() {
+    const fr = document.getElementById('player-iframe');
+    if (!fr) return;
+    if (!document.body.classList.contains('cinema-on')) enterCinema();
+    document.body.classList.add('player-focused');
+    fr.setAttribute('tabindex', '0');
+    try { fr.focus(); } catch (e) {}
+  }
+  function releasePlayerFocus() {
+    if (!document.body.classList.contains('player-focused')) return;
+    document.body.classList.remove('player-focused');
+    const fr = document.getElementById('player-iframe');
+    if (fr) { try { fr.blur(); } catch (e) {} fr.setAttribute('tabindex', '-1'); }
+    // Route through tvFocusEl so the selection class, the remembered position and the
+    // scroll all match every other placement — a raw focus() here left the ring off.
+    const pe = document.getElementById('player-enter');
+    if (pe && IS_TV) tvFocusEl(pe);
+  }
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && document.body.classList.contains('cinema-on')) exitCinema();
   });
@@ -838,7 +1066,13 @@
   /* ---------- Watchlist ---------- */
   function watchlistView() {
     const list = getWatch();
-    if (!list.length) { view().innerHTML = `<h1 class="page-title">Watchlist</h1><div class="center-note">Your watchlist is empty. Tap the bookmark on any title to save it here.</div>`; return; }
+    if (!list.length) {
+      view().innerHTML = `<h1 class="page-title">Watchlist</h1>
+        <div class="center-note">Nothing saved yet — use the bookmark on any title to keep it here.
+          <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div>
+        </div>`;
+      return;
+    }
     view().innerHTML = `<h1 class="page-title">Watchlist <span class="muted" style="font-size:16px">(${list.length})</span></h1>
       <div class="grid">${list.map(i => cardHTML(i, i.type)).join('')}</div>`;
   }
@@ -947,15 +1181,34 @@
   function openTrailer(key) {
     const back = document.createElement('div');
     back.className = 'modal-back';
+    // On TV the embed is the only thing that can pause or scrub, and an <iframe> is not
+    // a D-pad target — without a hand-off the user could start a trailer and then have
+    // no control over it at all. Same pattern as the player's "Open player" overlay.
+    const handoff = IS_TV
+      ? `<button class="player-enter" id="trailer-enter" aria-label="Control the trailer with the remote">
+           <span class="pe-pill">${ICON.play} Use the remote</span><small>Press OK to control · Back to close</small>
+         </button>`
+      : '';
     back.innerHTML = `<div class="modal wide">
       <div class="mh"><h3>Trailer</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
-      <div class="video-wrap"><iframe src="https://www.youtube-nocookie.com/embed/${esc(key)}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe></div>
+      <div class="video-wrap">
+        <iframe id="trailer-iframe" title="Trailer" src="https://www.youtube-nocookie.com/embed/${esc(key)}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+        ${handoff}
+      </div>
     </div>`;
+    const te = back.querySelector('#trailer-enter');
+    if (te) te.onclick = () => {
+      const fr = back.querySelector('#trailer-iframe');
+      if (!fr) return;
+      te.style.display = 'none';
+      fr.setAttribute('tabindex', '0');
+      try { fr.focus(); } catch (e) {}
+    };
     modalMount(back);
   }
 
   function openSettings() {
-    const themeCards = THEMES.map(t => `<button class="theme-card ${cfg.theme === t.id ? 'on' : ''}" data-theme-pick="${t.id}" aria-label="${t.name} theme">
+    const themeCards = THEMES.map(t => `<button class="theme-card ${cfg.theme === t.id ? 'on' : ''}" data-theme-pick="${t.id}" aria-pressed="${cfg.theme === t.id}" aria-label="${t.name} theme">
         <span class="tprev">${t.preview.map(c => `<i style="background:${c}"></i>`).join('')}</span>
         <span class="tname">${t.name}</span>
       </button>`).join('');
@@ -963,7 +1216,7 @@
     const back = document.createElement('div');
     back.className = 'modal-back';
     back.innerHTML = `<div class="modal">
-      <div class="mh"><h3>${ICON.gear} &nbsp;Settings</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
+      <div class="mh"><h3>${ICON.gear} Settings</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
       <div class="mb">
         <div class="set-group">
           <h4>Theme</h4>
@@ -996,19 +1249,41 @@
 
   function modalMount(back) {
     back._opener = document.activeElement;
+    const heading = back.querySelector('.mh h3');
+    if (heading) { heading.id = heading.id || ('mh-' + (++modalSeq)); }
+    const dlg = back.querySelector('.modal');
+    if (dlg) {
+      dlg.setAttribute('role', 'dialog');
+      dlg.setAttribute('aria-modal', 'true');
+      if (heading) dlg.setAttribute('aria-labelledby', heading.id);
+    }
     document.body.appendChild(back);
     back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-close]')) closeModal(back); });
-    document.addEventListener('keydown', escClose);
-    function escClose(ev) { if (ev.key === 'Escape') { closeModal(back); document.removeEventListener('keydown', escClose); } }
+    // Keep a handle so closeModal can always unhook this. It used to be removed only
+    // when the user pressed Escape, so closing via the backdrop or the X button left a
+    // document-level listener behind holding the detached modal alive — one more every
+    // time Settings was opened.
+    back._esc = (ev) => { if (ev.key === 'Escape') closeModal(back); };
+    document.addEventListener('keydown', back._esc);
     // move focus into the modal (esp. for D-pad remotes)
-    const f = back.querySelector('[data-theme-pick], button, [href], input, select, [tabindex="0"]');
-    if (f) try { f.focus(); } catch (e) {}
+    // querySelector with a selector LIST returns the first match in document order, not
+    // the first selector's match — so the header's ✕ won every time and the first OK
+    // press closed the dialog the user had just opened. Try the selectors in priority.
+    const f = back.querySelector('[data-theme-pick]')
+      || back.querySelector('#trailer-enter')
+      || back.querySelector('.mb button, .mb [href], .mb input, .mb select, .mb [tabindex="0"]')
+      || back.querySelector('button, [href], input, select, [tabindex="0"]');
+    if (f) { if (IS_TV) tvFocusEl(f); else try { f.focus(); } catch (e) {} }
   }
   function closeModal(back) {
     if (!back || !back.parentNode) return;
+    if (back._esc) { document.removeEventListener('keydown', back._esc); back._esc = null; }
     const opener = back._opener;
     back.parentNode.removeChild(back);
-    if (opener && opener.focus && document.contains(opener)) { try { opener.focus(); } catch (e) {} }
+    // Put the ring back exactly where it was before the modal opened.
+    if (opener && opener.focus && document.contains(opener)) {
+      if (IS_TV) tvFocusEl(opener); else try { opener.focus(); } catch (e) {}
+    } else if (IS_TV) tvRestoreFocus();
   }
 
   /* ============================================================
@@ -1028,7 +1303,10 @@
 
   function setActiveNav(section) {
     document.querySelectorAll('[data-section]').forEach(a => {
-      a.classList.toggle('active', a.dataset.section === section);
+      const on = a.dataset.section === section;
+      a.classList.toggle('active', on);
+      // The active item was conveyed by colour alone; aria-current names it.
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
   }
 
@@ -1039,14 +1317,25 @@
   }
 
   function route() {
+    routeSeq++;
     const { parts, params } = parseHash();
     closeSuggest();
     clearHero();                 // stop billboard rotation when leaving Home
+    // Nothing from the previous screen may outlive it. An open modal would otherwise
+    // stay mounted over the new page (browser Back on a playing trailer), and the
+    // cinema/player classes would leave `overflow: hidden` and their document
+    // listeners on every subsequent page with no way back but a reload.
+    document.querySelectorAll('.modal-back').forEach(closeModal);
+    if (document.body.classList.contains('cinema-on') || document.body.classList.contains('player-focused')) exitCinema();
     document.body.classList.toggle('home', !parts.length);
     window.scrollTo(0, 0);
-    if (IS_TV) tvFocusFirst();  // re-establish focus after every (re-)render
+    // Same section, different parameters = a filter/sort/page change, not a real
+    // navigation, so the ring stays where the user left it.
+    const sameSection = (parts[0] || '') === routeSection && parts.length === routeParts;
+    routeSection = parts[0] || ''; routeParts = parts.length;
+    if (IS_TV) tvFocusFirst(true, sameSection);  // re-establish focus once the new view has rendered
     const sec = parts[0] || 'home';
-    setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? '' : 'home');
+    setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? 'search' : 'home');
     syncSearchBox(params, parts);
 
     if (!parts.length) return homeView();
@@ -1072,35 +1361,43 @@
   function buildHeader() {
     const hdr = $('header.top');
     hdr.innerHTML = `
-      <a class="brand" data-nav="#/" aria-label="${esc(cfg.brand)} — home">
+      <a class="brand" href="#/" data-nav="#/" aria-label="${esc(cfg.brand)} — home">
         <span class="brand-mark" aria-hidden="true"></span><span class="txt">${esc(cfg.brand)}</span>
       </a>
-      <nav class="main">
-        <a data-nav="#/" data-section="home">Home</a>
-        <a data-nav="#/movies" data-section="movies">Movies</a>
-        <a data-nav="#/tv" data-section="tv">TV Shows</a>
-        <a data-nav="#/watchlist" data-section="watchlist">Watchlist</a>
+      <nav class="main" aria-label="Primary">
+        <a href="#/" data-nav="#/" data-section="home">Home</a>
+        <a href="#/movies" data-nav="#/movies" data-section="movies">Movies</a>
+        <a href="#/tv" data-nav="#/tv" data-section="tv">TV Shows</a>
+        <a href="#/watchlist" data-nav="#/watchlist" data-section="watchlist">Watchlist</a>
       </nav>
-      <div class="search-wrap">
+      ${IS_TV
+        // A TV never types in the header: the platform keyboard is a full-screen
+        // overlay, and an inline field forces brand + nav + field + icons into a
+        // header that does not fit at the ~853 CSS px a 720p set reports. So the
+        // header offers a target and the search PAGE owns the input.
+        ? `<button class="icon-btn" id="search-btn" data-nav="#/search" data-section="search" title="Search" aria-label="Search">${ICON.search}</button>`
+        : `<div class="search-wrap">
         <span class="ico">${ICON.search}</span>
         <input id="search-input" type="search" placeholder="Search movies, shows, people…" autocomplete="off" aria-label="Search movies, shows and people">
         <button class="clear" id="search-clear" title="Clear" aria-label="Clear search" style="display:none">${ICON.x}</button>
         <div class="suggest" id="suggest" style="display:none"></div>
-      </div>
+      </div>`}
       <button class="icon-btn" id="update-btn" title="Check for updates" aria-label="Check for updates">${ICON.download}</button>
       <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">${ICON.gear}</button>`;
 
     const inp = $('#search-input');
     const clear = $('#search-clear');
-    inp.addEventListener('input', () => {
-      clear.style.display = inp.value ? 'block' : 'none';
-      liveSuggest(inp.value.trim());
-    });
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { closeSuggest(); if (inp.value.trim()) go('#/search?q=' + encodeURIComponent(inp.value.trim())); }
-      if (e.key === 'Escape') closeSuggest();
-    });
-    clear.addEventListener('click', () => { inp.value = ''; clear.style.display = 'none'; closeSuggest(); inp.focus(); });
+    if (inp && clear) {
+      inp.addEventListener('input', () => {
+        clear.style.display = inp.value ? 'block' : 'none';
+        liveSuggest(inp.value.trim());
+      });
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { closeSuggest(); if (inp.value.trim()) go('#/search?q=' + encodeURIComponent(inp.value.trim())); }
+        if (e.key === 'Escape') closeSuggest();
+      });
+      clear.addEventListener('click', () => { inp.value = ''; clear.style.display = 'none'; closeSuggest(); inp.focus(); });
+    }
     $('#settings-btn').addEventListener('click', openSettings);
     $('#update-btn').addEventListener('click', () => checkForUpdate(true));
 
@@ -1108,12 +1405,13 @@
     if (!$('.bottom-nav')) {
       const bn = document.createElement('nav');
       bn.className = 'bottom-nav';
+      bn.setAttribute('aria-label', 'Primary');
       bn.innerHTML = `
-        <a data-nav="#/" data-section="home">${ICON.home}<span>Home</span></a>
-        <a data-nav="#/movies" data-section="movies">${ICON.film}<span>Movies</span></a>
-        <a data-nav="#/tv" data-section="tv">${ICON.tv}<span>TV</span></a>
-        <a data-nav="#/search" data-section="search">${ICON.search}<span>Search</span></a>
-        <a data-nav="#/watchlist" data-section="watchlist">${ICON.bookmark}<span>Saved</span></a>`;
+        <a href="#/" data-nav="#/" data-section="home">${ICON.home}<span>Home</span></a>
+        <a href="#/movies" data-nav="#/movies" data-section="movies">${ICON.film}<span>Movies</span></a>
+        <a href="#/tv" data-nav="#/tv" data-section="tv">${ICON.tv}<span>TV</span></a>
+        <a href="#/search" data-nav="#/search" data-section="search">${ICON.search}<span>Search</span></a>
+        <a href="#/watchlist" data-nav="#/watchlist" data-section="watchlist">${ICON.bookmark}<span>Saved</span></a>`;
       document.body.appendChild(bn);
     }
     // scroll-aware header: transparent over the Home billboard, frosts on scroll
@@ -1124,17 +1422,24 @@
     applyTheme();
   }
 
+  // Sequence guard: the debounce only delays requests, it does not order responses, so
+  // a slow "du" could repaint over a fast "dune" — and a response landing after Enter,
+  // Escape or a navigation would re-open a dropdown the user had already dismissed.
+  let suggestSeq = 0;
   const liveSuggest = debounce(async (q) => {
+    const mine = ++suggestSeq;
     if (!q || q.length < 2) return closeSuggest();
     try {
       const d = await tmdb('/search/multi', { query: q, page: 1, include_adult: 'false' });
+      const inp = $('#search-input');
+      if (mine !== suggestSeq || !inp || inp.value.trim() !== q) return;
       const items = (d.results || []).filter(x => x.media_type !== 'person' && (x.poster_path || x.profile_path)).slice(0, 6);
       const box = $('#suggest');
       if (!items.length) return closeSuggest();
       box.innerHTML = items.map(it => {
         const t = it.title || it.name; const ty = it.media_type;
-        return `<div class="row" data-nav="#/${ty}/${it.id}">
-          <img src="${img(it.poster_path, 'w92')}" onerror="this.src='${PLACEHOLDER}'">
+        return `<div class="row" data-nav="#/${ty}/${it.id}" tabindex="0" role="option" aria-label="${esc(t)}">
+          <img src="${img(it.poster_path, 'w92')}" alt="" onerror="this.src='${PLACEHOLDER}'">
           <div style="min-width:0"><div class="t">${esc(t)}</div>
             <div class="s">${year(it.release_date || it.first_air_date) || ''} · ${ty === 'tv' ? 'TV' : 'Movie'}</div></div>
           <span class="badge rate" style="position:static;background:var(--surface-2)">${ICON.star} ${it.vote_average ? it.vote_average.toFixed(1) : '—'}</span>
@@ -1143,7 +1448,7 @@
       box.style.display = 'block';
     } catch (e) { closeSuggest(); }
   }, 260);
-  function closeSuggest() { const b = $('#suggest'); if (b) { b.style.display = 'none'; b.innerHTML = ''; } }
+  function closeSuggest() { suggestSeq++; const b = $('#suggest'); if (b) { b.style.display = 'none'; b.innerHTML = ''; } }
 
   // Global click delegation
   document.addEventListener('click', (e) => {
@@ -1156,10 +1461,18 @@
       // update any matching buttons
       document.querySelectorAll(`[data-wl="${id}"][data-type="${type}"]`).forEach(b => {
         b.classList.toggle('on', nowOn);
+        b.setAttribute('aria-pressed', String(nowOn));
+        b.setAttribute('aria-label', (nowOn ? 'Remove from' : 'Add to') + ' watchlist');
+        b.setAttribute('title', (nowOn ? 'Remove from' : 'Add to') + ' watchlist');
+        // The billboard's button uses a check/plus pair, not the bookmark pair — the
+        // blanket rewrite below used to swap the hero's + for a bookmark glyph.
+        if (b.closest('.bb-cta')) { b.innerHTML = nowOn ? ICON.check : ICON.plus; return; }
         if (b.id === 'detail-wl') { b.classList.toggle('primary', nowOn); b.innerHTML = (nowOn ? ICON.bookmarkFill : ICON.bookmark) + ' ' + (nowOn ? 'In watchlist' : 'Watchlist'); }
         else b.innerHTML = nowOn ? ICON.bookmarkFill : ICON.bookmark;
       });
-      if (location.hash.indexOf('watchlist') >= 0) route();
+      // Substring-matching the whole hash meant searching for the word "watchlist" and
+      // saving a result re-rendered the entire search view and jumped you to the top.
+      if (parseHash().parts[0] === 'watchlist') route();
       return;
     }
     const tr = e.target.closest('[data-trailer]');
@@ -1187,7 +1500,29 @@
   /* ============================================================
      Boot
      ============================================================ */
-  window.addEventListener('hashchange', route);
+  // Our own history depth. hashchange fires for both forward navigation and Back, so
+  // compare against the hash we last saw going forward.
+  let navDepth = 0, navSeen = [location.hash || '#/'];
+  // The hero bleeds edge-to-edge with 100vw, which counts the classic scrollbar the
+  // layout box does not have — 5px of horizontal overflow at each edge on any platform
+  // that shows one. Measure it and let CSS subtract it.
+  function syncScrollbarWidth() {
+    const w = window.innerWidth - (document.documentElement.clientWidth || window.innerWidth);
+    document.documentElement.style.setProperty('--sbw', Math.max(0, w) + 'px');
+  }
+  syncScrollbarWidth();
+  // At boot the page is empty, so there is no scrollbar to measure yet — recompute when
+  // the rendered content changes the document height, not just on viewport resize.
+  const syncSbw = debounce(syncScrollbarWidth, 120);
+  window.addEventListener('resize', syncSbw);
+  if (window.ResizeObserver) { try { new ResizeObserver(syncSbw).observe(document.body); } catch (e) {} }
+
+  window.addEventListener('hashchange', () => {
+    const h = location.hash || '#/';
+    if (navDepth > 0 && navSeen[navDepth - 1] === h) { navSeen.pop(); navDepth--; }
+    else { navSeen[navDepth] = navSeen[navDepth] || h; navSeen[++navDepth] = h; }
+    route();
+  });
   buildHeader();
   route();
 
@@ -1298,29 +1633,265 @@
     document.querySelectorAll('[data-nav]:not([tabindex])').forEach(el => el.setAttribute('tabindex', '0'));
   }
 
-  function tvFocusFirst() {
-    if (!IS_TV) return;
+  // An element is only a D-pad target if it is really on screen. Hidden billboard
+  // slides keep their layout box, so a size check alone is not enough — they are
+  // hidden with `visibility`, which inherits, which is exactly why we test for it.
+  function tvVisible(el) {
+    return !!tvMeasure(el);
+  }
+
+  // Returns the element's rect if it is a legitimate D-pad target, else null. Kept as
+  // ONE layout read because tvRowModel calls it for every focusable on every keypress.
+  // A display:none element reports an all-zero rect, so the size test covers that too.
+  function tvMeasure(el) {
+    // The cross-origin player is handed focus deliberately by enterPlayerFocus, never
+    // by the row model. Excluding it here means a stale tabindex="0" left behind by
+    // navigating away mid-playback cannot turn it into a D-pad target.
+    if (el.id === 'player-iframe') return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return null;
+    const cs = getComputedStyle(el);
+    // `visibility` and `pointer-events` both inherit, so these two reads also rule
+    // out anything sitting inside a switched-off container (a rotated-away hero
+    // slide, a faded overlay) without walking the ancestor chain.
+    if (cs.visibility === 'hidden' || cs.opacity === '0' || cs.pointerEvents === 'none') return null;
+    return r;
+  }
+
+  function tvFocusables(root) {
+    return [].slice.call(root.querySelectorAll(TV_FOCUSABLE)).filter(tvVisible);
+  }
+
+  /* ---- The row model ------------------------------------------------------
+     Nearest-thing-in-that-direction geometry is what made the D-pad feel random:
+     a press could land two rails away, and the sticky top bar — which never moves
+     — either stole every UP press or could not be reached at all.
+
+     So the page is reduced to an ORDERED LIST OF ROWS. Up/Down steps exactly one
+     row and keeps your place; Left/Right walks inside the row. The top bar is
+     simply row 0, which puts it a bounded number of presses from anywhere, and
+     makes "what am I on?" a question with an answer.                            */
+
+  function tvRowModel(scope) {
+    // Rows are measured in DOCUMENT space (rect + scrollY) so their order never
+    // changes as the page scrolls. Two exceptions: a modal scrolls its own body, so
+    // it stays in viewport space; and the sticky header is pinned to the viewport,
+    // so in document space it belongs at the very top. That pin is what makes UP
+    // reach the top bar from the first content row — and only from there.
+    const inModal = !!document.querySelector('.modal-back');
+    const sy = window.scrollY || 0;
+    const vh = window.innerHeight || 0;
+    const docH = document.documentElement.scrollHeight || 0;
+    const metas = [];
+    [].slice.call(scope.querySelectorAll(TV_FOCUSABLE)).forEach(el => {
+      const r = tvMeasure(el);
+      if (!r) return;
+      // `.suggest` lives inside the header but drops down over the page, so it is
+      // content, not chrome: it keeps its own rows.
+      const pinned = !inModal && !!el.closest(TV_PINNED) && !el.closest('.suggest');
+      let cy;
+      if (inModal || pinned) {
+        cy = r.top + r.height / 2;
+        // Chrome pinned to the BOTTOM of the viewport (the update banner) belongs
+        // after all the content, not wherever the current scroll position puts it.
+        if (!inModal && cy > vh / 2) cy += docH;
+      } else {
+        cy = r.top + sy + r.height / 2;
+      }
+      metas.push({ el: el, x: r.left + r.width / 2, cy: cy, h: r.height, pinned: pinned });
+    });
+
+    const keyed = new Map(), loose = [];
+    for (const m of metas) {
+      let key = null;
+      if (m.pinned) key = 'hdr';
+      else {
+        const c = m.el.closest(TV_ROW_CONTAINERS);
+        if (c) key = (c.__tvRow || (c.__tvRow = 'c' + (++tvRowSeq)));
+      }
+      if (key) { if (!keyed.has(key)) keyed.set(key, []); keyed.get(key).push(m); }
+      else loose.push(m);
+    }
+
+    const rows = [];
+    keyed.forEach((items, key) => rows.push({ kind: key === 'hdr' ? 'hdr' : 'track', items }));
+    // Everything else — wrapped grids, episode lists, chip clouds, button bars —
+    // clusters by vertical centre, tolerance scaled to the item height.
+    loose.sort((a, b) => a.cy - b.cy || a.x - b.x);
+    let seed = null;
+    for (const m of loose) {
+      if (seed && Math.abs(m.cy - seed.cy) <= Math.max(18, Math.min(m.h, seed.h) * 0.6)) seed.items.push(m);
+      else { seed = { kind: 'loose', cy: m.cy, h: m.h, items: [m] }; rows.push(seed); }
+    }
+
+    const mid = (row) => row.items.reduce((t, m) => t + m.cy, 0) / row.items.length;
+    rows.forEach(row => row.items.sort((a, b) => a.x - b.x));
+    rows.sort((a, b) => mid(a) - mid(b));
+    return rows;
+  }
+
+  // The CSS reduced-motion block can only override scrolls whose behavior is 'auto';
+  // an explicit 'smooth' option wins over it. So the most frequent motion in the whole
+  // app — a page scroll on every D-pad press — was the one the preference could not
+  // switch off. Ask directly instead.
+  const tvReduceMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  function tvEase() { return (tvReduceMQ && tvReduceMQ.matches) ? 'auto' : 'smooth'; }
+
+  // Focus WITHOUT the browser's own scroll, then place the selection ourselves: a
+  // carousel centres its item sideways, the page centres the row vertically, and the
+  // sticky bar just snaps the page home (centring a pinned element fights the scroll
+  // and bounces focus straight back off it).
+  function tvFocusEl(el) {
+    try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    tvMark(el);
+    tvRemember(el);
+    const hs = el.closest('.track, .cast-track, .ep-list');
+    if (hs && hs.scrollWidth > hs.clientWidth + 4) {
+      const r = el.getBoundingClientRect(), hr = hs.getBoundingClientRect();
+      const left = Math.max(0, hs.scrollLeft + (r.left - hr.left) - (hr.width - r.width) / 2);
+      try { hs.scrollTo({ left: left, behavior: tvEase() }); } catch (e) { hs.scrollLeft = left; }
+    }
+    if (el.closest(TV_PINNED)) { if (el.closest('header.top')) window.scrollTo({ top: 0, behavior: tvEase() }); return; }
+    if (el.closest('.modal-back')) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} return; }
+    const r2 = el.getBoundingClientRect();
+    const vh = window.innerHeight || 0;
+    // Already comfortably in view (clear of the opaque sticky bar and the bottom
+    // edge)? Leave the page where it is. Re-centring unconditionally meant simply
+    // arriving on a page dragged its own title and the top bar off screen.
+    const hdr = document.querySelector('header.top');
+    const safeTop = (hdr ? hdr.getBoundingClientRect().height : 0) + 16;
+    if (r2.top >= safeTop && r2.bottom <= vh - 16) return;
+    const max = Math.max(0, (document.documentElement.scrollHeight || 0) - vh);
+    const top = Math.max(0, Math.min(window.scrollY + r2.top - (vh - r2.height) / 2, max));
+    try { window.scrollTo({ top: top, behavior: tvEase() }); } catch (e) { window.scrollTo(0, top); }
+  }
+
+  // The highlight is a class we own, not just :focus. A WebView that loses window
+  // focus — system dialog, IME, the player taking over — stops matching :focus, and
+  // on a TV a selection that silently vanishes is indistinguishable from a crash.
+  // Driven from a focusin listener so EVERY path that moves focus keeps it in sync.
+  function tvMark(el) {
+    if (tvMarked === el) return;
+    // Only CAROUSELS are rows. A .grid is one container holding many visual rows, so
+    // marking it dimmed every poster on the page instead of the neighbours on the
+    // focused line — the page read as disabled. The .rail is marked too so the rail
+    // heading can light up without depending on :focus-within.
+    const marks = (n) => n && n.closest ? [n.closest('.track, .cast-track'), n.closest('.rail')].filter(Boolean) : [];
+    if (tvMarked) marks(tvMarked).forEach(m => m.classList.remove('tv-row-active'));
+    if (tvMarked) tvMarked.classList.remove('tv-focus');
+    tvMarked = (el && el.classList) ? el : null;
+    if (tvMarked) {
+      tvMarked.classList.add('tv-focus');
+      marks(tvMarked).forEach(m => m.classList.add('tv-row-active'));
+    }
+  }
+
+  // Where the ring was, in the same document space the row model uses.
+  function tvRemember(el) {
+    const r = el.getBoundingClientRect();
+    const pinned = !!el.closest('header.top') && !el.closest('.suggest');
+    tvLastPos = { x: r.left + r.width / 2, cy: r.top + (pinned ? 0 : (window.scrollY || 0)) + r.height / 2 };
+  }
+
+  // The row + item closest to a remembered position. Used to put the ring back after
+  // a re-render deletes the element underneath it — on a TV that is the difference
+  // between 'the remote went dead' and 'nothing happened'.
+  function tvNearest(rows, pos) {
+    if (!rows.length || !pos) return null;
+    const mid = (row) => row.items.reduce((t, m) => t + m.cy, 0) / row.items.length;
+    let ri = 0, best = Infinity;
+    rows.forEach((row, i) => { const d = Math.abs(mid(row) - pos.cy); if (d < best) { best = d; ri = i; } });
+    let ci = 0; best = Infinity;
+    rows[ri].items.forEach((m, j) => { const d = Math.abs(m.x - pos.x); if (d < best) { best = d; ci = j; } });
+    return { ri: ri, ci: ci };
+  }
+
+  function tvRestoreFocus() {
+    if (!IS_TV) return false;
+    const rows = tvRowModel(document.querySelector('.modal-back') || document);
+    if (!rows.length) return false;
+    const at = tvNearest(rows, tvLastPos);
+    tvFocusEl(at ? rows[at.ri].items[at.ci].el : rows[0].items[0].el);
+    return true;
+  }
+
+  // waitForRender: the router calls this BEFORE the new view has rendered, while the
+  // OUTGOING page is still in the DOM. Grabbing immediately would focus a node that
+  // is about to be thrown away, so on a route change we always wait for the next
+  // render and let the observer do it.
+  // Tear down the whole watch cycle. Every timer is cleared here — tvGiveUp used to be
+  // left armed across navigations, and 15s later its callback would disconnect the
+  // NEXT page's observer, which is how a page could render with no ring at all.
+  function tvStopWatch() {
     if (tvObserver) { tvObserver.disconnect(); tvObserver = null; }
-    clearTimeout(tvTimeout);
-    tvEnsureFocusable();
+    clearTimeout(tvTimeout); clearTimeout(tvGiveUp);
+  }
+
+  // Try the landing selectors IN ORDER (priority, not document order), then fall back
+  // to "first focusable" — but only once the view has finished rendering. While a
+  // skeleton is still up, the fallback would grab whatever chrome rendered first (on
+  // Movies that is the Sort dropdown) and then stop watching, so the posters arriving
+  // a moment later never got the ring.
+  function tvPickLanding() {
+    const root = document.querySelector('.modal-back') || document.getElementById('view') || document.body;
+    for (let i = 0; i < TV_LANDING.length; i++) {
+      const hit = [].slice.call(root.querySelectorAll(TV_LANDING[i])).filter(tvVisible)[0];
+      if (hit) return hit;
+    }
+    if (root.querySelector('.sk')) return null;   // still loading — wait for the real content
+    return tvFocusables(root)[0] || null;
+  }
+
+  // keepPlace: the same screen re-rendered with different parameters (a genre chip, a
+  // sort, a page). Landing on the page's primary control there would mean walking all
+  // the way back to the toolbar for every single filter you want to change — picking
+  // three genres cost about forty presses. Put the ring back where it was instead.
+  function tvFocusFirst(waitForRender, keepPlace) {
+    if (!IS_TV) return;
+    const gen = ++tvGen;
+    tvStopWatch();
+    tvColX = null;
+    tvUserMoved = false;
+    const stop = () => { if (gen === tvGen) tvStopWatch(); };
     const grab = () => {
-      const el = (document.querySelector('.modal-back') || document.getElementById('view') || document).querySelector(TV_FOCUSABLE);
-      if (el) { try { el.focus(); el.scrollIntoView({ block: 'center' }); } catch (e) {} return true; }
+      tvEnsureFocusable();
+      if (keepPlace && tvLastPos) {
+        const root = document.getElementById('view');
+        if (root && !root.querySelector('.sk') && tvFocusables(root).length) return tvRestoreFocus();
+        return false;
+      }
+      const el = tvPickLanding();
+      if (el) { tvFocusEl(el); return true; }
       return false;
     };
-    if (grab()) return;
+    if (!waitForRender && grab()) return;
     const target = document.querySelector('.modal-back') || document.getElementById('view') || document.body;
-    tvObserver = new MutationObserver(() => { if (grab()) { if (tvObserver) tvObserver.disconnect(); tvObserver = null; clearTimeout(tvTimeout); } });
+    // While the view is still fetching there may be nothing focusable at all. Park the
+    // ring on the nav bar quickly so the remote is never dead, but keep watching: when
+    // the content lands it takes the ring — unless the user has already pressed a
+    // direction, in which case they are driving and we stay out of the way.
+    tvObserver = new MutationObserver(() => {
+      if (gen !== tvGen) return;
+      if (tvUserMoved) { stop(); return; }
+      if (grab()) stop();
+    });
     tvObserver.observe(target, { childList: true, subtree: true });
     tvTimeout = setTimeout(() => {
-      if (tvObserver) { tvObserver.disconnect(); tvObserver = null; }
-      if (!grab()) { const nav = document.querySelector('header.top nav.main a') || document.querySelector('[data-nav]'); if (nav) try { nav.focus(); } catch (e) {} }
-    }, 8000);
+      if (gen !== tvGen || tvUserMoved) return;
+      if (grab()) { stop(); return; }
+      const nav = document.querySelector('header.top nav.main a') || document.querySelector('[data-nav]');
+      if (nav) tvFocusEl(nav);
+    }, 1200);
+    tvGiveUp = setTimeout(stop, 15000);
   }
+
   function tvSpatialNav(e) {
     const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[e.key];
     if (!dir) return;
     const cur = document.activeElement;
+    // Player has focus: the remote is driving the embed. Don't hijack arrows — let
+    // the browser's own spatial nav move between the (cross-origin) player's controls.
+    if (cur && cur.id === 'player-iframe') return;
     // let editable text fields use Left/Right for the caret until it hits the edge
     if (cur && /^(INPUT|TEXTAREA)$/.test(cur.tagName) && /^(text|search|url|email|tel|password|number|)$/i.test(cur.type || '') && (dir === 'left' || dir === 'right')) {
       const len = (cur.value || '').length;
@@ -1328,40 +1899,68 @@
       const atEnd = cur.selectionStart === len && cur.selectionEnd === len;
       if ((dir === 'left' && !atStart) || (dir === 'right' && !atEnd)) return;
     }
-    if (cur && cur.tagName === 'SELECT' && (dir === 'up' || dir === 'down')) return; // native option cycling
+    // A <select> on a desktop keyboard should cycle its options with Up/Down. On a
+    // remote that is a trap: there is no Tab to escape with, every cycle fires change
+    // (which re-renders the whole page through the router), and the user can never
+    // leave the filter bar. On TV the select is just another row item — OK opens the
+    // platform's own picker, which the remote drives natively.
+    tvUserMoved = true;   // from here on the ring is the user's, not the router's
+    if (!IS_TV && cur && cur.tagName === 'SELECT' && (dir === 'up' || dir === 'down')) return;
     e.preventDefault(); // TV owns focus — never let it escape into the cross-origin player iframe
     tvEnsureFocusable();
-    const scope = document.querySelector('.modal-back') || document;
-    const items = [].slice.call(scope.querySelectorAll(TV_FOCUSABLE))
-      .filter(el => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; });
-    if (!items.length) return;
-    const cr = (cur && cur.getBoundingClientRect) ? cur.getBoundingClientRect()
-      : { left: window.innerWidth / 2, top: 0, width: 0, height: 0, right: window.innerWidth / 2, bottom: 0 };
-    const cx = cr.left + cr.width / 2, cy = cr.top + cr.height / 2;
-    const horiz = (dir === 'left' || dir === 'right');
-    let best = null, bestScore = Infinity;
-    for (const el of items) {
-      if (el === cur) continue;
-      const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, dx = x - cx, dy = y - cy;
-      const ok = dir === 'up' ? dy < -4 : dir === 'down' ? dy > 4 : dir === 'left' ? dx < -4 : dx > 4;
-      if (!ok) continue;
-      // primary = distance the way we're moving; cross = misalignment on the other axis.
-      const primary = horiz ? Math.abs(dx) : Math.abs(dy);
-      const cross   = horiz ? Math.abs(dy) : Math.abs(dx);
-      // Overlap on the cross axis = "same row" (L/R) or "same column" (U/D). A D-pad
-      // press should follow that line, so aligned candidates are cheap and off-axis
-      // ones are heavily penalized — otherwise a horizontally-near card in another
-      // row steals a LEFT press meant for the same-row nav bar (the header trap).
-      const overlap = horiz ? (r.top < cr.bottom && r.bottom > cr.top)
-                            : (r.left < cr.right && r.right > cr.left);
-      const score = primary + cross * (overlap ? 0.5 : 6);
-      if (score < bestScore) { bestScore = score; best = el; }
+
+    const rows = tvRowModel(document.querySelector('.modal-back') || document);
+    // Nothing focusable on screen (a skeleton, an error state). The press has already
+    // been swallowed by preventDefault, so spend it re-entering rather than leaving
+    // the remote looking dead with no key that helps.
+    if (!rows.length) { tvFocusFirst(); return; }
+    let ri = -1, ci = -1;
+    for (let i = 0; i < rows.length && ri < 0; i++) {
+      const j = rows[i].items.findIndex(m => m.el === cur);
+      if (j >= 0) { ri = i; ci = j; }
     }
-    if (best) { try { best.focus(); best.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e2) {} }
+    // Focus was lost (a re-render replaced the element under the ring). Spend this
+    // press putting the ring back where the user left it rather than at the top of
+    // the page — one 'wake up' press, no teleport.
+    if (ri < 0) { if (!tvRestoreFocus()) tvFocusFirst(); return; }
+
+    let target = null;
+    if (dir === 'left' || dir === 'right') {
+      const nj = ci + (dir === 'right' ? 1 : -1);
+      if (nj < 0 || nj >= rows[ri].items.length) return;   // edge of the row: stay put
+      target = rows[ri].items[nj];
+      tvColX = null;                                        // new column is wherever we land
+    } else {
+      const ni = ri + (dir === 'down' ? 1 : -1);
+      if (ni < 0 || ni >= rows.length) return;              // top/bottom of page: stay put
+      const from = rows[ri], to = rows[ni];
+      if (from.kind === 'track' && to.kind === 'track') {
+        // Carousel to carousel: carry the POSITION IN THE ROW, the way every TV app
+        // does — item 5 of one rail lands on item 5 of the next, not on whatever
+        // happens to sit under it after the two rails scrolled independently.
+        target = to.items[Math.min(ci, to.items.length - 1)];
+        tvColX = null;
+      } else {
+        const x = (tvColX == null) ? from.items[ci].x : tvColX;
+        target = to.items.reduce((b, m) => (b === null || Math.abs(m.x - x) < Math.abs(b.x - x)) ? m : b, null);
+        tvColX = x;                                         // hold the column down a grid
+      }
+    }
+    if (target) tvFocusEl(target.el);
   }
+
   if (IS_TV) {
     document.body.classList.add('tv');
     document.addEventListener('keydown', tvSpatialNav);
+    document.addEventListener('focusin', (e) => tvMark(e.target));
+    // Safety net: if anything drops focus all the way to <body> the remote looks
+    // dead, so catch it on the way down and put the ring back. (An iframe holding
+    // focus is the player doing its job — leave that alone.)
+    document.addEventListener('focusout', () => setTimeout(() => {
+      if (tvObserver) return;   // a route change is already placing the ring
+      const a = document.activeElement;
+      if (!a || a === document.body || a === document.documentElement) tvRestoreFocus();
+    }, 0));
     tvFocusFirst();
   }
 
@@ -1372,8 +1971,13 @@
     App.addListener('backButton', () => {
       const modal = document.querySelector('.modal-back');
       if (modal) { closeModal(modal); return; }
-      if (document.body.classList.contains('cinema-on')) { exitCinema(); return; }
-      if (location.hash.indexOf('#/watch') === 0 || window.history.length > 1) { history.back(); return; }
+      // In the player (focus handed to the embed, and/or full-screen): first Back
+      // returns to our UI rather than leaving the page.
+      if (document.body.classList.contains('player-focused') || document.body.classList.contains('cinema-on')) { exitCinema(); return; }
+      // history.length never decreases, so testing it meant exitApp() was unreachable
+      // after the very first navigation and Back became inert on the home screen.
+      // Track our own depth instead: Android TV's contract is "Back on root exits".
+      if (navDepth > 0) { history.back(); return; }
       App.exitApp();
     });
   }

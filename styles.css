@@ -25,6 +25,25 @@
   --chrome-bg: rgba(11, 13, 18, .72);  /* translucent header / bottom-nav */
   --ghost-bg: rgba(255, 255, 255, .06);
   --hero-text-shadow: rgba(0, 0, 0, .55); /* halo behind hero/detail titles over art */
+  /* ONE focus ring, shared by the keyboard (:focus-visible) and the remote (.tv-focus)
+     so selection reads the same everywhere. It is two-tone on purpose: a band of page
+     colour first, then the accent band. A plain accent outline disappears on an
+     accent-coloured control — the yellow Play button wearing a yellow ring — and the
+     old 2px --accent-2 outline measured 2.54:1 against Daylight's white surfaces,
+     below the 3:1 WCAG 2.4.11 minimum for a focus indicator. The inner band guarantees
+     an edge against whatever is underneath, in every theme. body.tv scales it up. */
+  --ring: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent);
+  --ring-glow: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent), 0 0 22px -6px var(--accent);
+  /* The badges over poster art sit on a near-black scrim in EVERY theme, so they need
+     an accent that survives on dark — Daylight's indigo is 2.88:1 there. */
+  --accent-on-dark: var(--accent);
+  /* Full-bleed geometry for the hero. 100vw INCLUDES the classic scrollbar, so the
+     old `width:100vw; margin-left:calc(-50vw + 50%)` overhung the layout box by the
+     scrollbar width at each edge and gave the whole document a horizontal scrollbar on
+     every desktop/PWA view. --sbw is measured once at boot (and on resize) in app.js. */
+  --sbw: 0px;
+  --bleed-w: calc(100vw - var(--sbw));
+  --bleed-ml: calc(-50vw + 50% + (var(--sbw) / 2));
   --radius: 14px;
   --radius-sm: 9px;
   --shadow: 0 12px 40px rgba(0,0,0,.45);
@@ -74,8 +93,9 @@
 :root[data-theme="daylight"] {
   --bg: #f4f5f7; --bg-2: #ffffff; --bg-3: #e9ebef;
   --surface: #ffffff; --surface-2: #f3f4f7; --border: #e2e5ea;
-  --text: #1a1d24; --muted: #5b6270; --muted-2: #7a828f;
+  --text: #1a1d24; --muted: #5b6270; --muted-2: #5e6675;   /* #7a828f was 3.88:1 on white */
   --accent: #4f46e5; --accent-2: #0ea5e9; --accent-ink: #ffffff;
+  --accent-on-dark: #a5b4fc;   /* indigo-300: 7.4:1 on the .82 black badge scrim */
   --danger: #e11d48; --good: #16a34a;
   --text-soft: #33394a; --glow: #e6eaf3; --scrollbar: #ccd2db; --sk-hi: #f0f2f5;
   --chrome-bg: rgba(255, 255, 255, .82); --ghost-bg: rgba(0, 0, 0, .05);
@@ -98,6 +118,12 @@ body {
 a { color: inherit; text-decoration: none; }
 img { display: block; max-width: 100%; }
 button { font-family: inherit; cursor: pointer; }
+/* Inline icons ship without width/height attributes. Any SVG that no rule happens to
+   size falls back to the replaced-element default and renders 45-80px wide, blowing
+   out its container — this is what pushed the rail’s "See all" chevron past the page
+   edge (a horizontal scrollbar on every desktop view) and what made the settings
+   dialog’s gear 80px tall. Every specific icon rule below still wins on specificity. */
+svg { width: 1em; height: 1em; flex: none; }
 ::selection { background: var(--accent); color: var(--accent-ink); }
 
 /* Scrollbars */
@@ -133,7 +159,7 @@ header.top {
 nav.main { display: flex; gap: 4px; align-items: center; }
 nav.main a {
   padding: 8px 13px; border-radius: 10px; color: var(--muted);
-  font-weight: 600; font-size: 14px; transition: .15s;
+  font-weight: 600; font-size: 14px; transition: .15s; white-space: nowrap;
 }
 nav.main a:hover { color: var(--text); background: var(--surface); }
 nav.main a.active { color: var(--text); background: var(--surface-2); }
@@ -188,11 +214,18 @@ body::before {
 
 /* ---------- Billboard hero (rotating title-art) ---------- */
 .billboard {
-  position: relative; width: 100vw; margin-left: calc(-50vw + 50%); margin-top: -22px; margin-bottom: 10px;
+  position: relative; width: var(--bleed-w); margin-left: var(--bleed-ml); margin-top: -22px; margin-bottom: 10px;
   height: min(82vh, 760px); min-height: 460px; overflow: hidden; background: var(--bg);
 }
-.bb-slide { position: absolute; inset: 0; opacity: 0; transition: opacity 1.1s ease; }
-.bb-slide.on { opacity: 1; z-index: 1; }
+/* An off slide is transparent but still laid out, so its full-size Play / More Info
+   / Save buttons stayed clickable AND focusable — five slides meant fifteen live
+   buttons stacked on top of each other, which is most of why the hero felt like the
+   remote was doing nothing. `pointer-events` is inherited and has no timing of its
+   own, so unlike a delayed `visibility` transition it is simply true the moment the
+   class flips; wireBillboard() pairs it with `inert` + aria-hidden for the keyboard
+   and screen-reader side. The crossfade is untouched. */
+.bb-slide { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity 1.1s ease; }
+.bb-slide.on { opacity: 1; pointer-events: auto; z-index: 1; }
 .bb-bg { position: absolute; inset: 0; background-size: cover; background-position: center 18%; }
 .bb-slide.on .bb-bg { animation: bbzoom 20s ease-out both; }
 @keyframes bbzoom { from { transform: scale(1.1); } to { transform: scale(1); } }
@@ -203,7 +236,7 @@ body::before {
 .bb-logo { max-height: 168px; max-width: min(420px, 72vw); object-fit: contain; object-position: left bottom; margin-bottom: 18px; filter: drop-shadow(0 6px 22px rgba(0,0,0,.6)); }
 .bb-title { color: #fff; font-size: clamp(30px, 5.4vw, 62px); font-weight: 900; letter-spacing: -1.5px; line-height: 1; margin: 0 0 18px; text-shadow: 0 3px 22px rgba(0,0,0,.6); }
 .bb-meta { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; color: rgba(255,255,255,.9); font-weight: 700; font-size: 15px; flex-wrap: wrap; }
-.bb-meta .star { color: var(--accent); display: inline-flex; align-items: center; gap: 5px; }
+.bb-meta .star { color: var(--accent-on-dark); display: inline-flex; align-items: center; gap: 5px; }
 .bb-meta .star svg { width: 16px; height: 16px; }
 .bb-meta .pill-type { border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: 20px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
 .bb-ovw { color: rgba(255,255,255,.86); font-size: clamp(14px, 1.4vw, 16.5px); line-height: 1.55; margin: 0 0 22px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
@@ -212,7 +245,7 @@ body::before {
 .bb-dots { position: absolute; right: clamp(18px, 5vw, 56px); bottom: 9%; z-index: 3; display: flex; gap: 8px; }
 .bb-dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.35); border: 0; cursor: pointer; padding: 0; transition: .25s; }
 .bb-dot.on { background: var(--accent); width: 26px; border-radius: 6px; }
-.billboard-sk { width: 100vw; margin-left: calc(-50vw + 50%); margin-top: -22px; height: min(82vh, 760px); min-height: 460px; border-radius: 0; }
+.billboard-sk { width: var(--bleed-w); margin-left: var(--bleed-ml); margin-top: -22px; height: min(82vh, 760px); min-height: 460px; border-radius: 0; }
 
 /* Big / glass buttons */
 .btn.lg { padding: 14px 26px; font-size: 15.5px; border-radius: 12px; }
@@ -236,10 +269,13 @@ body::before {
 .rail-arrow:hover { color: var(--accent); }
 
 /* ---------- Card hover overlay ---------- */
+/* pointer-events must follow opacity: while the overlay is invisible its centred
+   .ch-play still carried a data-nav to the PLAYER, so on a touch device the middle of
+   every poster opened playback instead of the detail page. */
 .card .poster .card-hover { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
   background: linear-gradient(0deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.15) 52%, transparent 100%);
-  opacity: 0; transition: opacity .2s; padding: 12px; }
-.card:hover .poster .card-hover { opacity: 1; }
+  opacity: 0; pointer-events: none; transition: opacity .2s; padding: 12px; }
+.card:hover .poster .card-hover { opacity: 1; pointer-events: auto; }
 .ch-play { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(.6); width: 52px; height: 52px; border-radius: 50%;
   background: var(--accent); color: var(--accent-ink); border: 0; display: grid; place-items: center; cursor: pointer; transition: .2s; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
 .card:hover .poster .ch-play { opacity: 1; transform: translate(-50%,-50%) scale(1); }
@@ -273,6 +309,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .page-title { font-size: 26px; font-weight: 800; margin: 4px 0 18px; letter-spacing: -.3px; }
 .muted { color: var(--muted); }
 .center-note { text-align: center; color: var(--muted); padding: 60px 20px; }
+.center-note .note-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
 
 /* ---------- Hero ---------- */
 .hero {
@@ -310,7 +347,8 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .rail { margin-bottom: 34px; }
 .rail .rail-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 13px; }
 .rail h2 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -.2px; }
-.rail a.more { color: var(--muted); font-weight: 600; font-size: 13px; }
+.rail a.more { color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.rail a.more svg { width: 15px; height: 15px; }
 .rail a.more:hover { color: var(--accent); }
 .rail .track {
   display: grid; grid-auto-flow: column; grid-auto-columns: 165px; gap: 15px;
@@ -335,7 +373,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .card .poster img { width: 100%; height: 100%; object-fit: cover; }
 .card .poster .rate {
   position: absolute; top: 8px; left: 8px; background: rgba(11,13,18,.82);
-  color: var(--accent); font-weight: 800; font-size: 12px; padding: 3px 8px; border-radius: 8px;
+  color: var(--accent-on-dark); font-weight: 800; font-size: 12px; padding: 3px 8px; border-radius: 8px;
   display: flex; align-items: center; gap: 4px; backdrop-filter: blur(4px);
 }
 .card .poster .typebadge {
@@ -371,6 +409,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 }
 .field select:focus, .field input:focus { border-color: var(--accent-2); }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.toolbar .genres-field { flex: 1; min-width: 200px; }
 .chip { padding: 7px 12px; border-radius: 20px; background: var(--bg-2); border: 1px solid var(--border); color: var(--muted); font-size: 13px; font-weight: 600; }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .chip:hover { color: var(--text); }
@@ -452,9 +491,12 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; width: min(720px, 96vw); max-height: 92vh; overflow-y: auto; box-shadow: var(--shadow); }
 .modal.wide { width: min(980px, 96vw); }
 .modal .mh { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
-.modal .mh h3 { margin: 0; font-size: 18px; }
+/* The heading icon had no size rule anywhere, so it fell back to the replaced-element
+   default and rendered ~80px tall, pushing the title onto its own line. */
+.modal .mh h3 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 9px; }
+.modal .mh h3 svg { width: 20px; height: 20px; flex: none; }
 .modal .mb { padding: 22px; }
-.modal .video-wrap { aspect-ratio: 16/9; background: #000; }
+.modal .video-wrap { aspect-ratio: 16/9; background: #000; position: relative; }   /* positions the TV remote hand-off overlay */
 .modal .video-wrap iframe { width: 100%; height: 100%; border: 0; }
 
 /* Settings form */
@@ -528,10 +570,10 @@ footer.site a:hover { color: var(--accent); }
 /* Visible keyboard focus (mouse clicks stay clean via :focus-visible) */
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
 textarea:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid var(--accent-2); outline-offset: 2px; border-radius: 6px;
+  outline: none; box-shadow: var(--ring);
 }
-.card:focus-visible { outline: none; }
-.card:focus-visible .poster { outline: 2px solid var(--accent-2); outline-offset: 3px; }
+.card:focus-visible { outline: none; box-shadow: none; }
+.card:focus-visible .poster { outline: none; box-shadow: var(--ring); }
 
 /* Momentum scroll + no scrollbar clutter on horizontal rails (touch) */
 .rail .track, .cast-track { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
@@ -553,16 +595,6 @@ textarea:focus-visible, [tabindex]:focus-visible {
   }
 }
 
-/* ---------- TV / 10-foot D-pad mode ---------- */
-body.tv { cursor: none; font-size: 18px; }
-body.tv a:focus, body.tv button:focus, body.tv input:focus, body.tv select:focus, body.tv [tabindex]:focus {
-  outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 8px;
-}
-body.tv .card:focus { outline: none; }
-body.tv .card:focus .poster { outline: 3px solid var(--accent); outline-offset: 4px; transform: scale(1.07); box-shadow: 0 16px 44px rgba(0,0,0,.6); position: relative; z-index: 2; }
-body.tv .mirror:focus, body.tv .theme-card:focus, body.tv .chip:focus { outline: 3px solid var(--accent); outline-offset: 2px; }
-body.tv nav.main a:focus { background: var(--surface-2); color: var(--text); }
-
 /* ---------- Mobile bottom tab bar ---------- */
 .bottom-nav { display: none; }
 
@@ -572,6 +604,25 @@ body.tv nav.main a:focus { background: var(--surface-2); color: var(--text); }
   z-index: 300; border-radius: 0; aspect-ratio: auto; border: 0;
 }
 body.cinema-on { overflow: hidden; }
+/* TV: "Open player" entry overlay — press OK to hand the remote to the embed */
+.player-enter { display: none; }
+body.tv .player-enter {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.42));
+  border: 0; cursor: pointer; color: #fff;
+}
+body.tv.player-focused .player-enter { display: none; }
+.player-enter .pe-pill {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 22px; font-weight: 800; color: #000;
+  background: var(--accent); padding: 14px 26px; border-radius: 99px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+.player-enter .pe-pill svg { width: 24px; height: 24px; }
+.player-enter small { font-size: 15px; opacity: .92; background: rgba(0,0,0,.5); padding: 6px 14px; border-radius: 99px; }
+body.tv .player-enter:focus { outline: none; }
+body.tv .player-enter:focus .pe-pill { outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05); }
 .cinema-exit {
   position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 310;
   display: inline-flex; align-items: center; gap: 6px;
@@ -614,10 +665,295 @@ body.cinema-on { overflow: hidden; }
   .detail-body .poster { width: 140px; }
   .detail-hero { min-height: 380px; }
   .search-wrap { width: auto; flex: 1; }
-  main { padding: 16px; }
+  /* keep the notch gutters that the earlier 860px block sets — a bare `padding: 16px`
+     reset all four sides and clipped posters behind a landscape cutout */
+  main { padding: 16px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
+  /* the hero's -22px bleed is wider than main's 16px padding, which overflowed the
+     document horizontally on phones */
+  .detail-hero { margin: -16px -16px 20px; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 13px; }
 }
 @media (max-width: 560px) {
   .brand span.txt { display: none; }
   .hero .inner { padding: 22px; }
+}
+
+
+/* ============================================================================
+   TV / 10-foot D-pad mode  (body.tv)
+   ----------------------------------------------------------------------------
+   Four things drive every rule below.
+
+   1. FOCUS IS THE CURSOR. There is no pointer, so the selected thing has to be
+      obvious from three metres away: ring + lift + glow, with everything around
+      it stepping back. Subtle is unusable here.
+   2. OVERSCAN. TV panels crop up to ~5% of each edge, so nothing that matters
+      lives in the outer gutter. --tvpad is that gutter, and rails cancel it with
+      a matching negative margin so a scaled poster is never clipped by its own
+      scroll container.
+   3. CHEAP SILICON. Google TV dongles stutter on full-screen blurs, grain
+      overlays and never-ending keyframes. Those come off in here.
+   4. THE PHONE BREAKPOINT FIRES ON A TV. A 720p set reports ~853 CSS px, inside
+      the 860px mobile breakpoint — so a 720p TV would otherwise get the phone
+      layout while a 1080p one (~960px) gets the desktop layout. Everything that
+      breakpoint changes has to be neutralised here, not just the tab bar.
+   ========================================================================= */
+
+body.tv {
+  --tvpad: clamp(28px, 4vw, 64px);
+  --header-h: 74px;
+  cursor: none;
+  font-size: 18px;
+  padding-bottom: 0 !important;      /* the mobile tab-bar reservation never applies */
+
+  /* The shared ring from :root, scaled up for a 10-foot viewing distance. */
+  --ring: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent);
+  --ring-glow: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent), 0 0 34px -4px var(--accent);
+}
+/* The sticky bar is opaque here, so anything scrolled to by the browser (rather than
+   by tvFocusEl) still clears it. */
+html { scroll-padding-top: 90px; }
+
+/* ---- Chrome: the top bar is the D-pad's row 0, so it must always be there --- */
+/* Header type and spacing scale with the viewport: at fixed 10-foot sizes brand +
+   four nav items + the icons overflowed 853px (the settings button fell off the right
+   edge and the page grew a horizontal scrollbar). The top padding keeps the nav row
+   out of the overscan crop band. */
+body.tv header.top {
+  height: auto; min-height: calc(var(--header-h) + 20px);
+  padding: 22px var(--tvpad) 10px;
+  background: var(--bg); backdrop-filter: none; gap: clamp(8px, 1.7vw, 22px);
+}
+body.tv nav.main { display: flex !important; }
+body.tv .bottom-nav, body.tv .menu-toggle, body.tv .rail-arrow { display: none !important; }
+body.tv .brand { font-size: clamp(17px, 1.8vw, 23px); }
+body.tv .brand-mark { width: clamp(26px, 2.8vw, 36px); height: clamp(26px, 2.8vw, 36px); }
+body.tv nav.main a { font-size: clamp(14px, 1.35vw, 17px); padding: 11px clamp(9px, 1.5vw, 20px); border-radius: 12px; }
+body.tv #search-btn { margin-left: auto; }
+body.tv .icon-btn { width: clamp(40px, 3.8vw, 48px); height: clamp(40px, 3.8vw, 48px); }
+body.tv .icon-btn svg { width: 22px; height: 22px; }
+/* Overscan for the fixed chrome that lives at the screen edges. */
+body.tv .toast { bottom: calc(22px + 3vh); }
+body.tv .update-banner { bottom: calc(22px + 3vh); }
+body.tv .cinema-exit { top: calc(12px + 3vh); right: calc(14px + 3vw); }
+body.tv footer.site { padding: 26px var(--tvpad) calc(40px + 3vh); font-size: 15px; }
+
+/* The search page's own field: one big row, sized for a remote. */
+.tv-search { display: flex; gap: 14px; align-items: center; margin: 0 0 26px; }
+.tv-search .ico { width: 26px; height: 26px; color: var(--muted-2); flex: none; }
+.tv-search input {
+  flex: 1; min-width: 0; height: 60px; border-radius: 14px; font-size: 20px; padding: 0 20px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text); outline: none;
+}
+.tv-search .btn { height: 60px; padding: 0 30px; font-size: 18px; }
+
+/* ---- Cheap-silicon budget -------------------------------------------------- */
+body.tv::before { display: none; }                    /* film-grain overlay */
+body.tv .bb-slide.on .bb-bg { animation: none; }      /* 20s full-screen ken burns */
+/* Every blur is a full compositing pass. The badge blurs run once per card (~94 on
+   Home) and the modal one covers the whole viewport, two presses away via the gear. */
+body.tv .btn.glass,
+body.tv .card .poster .rate,
+body.tv .card .poster .wl,
+body.tv .modal-back { backdrop-filter: none; }
+
+/* ---- Overscan-safe page frame ---------------------------------------------- */
+/* The generous bottom padding is not decoration: it is what lets the LAST row
+   scroll to the middle of the screen like every row above it. */
+body.tv main { padding: 24px var(--tvpad) clamp(120px, 26vh, 300px); }
+body.tv .section { padding: 0; max-width: none; margin-top: 42px; }
+body.tv .player-shell { max-width: none; }
+body.tv .rail h2 { font-size: 26px; }
+body.tv .section h3 { font-size: 24px; }
+body.tv .page-title { font-size: 34px; }
+body.tv .rail { margin-bottom: 14px; }
+/* The rail you are in announces itself before you even find the poster. Both forms:
+   :focus-within dies with window focus, and .tv-row-active is set on .rail by tvMark. */
+body.tv .rail:focus-within h2, body.tv .rail.tv-row-active h2 { color: var(--accent); }
+/* The rail-head "See all" is not a remote target (the end-of-rail tiles are), so on TV
+   it is a dead affordance — and it wrapped under its own chevron at TV type sizes. */
+body.tv .rail a.more { display: none; }
+
+/* ---- The phone breakpoint, undone -------------------------------------------
+   These five rules come from @media (max-width: 860px) and would otherwise give a
+   720p TV the phone layout: a 140px detail poster, a stacked hero and a shorter
+   billboard than the skeleton that precedes it. */
+body.tv .detail-body { flex-direction: row; align-items: flex-end; padding-top: 0; }
+body.tv .detail-body .poster { width: clamp(180px, 16vw, 260px); }
+body.tv .detail-hero { margin: -24px calc(-1 * var(--tvpad)) 28px; min-height: 480px; }
+body.tv .billboard, body.tv .billboard-sk {
+  height: min(70vh, 640px); min-height: 0; margin-top: -24px;
+}
+body.tv .card .poster .wl { width: 34px; height: 34px; }
+
+/* ---- Carousels ------------------------------------------------------------- */
+/* padding = breathing room for the focused poster's ring + glow inside a clipping
+   scroll container (the glow reaches ~30px past the 7px ring, and the 1.10 scale adds
+   another ~16px below); the matching negative margin cancels the page gutter so the
+   first tile still lines up with the headline above it. Snap points are off: they
+   fight the centring we do ourselves and yank the selection back off-centre. */
+body.tv .rail .track {
+  grid-auto-columns: 210px; gap: 26px;
+  padding: 44px var(--tvpad) 60px;
+  margin: -36px calc(-1 * var(--tvpad)) -50px;
+  scroll-snap-type: none;
+}
+body.tv .rank-rail .track { grid-auto-columns: 310px; }
+body.tv .rank-num { font-size: 176px; }
+body.tv .rank-item .poster { width: 158px; }
+body.tv .cast-track {
+  grid-auto-columns: 150px; gap: 22px;
+  padding: 34px var(--tvpad) 38px;
+  margin: -28px calc(-1 * var(--tvpad)) -28px;
+}
+body.tv .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 46px 28px; padding: 26px 0; }
+
+/* Episodes become a carousel on TV. As a vertical stack a 22-episode season is 22
+   D-pad rows, which put the top bar ~27 presses away from the bottom of the page;
+   as one row it is two. app.js lists .ep-list in TV_ROW_CONTAINERS to match. */
+body.tv .ep-list {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 330px; gap: 22px;
+  overflow-x: auto; scroll-behavior: smooth; scrollbar-width: none;
+  padding: 30px var(--tvpad) 34px;
+  margin: -24px calc(-1 * var(--tvpad)) -24px;
+}
+body.tv .ep-list::-webkit-scrollbar { height: 0; display: none; }
+body.tv .ep { flex-direction: column; align-items: stretch; gap: 10px; padding: 14px; }
+body.tv .ep .thumb { width: 100%; }
+body.tv .ep .play { display: none; }
+body.tv .ep .en { font-size: 15px; }
+body.tv .ep .et { font-size: 18px; }
+body.tv .ep .eo { font-size: 15px; }
+
+/* ---- Focus -----------------------------------------------------------------
+   Selection is driven by a class we own (.tv-focus / .tv-row-active), not by the
+   :focus pseudo-class alone. :focus stops matching the moment the WebView loses
+   window focus — a system dialog, an IME, the player taking over — and on a TV that
+   means the highlight silently disappears and the user has no idea where they are.
+   app.js sets the class in tvFocusEl and from a document focusin listener, so every
+   path that moves focus keeps it in sync. :focus is kept alongside as a fallback.
+
+   ORDER MATTERS: the generic control ring comes first, then the card rules override
+   it, because a card and a generic [tabindex] target score identically on
+   specificity and the later rule would otherwise win.
+   -------------------------------------------------------------------------- */
+
+/* No border-radius here: forcing one squared off the chips and turned the round
+   billboard dots into squircles as the ring moved across them. */
+body.tv a:focus, body.tv button:focus, body.tv input:focus, body.tv select:focus, body.tv [tabindex]:focus,
+body.tv .tv-focus {
+  outline: none; box-shadow: var(--ring-glow);
+}
+/* The nav pill keeps its "you are here" underline while focused — a single box-shadow
+   property meant the focus ring replaced it outright, so a focused Home and a focused
+   Movies were pixel-identical with no other section indicator on TV. */
+body.tv nav.main a:focus, body.tv nav.main a.tv-focus {
+  background: var(--accent); color: var(--accent-ink); box-shadow: var(--ring);
+}
+body.tv nav.main a.active { box-shadow: inset 0 -3px 0 var(--accent); }
+body.tv nav.main a.active:focus, body.tv nav.main a.active.tv-focus {
+  box-shadow: var(--ring), inset 0 -3px 0 var(--accent-ink);
+}
+body.tv .mirror:focus, body.tv .theme-card:focus, body.tv .chip:focus, body.tv .ep:focus, body.tv .person:focus,
+body.tv .mirror.tv-focus, body.tv .theme-card.tv-focus, body.tv .chip.tv-focus, body.tv .ep.tv-focus, body.tv .person.tv-focus {
+  box-shadow: var(--ring-glow), 0 12px 34px rgba(0,0,0,.55);
+  transform: scale(1.03); position: relative; z-index: 4;
+}
+body.tv .chip:focus, body.tv .chip.tv-focus { border-radius: 20px; }
+body.tv .btn:focus, body.tv .btn.tv-focus { transform: scale(1.05); }
+body.tv .mirror, body.tv .chip, body.tv .ep, body.tv .person { transition: transform .18s ease, box-shadow .18s ease; }
+body.tv .btn { transition: transform .18s ease; }
+/* The player overlay fills a frame with overflow:hidden, so an outer ring is clipped
+   away entirely — the ring goes on the inset pill instead. */
+body.tv .player-enter:focus, body.tv .player-enter.tv-focus { box-shadow: none; }
+body.tv .player-enter:focus .pe-pill, body.tv .player-enter.tv-focus .pe-pill {
+  outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05);
+}
+
+/* ---- Focus: cards ---------------------------------------------------------- */
+body.tv .card { transition: opacity .2s ease; }
+body.tv .card .poster { transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease; }
+/* the ring belongs on the artwork, not on the card box (which includes the caption) */
+body.tv .card:focus, body.tv .card.tv-focus { outline: none; box-shadow: none; z-index: 6; }
+/* 1.10, not 1.14: scaling about the centre pushes the poster's bottom edge down by
+   height x 0.05, and with the ring that is ~23px — which has to fit inside the
+   caption's top padding below, or the focused poster covers the only place the title
+   is written out on TV. */
+body.tv .card:focus .poster, body.tv .card.tv-focus .poster {
+  transform: scale(1.10);
+  box-shadow: var(--ring-glow), 0 26px 70px rgba(0,0,0,.75);
+  position: relative; z-index: 6;
+}
+body.tv .card .cap { padding: 26px 3px 0; }
+body.tv .card .cap .t { font-size: 15.5px; }
+body.tv .card .cap .y { font-size: 14px; }
+body.tv .card:focus .cap .t, body.tv .card.tv-focus .cap .t { color: var(--text); font-weight: 800; }
+body.tv .card:focus .cap .y, body.tv .card.tv-focus .cap .y { color: var(--accent); }
+/* On TV the poster overlay only covers the art we just scaled up, and the title is
+   already spelled out underneath the card. */
+body.tv .card .poster .card-hover { display: none; }
+/* Row-mates step back so the selection is the only bright thing on the row. Only the
+   ARTWORK dims — dimming the whole card took the captions to 3.7:1 and the years to
+   2.3:1, i.e. unreadable, while they are still meant to be scannable. */
+body.tv .track.tv-row-active .card:not(.tv-focus) .poster { opacity: .45; }
+body.tv .cast-track.tv-row-active .person:not(.tv-focus) img { opacity: .45; }
+/* The Top 10 numeral lights up with its poster. */
+body.tv .rank-item:focus .rank-num, body.tv .rank-item.tv-focus .rank-num {
+  color: var(--surface-2); -webkit-text-stroke-color: var(--accent);
+}
+
+/* End-of-rail "See all" tile — the rail-head link is not a remote target. */
+.more-card .poster { display: grid; place-items: center; background: var(--surface); border: 1px dashed var(--border); }
+.more-card .mc-in { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--muted); font-weight: 800; font-size: 15px; }
+.more-card .mc-in svg { width: 40px; height: 40px; }
+body.tv .more-card:focus .mc-in, body.tv .more-card.tv-focus .mc-in { color: var(--accent); }
+
+/* ---- Filter toolbar -------------------------------------------------------- */
+/* Left as a wrapping flex row this put five stray rows of chips ABOVE the selects and
+   mixed the last two chips into the select row — unreadable and unpredictable to walk
+   with a remote. */
+body.tv .toolbar {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: end; gap: 20px 14px; padding: 20px;
+}
+body.tv .toolbar .genres-field { grid-column: 1 / -1; min-width: 0; }
+body.tv .toolbar .field label { font-size: 14px; }
+body.tv .toolbar select { height: 46px; font-size: 16px; }
+body.tv .chip { font-size: 16px; padding: 10px 16px; }
+
+/* ---- 10-foot type for everything the card rules don't reach ----------------- */
+/* The mirror picker in particular is the screen a TV user is guaranteed to reach
+   under stress, and it was the smallest type in the app. */
+body.tv .person .n { font-size: 16px; }
+body.tv .person .c { font-size: 14px; }
+body.tv .mirror .mn { font-size: 19px; }
+body.tv .mirror .ms { font-size: 14px; }
+body.tv .mirror .num { font-size: 15px; }
+body.tv .source-bar .lbl { font-size: 17px; }
+body.tv .card .poster .rate { font-size: 14px; padding: 4px 10px; }
+body.tv .card .poster .typebadge { font-size: 12px; padding: 4px 9px; }
+body.tv .modal .mh h3 { font-size: 22px; }
+body.tv .modal .mh h3 svg { width: 24px; height: 24px; }
+body.tv .modal .mh { padding: 20px 24px; }
+body.tv .theme-card { padding: 14px; font-size: 16px; }
+/* On TV the player is already full-bleed through #player-enter, and "for casting to a
+   TV" is not a thing you do on a TV. */
+body.tv #tv-mode { display: none; }
+
+/* ---- Billboard ------------------------------------------------------------- */
+body.tv .bb-info { padding: 0 var(--tvpad); max-width: min(760px, 58vw); }
+body.tv .bb-ovw { font-size: 19px; -webkit-line-clamp: 2; }
+body.tv .bb-cta .btn.lg { font-size: 19px; padding: 16px 30px; }
+/* Give the dot strip the same height as the CTA buttons and centre inside it, so the
+   dots land on the SAME row as Play / More Info for the row model — the hero is one
+   row you walk across, not two you have to discover. The 58px is tied to the button
+   height above: the row model clusters within max(18px, …) of vertical centre, so
+   changing either by more than ~18px splits the hero into two rows. */
+body.tv .bb-dots { right: var(--tvpad); bottom: 9%; gap: 12px; height: 58px; align-items: center; }
+body.tv .bb-dot { width: 18px; height: 18px; }
+body.tv .bb-dot.on { width: 44px; border-radius: 9px; }
+/* Same ring as everything else — a bespoke outline here made the selection change
+   shape and colour as it crossed from the buttons into the picker. */
+body.tv .bb-dot:focus, body.tv .bb-dot.tv-focus {
+  box-shadow: var(--ring-glow); transform: scale(1.15); background: var(--accent);
 }
