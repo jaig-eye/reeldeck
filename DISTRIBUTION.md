@@ -154,3 +154,76 @@ Which message appears depends on the Mac:
   OV-signed app can still trip SmartScreen until it builds download "reputation"; EV clears it immediately.
 
 For sharing with friends/a small group, the free unsigned builds + the steps above are the normal path.
+
+---
+
+## Android — the release signing key (read this before touching releases)
+
+Android will only install an APK over an existing app **if both are signed by the same
+certificate**. A mismatch is refused with `App not installed` — which looks like a
+corrupt download or Play Protect, and is neither. Disabling Play Protect does nothing,
+because Play Protect was never involved.
+
+### What went wrong once, so it is not repeated
+
+CI builds the APK with `assembleDebug`. Left to itself, Gradle signs debug builds with
+`~/.android/debug.keystore` — and a fresh CI runner has no such file, so it **generates
+a new random one every run**. Three consecutive releases were therefore signed by three
+different keys and none could update the one before it:
+
+| release | signer | SHA-256 (first bytes) |
+|---|---|---|
+| v1.0.10 | `CN=Android Debug` | `47:F6:63:78…` |
+| v1.0.11 | `CN=Android Debug` | `1C:F1:F8:2E…` |
+| v1.0.12 | `CN=Android Debug` | `F8:20:8D:CF…` |
+| **v1.0.14** | **`CN=Robert, OU=Reeldeck`** | **`4D:E1:A3:F1…`** |
+
+`android/app/build.gradle` now defines `signingConfigs.shared` and applies it to **both**
+build types. Both matters: the shipped APK is a *debug* build, so signing only `release`
+would have changed nothing.
+
+### The secrets CI needs
+
+Repository → Settings → Secrets and variables → Actions:
+
+| Secret | Required | Notes |
+|---|---|---|
+| `ANDROID_KEYSTORE_BASE64` | yes | the `.jks`, base64, one line, no wrapping |
+| `ANDROID_KEYSTORE_PASSWORD` | yes | |
+| `ANDROID_KEY_ALIAS` | yes | e.g. `reeldeck` |
+| `ANDROID_KEY_PASSWORD` | **no** | only if the key has its *own* password; otherwise Gradle falls back to the store password, which is what `keytool` uses when you accept its offer to reuse it |
+
+With the secrets absent the build still succeeds — it just produces an APK that cannot
+update anything, and logs a GitHub **warning** saying so. It does not fail the release,
+because a missing secret should not block a desktop build.
+
+### The key itself
+
+- Lives **outside** the repository. `.gitignore` blocks `*.jks`, `*.keystore`, `*.b64`
+  and `keystore.properties` so it cannot be committed by accident.
+- **Back it up.** It is the only key that can update installs already in the wild. Lose
+  it and every user has to uninstall and reinstall by hand — permanently, every time.
+- Delete any `.b64` copy once the secret is stored; it is the key in plain text.
+- Never commit it, even to a private repo. A public repo would let anyone sign an APK
+  that installs over yours.
+
+### Verifying a release actually got signed
+
+```bash
+keytool -printcert -jarfile Reeldeck.apk
+```
+
+Expect `Owner: CN=Robert, OU=Reeldeck, …` and SHA-256 `4D:E1:A3:F1:41:29:D9:AC:…`.
+
+- `CN=Android Debug` → the secrets are not reaching the build; updates will fail.
+- A *different* non-debug fingerprint → the keystore was replaced. Every existing
+  install must be uninstalled once more.
+
+Two consecutive releases showing the **same** fingerprint is the proof it is stable.
+
+### Crossing over from an unsigned release
+
+Anyone on v1.0.12 or earlier carries one of the random debug keys, so nothing can update
+over it. They must uninstall Reeldeck once by hand and install v1.0.14 or later. This is
+a one-time cost; updates apply normally afterwards. The in-app updater says so when the
+installer is opened.
