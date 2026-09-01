@@ -7,8 +7,8 @@ android {
         applicationId "com.reeldeck.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 11
-        versionName "1.0.12"
+        versionCode 12
+        versionName "1.0.14"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -38,7 +38,12 @@ android {
                 storeFile file(ksPath)
                 storePassword System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: project.findProperty("releaseKeystorePassword")
                 keyAlias System.getenv("RELEASE_KEY_ALIAS") ?: project.findProperty("releaseKeyAlias")
-                keyPassword System.getenv("RELEASE_KEY_PASSWORD") ?: project.findProperty("releaseKeyPassword")
+                // keytool offers to reuse the store password for the key, and pressing
+                // Enter accepts -- which is the common case, and then there is no
+                // separate key password to supply. Fall back to the store password so a
+                // fourth secret is optional rather than required.
+                keyPassword System.getenv("RELEASE_KEY_PASSWORD") ?: project.findProperty("releaseKeyPassword") ?:
+                            System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: project.findProperty("releaseKeystorePassword")
             }
         }
     }
