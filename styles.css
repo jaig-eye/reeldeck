@@ -38,7 +38,11 @@
      where nothing sits on top of it - rules, bars, underlines, glows. Text never
      rides the gradient, because the far end of it has no contrast guarantee, and
      the themes each swap --accent and --accent-2 independently. */
-  --accent-grad: linear-gradient(120deg, var(--accent) 0%, var(--accent-2) 100%);
+  /* A fade of the theme's OWN colour into a darker shade of itself. Sweeping to a
+     second hue read as loud and slightly arbitrary -- the accent stopped being one
+     colour and became a rainbow that fought whatever poster was next to it. Same
+     idea, one hue: the eye reads depth, not decoration. */
+  --accent-grad: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 55%, #000) 100%);
   --accent-glow: 0 0 34px -8px color-mix(in srgb, var(--accent) 70%, transparent);
   --ring: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent);
   --ring-glow: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent), 0 0 22px -6px var(--accent);
@@ -58,11 +62,11 @@
   --maxw: 1400px;
   --header-h: 62px;
   --font: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* Reserved for things that should sound like a title, never for UI or body text:
-     a high-contrast serif is beautiful at 40px and tiring at 13. The fallbacks are
-     chosen to still be SERIF, so the hierarchy survives even when the webfont does
-     not load - a sans fallback would quietly erase the whole idea. */
-  --font-display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+  /* Titles only, never UI or body. A heavy grotesque with the tracking pulled in:
+     the previous serif read as delicate where a title card needs to read as
+     confident. Fallbacks stay in the same GENRE (tight neo-grotesques) so the
+     hierarchy survives when the webfont does not load. */
+  --font-display: "Archivo", "Helvetica Neue", "Arial Narrow", system-ui, sans-serif;
 }
 
 /* ---------- Themes (set via data-theme on <html>) ---------- */
@@ -238,7 +242,10 @@ body::before {
 /* ---------- Billboard hero (rotating title-art) ---------- */
 .billboard {
   position: relative; width: var(--bleed-w); margin-left: var(--bleed-ml); margin-top: -22px; margin-bottom: 10px;
-  height: min(82vh, 760px); min-height: 460px; overflow: hidden;
+  /* Was min(82vh, 760px): on a laptop that is the ENTIRE screen, so the rails below
+     never hinted at themselves and a wide window cropped the subject clean out of
+     frame. Capped by aspect ratio as well as height, so the art keeps its shape. */
+  height: clamp(420px, min(64vh, 56vw), 640px); overflow: hidden;
   /* No background: the art is masked out at the bottom, so anything painted here
      would be a flat band that the page's ambient gradient does not match. */
 }
@@ -424,7 +431,23 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .rail a.more:hover { color: var(--accent); }
 .rail .track {
   display: grid; grid-auto-flow: column; grid-auto-columns: 165px; gap: 15px;
-  overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity;
+  /* overflow-x:auto forces overflow-y to compute to AUTO -- there is no
+     "scroll sideways, ignore vertical" in CSS. So the rail owned a vertical
+     scroller, and a wheel over Top 10 scrolled the ROW instead of the page.
+     touch-action fixed the finger; this fixes the wheel.
+     The overflow came from the hover lift (transforms DO add scrollable overflow;
+     shadows do not), so the cure is room rather than clipping: pad enough that
+     nothing ever exceeds the padding box, then pull the padding back off with a
+     negative margin so the layout is unchanged. Clipping with overflow-y:hidden
+     would have cut the focus ring instead. body.tv already does exactly this. */
+  /* overflow-y is EXPLICIT. Left alone it computes to auto (there is no
+     "scroll sideways only" in CSS), and the row then owns a vertical scroller that
+     swallows the wheel -- scrolling Top 10 instead of the page. The padding above
+     and below is what makes hiding it safe: the hover lift and the TV focus ring
+     both land inside the padding box, so nothing visible is ever clipped. */
+  overflow-x: auto; overflow-y: hidden;
+  padding: 14px 2px 16px; margin: -10px 0 -12px;
+  scroll-snap-type: x proximity;
   scrollbar-width: thin;
 }
 .rail .track > * { scroll-snap-align: start; }
@@ -507,9 +530,9 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .detail-body .tagline { color: rgba(255,255,255,.82); font-style: italic; margin: 0 0 14px; text-shadow: 0 1px 10px rgba(0,0,0,.5); }
 .detail-body h1 .muted { color: rgba(255,255,255,.7); }
 .detail-body .detail-logo { max-height: 128px; max-width: min(380px, 62vw); object-fit: contain; object-position: left bottom; display: block; margin: 4px 0 12px; filter: drop-shadow(0 4px 18px rgba(0,0,0,.6)); }
-.detail-body .metarow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); font-weight: 600; font-size: 14px; margin-bottom: 16px; }
-.detail-body .metarow .pill { background: var(--surface-2); border: 1px solid var(--border); padding: 4px 11px; border-radius: 20px; color: var(--text); }
-.detail-body .metarow .pill.rating { color: var(--text); }
+.metarow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); font-weight: 600; font-size: 14px; margin-bottom: 16px; }
+.metarow .pill { background: var(--surface-2); border: 1px solid var(--border); padding: 4px 11px; border-radius: 20px; color: var(--text); }
+.metarow .pill.rating { color: var(--text); }
 .detail-body .cta { display: flex; gap: 11px; flex-wrap: wrap; margin-top: 6px; }
 .section { max-width: var(--maxw); margin: 30px auto 0; padding: 0 22px; }
 .section h3 { font-size: 18px; font-weight: 800; margin: 0 0 14px; }
@@ -517,7 +540,8 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .genre-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
 
 /* Cast */
-.cast-track { display: grid; grid-auto-flow: column; grid-auto-columns: 120px; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+.cast-track { overflow-y: hidden; padding-top: 10px; padding-bottom: 10px; margin-top: -10px; margin-bottom: -10px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: 120px; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
 .person { text-align: center; }
 .person img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: var(--bg-3); margin-bottom: 8px; }
 .person .n { font-weight: 600; font-size: 13px; }
@@ -691,12 +715,17 @@ textarea:focus-visible, [tabindex]:focus-visible {
   width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
   background: rgba(11,13,18,.82); color: #fff; border: 1px solid rgba(255,255,255,.25);
   cursor: pointer; opacity: 0; transition: opacity .15s, background .15s;
+  /* pointer-events must follow opacity. Invisible and still hit-testing meant a tap
+     on the top-left corner of a Continue-watching poster silently DELETED the entry
+     instead of resuming it -- the dismiss branch runs before [data-nav]. Same rule
+     .card-hover already documents for .ch-play; it just had not been applied here. */
+  pointer-events: none;
 }
 .card .cw-x svg { width: 13px; height: 13px; }
 .card .cw-x:hover { background: rgba(11,13,18,.95); }
-@media (hover: hover) { .card:hover .cw-x { opacity: 1; } }
-.card .cw-x:focus-visible { opacity: 1; }
-body.tv .card .cw-x { opacity: 1; width: 34px; height: 34px; }
+@media (hover: hover) { .card:hover .cw-x { opacity: 1; pointer-events: auto; } }
+.card .cw-x:focus-visible { opacity: 1; pointer-events: auto; }
+body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34px; }
 
 /* ---------- Player header + episode strip ----------
    The header used to read "Grey's Anatomy - S2 E5", which names everything except
@@ -758,7 +787,12 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
 }
 .mbadge svg { width: 11px; height: 11px; }
 .mirror.tracked .mbadge { margin-top: 6px; }
-.mirror.on.tracked .mbadge { color: var(--accent-ink); background: rgba(0,0,0,.22); border-color: rgba(0,0,0,.3); }
+.mirror.on .mbadge {
+  /* .mirror.on is a DARK tile (accent at 12% over surface), not an accent fill, so
+     the old accent-ink text on it was near-black on near-black and the badge simply
+     vanished on the mirror you were actually using. */
+  color: var(--accent); background: rgba(0,0,0,.35); border-color: var(--accent);
+}
 .mirror-note {
   font-size: 12.5px; line-height: 1.6; margin-top: 10px; max-width: 78ch;
   text-transform: none; letter-spacing: normal;
@@ -1406,7 +1440,7 @@ body:not(.tv) .grid { animation: rd-rise var(--dur-enter) var(--ease-enter) both
 }
 
 /* ---- Material: pills and chips --------------------------------------------- */
-.detail-body .metarow .pill, .bb-meta .pill-type, .bb-meta .pill.rating {
+.metarow .pill, .bb-meta .pill-type, .bb-meta .pill.rating {
   background-image: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.01));
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -1593,7 +1627,11 @@ body:not(.tv) nav.main a.active::after {
 .ep-fill { background: var(--accent-grad); }
 body:not(.tv) nav.main a.active::after { background: var(--accent-grad); }
 .bb-dot.on { background: var(--accent-grad); }
-.spill.on { background: var(--accent-grad); border-color: transparent; }
+/* Flat accent, NOT --accent-grad. This is the one place a label sits ON the sweep,
+   and darkening its far end took "Season N" to 2.84:1 in aurora across the whole
+   label. The gradient's own rule is that nothing reads on top of it; this was the
+   exception that proved it. */
+.spill.on { background: var(--accent); border-color: transparent; }
 .upd-box .ub-bar i { background: var(--accent-grad); }
 /* The one place the sweep is allowed to glow: the primary action. The FILL stays a
    contrast-safe accent-to-lighter-accent so the dark ink on it never drops below
@@ -1665,7 +1703,12 @@ header.top.scrolled::after {
 
 /* One column once the sidebar would squeeze the prose; the poster leads. */
 @media (max-width: 900px) {
-  .dv-body { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), NOT 1fr: a bare 1fr has an auto minimum, so the track is floored
+     at its content's min-content width. The cast row moved inside this column, and a
+     scroll container still reports its full content as min-content -- which blew the
+     track out to ~1860px and panned the whole page sideways ~1500px. The desktop rule
+     already guards this; the mobile override was dropping the guard. */
+  .dv-body { grid-template-columns: minmax(0, 1fr); }
   .dv-facts { flex-direction: column; }
   .dv-poster { width: 160px; }
 }
@@ -1680,3 +1723,93 @@ body.tv .dv-body { grid-template-columns: minmax(0, 1fr) clamp(260px, 24vw, 380p
 body.tv .dv-main .overview { font-size: clamp(16px, 2.4vh, 21px); }
 body.tv .dv-facts dd { font-size: clamp(15px, 2.2vh, 19px); }
 body.tv .dv-facts dt { font-size: clamp(11px, 1.6vh, 14px); }
+
+/* ============================================================================
+   ROUND 2 — bolder display type, progress on cards
+   ========================================================================== */
+/* Archivo carries weight through mass, so it wants the opposite treatment to the
+   serif it replaced: heavy, tight, and slightly condensed by tracking rather than
+   by a condensed cut (which Google's Archivo does not ship in this axis set). */
+.bb-title, .detail-hero h1, .page-title, .rail h2, .section > h3, .modal .mh h3,
+.dv-title, .dv-main h3, .rail-head h2 {
+  font-weight: 800;
+  letter-spacing: -.035em;
+}
+.dv-title { font-weight: 900; letter-spacing: -.045em; line-height: .9; }
+.bb-title { font-weight: 900; letter-spacing: -.045em; }
+
+/* The kicker and tagline were doing a job the pills already did better. The tagline
+   stays but stops pretending to be a pull-quote. */
+.dv-tagline {
+  font-family: var(--font); font-style: normal; font-weight: 600;
+  font-size: clamp(15px, 1.2vw, 18px); color: var(--muted);
+  letter-spacing: 0;
+}
+
+/* ---- Progress on every card ------------------------------------------------
+   If a title has been started, say so wherever it appears -- not only in Continue
+   watching. A 3px rule under the artwork is the whole affordance. */
+.card-prog {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px; z-index: 3;
+  background: rgba(0,0,0,.55);
+}
+.card-prog i { display: block; height: 100%; background: var(--accent); }
+body.tv .card-prog { height: 5px; }
+
+/* ---- Up next ---------------------------------------------------------------
+   Sits above the full-screen player (z-index 300) because that is exactly where it
+   is needed: the alternative was leaving full screen to reach the episode strip. */
+.next-up {
+  position: fixed; right: clamp(14px, 3vw, 40px); bottom: clamp(16px, 4vh, 48px);
+  z-index: 320; display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: 14px; max-width: min(560px, 92vw);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 60px -16px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  animation: rd-rise 320ms var(--ease-enter) both;
+}
+.next-up .nu-k {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent); white-space: nowrap;
+}
+.next-up .nu-t {
+  font-weight: 700; font-size: 14px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+body.tv .next-up {
+  right: var(--tvpad); bottom: calc(16px + 4vh); gap: 16px; padding: 16px 20px;
+}
+body.tv .next-up .nu-t { font-size: clamp(15px, 2.3vh, 20px); }
+body.tv .next-up .nu-k { font-size: clamp(11px, 1.6vh, 14px); }
+@media (prefers-reduced-motion: reduce) { .next-up { animation: none; } }
+
+/* ---- Watch page: one disclosure instead of a control panel -----------------
+   The page used to show, permanently: a five-button toolbar, a fourteen-tile mirror
+   grid, a section heading and two paragraphs of explanation -- more chrome than
+   video, on the one screen where the video is the entire point. All of it is
+   OCCASIONAL: you choose a mirror when one fails, not every time you press play.
+   <details> because it is native, works from a keyboard and a remote, needs no state
+   of ours, and degrades to "everything visible" if the CSS never loads. */
+.srv { margin-top: 26px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-2); }
+.srv > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 12px;
+  padding: 14px 16px; border-radius: 14px; font-weight: 700;
+}
+.srv > summary::-webkit-details-marker { display: none; }
+.srv > summary::after {
+  content: ''; margin-left: auto; width: 8px; height: 8px; flex: none; align-self: center;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px); transition: transform var(--dur-ui) var(--ease-ui);
+}
+.srv[open] > summary::after { transform: rotate(-135deg) translateY(2px); }
+@media (hover: hover) { .srv > summary:hover { background: var(--surface); } }
+.srv-n { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.srv-body { padding: 0 16px 18px; }
+.srv-opts { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.srv .mirror-note { margin-top: 14px; }
+body.tv .srv > summary { padding: clamp(14px, 2.4vh, 22px) 20px; font-size: clamp(15px, 2.3vh, 19px); }
+body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
+
+/* The now-playing line is a sentence, not a toolbar. */
+.source-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }

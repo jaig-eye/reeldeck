@@ -7,8 +7,8 @@ android {
         applicationId "com.reeldeck.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "1.0.11"
+        versionCode 11
+        versionName "1.0.12"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +16,42 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    /*
+     * Android refuses to install an APK over an app signed with a DIFFERENT
+     * certificate -- it fails with "App not installed", which looks like a download
+     * or Play Protect problem and is neither.
+     *
+     * Left alone, `assembleDebug` signs with ~/.android/debug.keystore, and a fresh
+     * CI runner has no such file, so Gradle GENERATES A NEW RANDOM ONE every run.
+     * Every release was therefore signed by a different key and could never update
+     * the one before it. (Verified: v1.0.10 and v1.0.11 have different SHA-256
+     * certificate fingerprints, issued an hour apart -- one per CI run.)
+     *
+     * So: use an explicit keystore when one is supplied, for BOTH build types, and
+     * fall back to the old behaviour for local throwaway builds. CI supplies it from
+     * a repository secret; see .github/workflows/build.yml.
+     */
+    signingConfigs {
+        shared {
+            def ksPath = System.getenv("RELEASE_KEYSTORE") ?: project.findProperty("releaseKeystore")
+            if (ksPath && file(ksPath).exists()) {
+                storeFile file(ksPath)
+                storePassword System.getenv("RELEASE_KEYSTORE_PASSWORD") ?: project.findProperty("releaseKeystorePassword")
+                keyAlias System.getenv("RELEASE_KEY_ALIAS") ?: project.findProperty("releaseKeyAlias")
+                keyPassword System.getenv("RELEASE_KEY_PASSWORD") ?: project.findProperty("releaseKeyPassword")
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (signingConfigs.shared.storeFile != null) signingConfig signingConfigs.shared
+        }
+        debug {
+            // The shipped APK is a debug build (see the CI workflow), so the stable
+            // key has to apply here too or the whole exercise is pointless.
+            if (signingConfigs.shared.storeFile != null) signingConfig signingConfigs.shared
         }
     }
 }

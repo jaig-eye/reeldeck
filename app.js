@@ -217,7 +217,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.11';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.12';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -267,7 +267,7 @@
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
   // #tv-controls only counts as pinned while cinema mode has it fixed over the
   // player; in normal flow it is an ordinary row and must be measured as one.
-  const TV_PINNED = 'header.top, #update-banner, #cinema-exit, .toast, body.cinema-on #tv-controls';
+  const TV_PINNED = 'header.top, #update-banner, #cinema-exit, .toast, #next-up, body.cinema-on #tv-controls';
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
@@ -498,6 +498,18 @@
     return last ? ('#/watch/tv/' + id + '?s=' + (last.s || 1) + '&e=' + (last.e || 1))
                 : ('#/watch/tv/' + id);
   }
+  /** Start over: episode one, or the beginning of the film. */
+  function restartHref(type, id) {
+    return type === 'tv' ? ('#/watch/tv/' + id + '?s=1&e=1&restart=1')
+                         : ('#/watch/movie/' + id + '?restart=1');
+  }
+  /** Started at all? Decides whether Restart is worth offering. */
+  function hasAnyProgress(type, id) {
+    if (type === 'tv') return !!progShow(id);
+    const pr = progGet('movie', id);
+    return !!(pr && pr.pct > 0.01);
+  }
+
   /** "Watch now" / "Resume S2 E5" — say which it is before they press it. */
   function watchLabel(type, id) {
     if (type !== 'tv') return 'Watch now';
@@ -516,6 +528,23 @@
     if (m && !Object.keys(p).some(k => k.indexOf('tv:' + m[1] + ':') === 0)) delete p['tv:' + m[1]];
     progSave(p);
     histSave(histAll().filter(r => r.k !== key));
+  }
+
+  /**
+   * How far through a title the viewer is, 0..1, for the bar under a poster.
+   * For a series this is the LAST EPISODE they opened -- progress through the show
+   * as a whole would need every episode's runtime and would read as near-zero for
+   * anything long, which tells nobody anything useful.
+   */
+  function cardProgress(type, id) {
+    if (type === 'tv') {
+      const last = progShow(id);
+      if (!last) return 0;
+      const pr = progGet('tv', id, last.s, last.e);
+      return pr ? Math.min(1, pr.pct || 0) : 0;
+    }
+    const pr = progGet('movie', id);
+    return pr ? Math.min(1, pr.pct || 0) : 0;
   }
 
   /** Everything started but not finished, newest first — drives "Continue watching". */
@@ -654,7 +683,67 @@
     const t = pos.t, dur = pos.d;
     progRecord(Object.assign({}, watchNow, { t: t, d: dur, src: 'provider' }));
     markTracked(watchNow.source);   // it just proved it — promote it
+    if (!nextUpDismissed) nextUpCheck(t, dur);
   });
+
+  /**
+   * "Next episode" as the current one runs out.
+   *
+   * On a remote, getting to the next episode otherwise means leaving full screen,
+   * finding the strip and pressing along it -- four or five presses for the single
+   * most predictable thing a viewer wants. This is one.
+   *
+   * 150 seconds is the window: long enough to notice and press during the credits,
+   * short enough that it is never covering the last scene. It hides again if the
+   * viewer seeks backwards, so scrubbing does not leave it stuck on screen.
+   */
+  const NEXT_UP_WINDOW = 150;
+  function nextUpCheck(t, dur) {
+    if (!watchNow || !watchNow.nextHref) return;
+    // Ignore nonsense durations: a mirror reporting a 90-second "duration" while it
+    // loads would otherwise fire this immediately.
+    if (!(dur > 300)) return;
+    const left = dur - t;
+    if (left > NEXT_UP_WINDOW || left < 1) return nextUpHide();
+    nextUpShow();
+  }
+  function nextUpShow() {
+    if (!watchNow || document.getElementById('next-up')) return;
+    const el = document.createElement('div');
+    el.id = 'next-up'; el.className = 'next-up';
+    el.innerHTML = '<span class="nu-k">Up next</span>' +
+      '<span class="nu-t">' + esc(watchNow.nextLabel || 'Next episode') + '</span>' +
+      '<button class="btn primary sm" id="nu-go">' + ICON.play + ' Play</button>' +
+      '<button class="btn sm" id="nu-x" aria-label="Dismiss">' + ICON.x + '</button>';
+    document.body.appendChild(el);
+    el.querySelector('#nu-go').onclick = () => { const h = watchNow && watchNow.nextHref; nextUpHide(); if (h) go(h); };
+    el.querySelector('#nu-x').onclick = () => { nextUpDismissed = true; nextUpHide(); };
+    // Deliberately does NOT take the ring. Two reasons:
+    //  - Pointer mode is the DEFAULT during TV playback (#player-enter's handler is
+    //    cursorOn), and while it is on, Enter goes to cursorTap() -- a blind tap at
+    //    wherever the cursor is parked, usually the middle of the video. The ring
+    //    would sit on Play promising an activation that cannot happen.
+    //  - Stealing focus from whatever the viewer was doing, for a prompt they did
+    //    not ask for, loses their place in the episode strip.
+    // #next-up is in TV_PINNED and passes the cinema occlusion filter, so the D-pad
+    // reaches it on its own, and a pointer tap works because it is the topmost hit
+    // target at z-index 320.
+    if (IS_TV) tvInvalidate();
+  }
+  function nextUpHide() {
+    const el = document.getElementById('next-up');
+    if (!el) return;
+    const hadFocus = el.contains(document.activeElement);
+    el.remove();
+    // tvFocusFirst() would re-run the landing list and jump to #player-enter, which
+    // scrolls the page to the top -- so only recover focus if it was actually in the
+    // prompt, and recover it to where the ring last WAS rather than to page one.
+    if (IS_TV) { tvInvalidate(); if (hadFocus) tvRestoreFocus(); }
+  }
+  let nextUpDismissed = false;
+  // Whether "Servers & playback" was left open, so a re-render triggered from inside
+  // it does not shut the panel under the viewer.
+  let srvWasOpen = false;
 
   function watchBegin(o) {
     watchEnd();
@@ -691,11 +780,14 @@
     const cur = progGet(watchNow.type, watchNow.id, watchNow.season, watchNow.episode);
     if (cur && cur.src === 'provider') return;
     const secs = Math.round((Date.now() - watchNow.started) / 1000);
-    progRecord(Object.assign({}, watchNow, {
-      t: watchNow.base + secs, d: watchNow.runtime || 0, src: 'elapsed'
-    }));
+    const t = watchNow.base + secs;
+    progRecord(Object.assign({}, watchNow, { t: t, d: watchNow.runtime || 0, src: 'elapsed' }));
+    // Also offered on the wall-clock path, with the same guard. It is an estimate, so
+    // it can be a minute out either way -- still better than four presses.
+    if (!nextUpDismissed) nextUpCheck(t, watchNow.runtime || 0);
   }
   function watchEnd() {
+    nextUpHide(); nextUpDismissed = false;
     if (watchNow) {
       if (watchNow._t) clearInterval(watchNow._t);
       if (watchNow._vis) document.removeEventListener('visibilitychange', watchNow._vis);
@@ -726,8 +818,10 @@
         </button>
         <div class="card-hover">
           <button class="ch-play" data-nav="${watchHref(type, item.id)}" tabindex="-1" aria-hidden="true">${ICON.play}</button>
-          <div class="ch-cap"><div class="ch-title">${esc(title)}</div><div class="ch-meta">${y || ''}${rating ? ' · ★ ' + rating : ''}</div></div>
+          <div class="ch-cap"><div class="ch-title">${esc(title)}</div><div class="ch-meta">${y || ''}${rating ? ' \u00b7 \u2605 ' + rating : ''}</div></div>
         </div>
+        ${(() => { const p = Math.round(cardProgress(type, item.id) * 100);
+          return p > 1 ? `<span class="card-prog" role="img" aria-label="${p} percent watched"><i style="width:${p}%"></i></span>` : ''; })()}
       </div>
       <div class="cap"><div class="t">${esc(title)}</div><div class="y">${y || '—'}</div></div>
     </div>`;
@@ -777,7 +871,7 @@
                    aria-label="Resume ${esc(r.title || 'title')}, ${sub}, ${pct} percent watched">
         <div class="poster">
           <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
-          <span class="ep-fill" style="width:${pct}%"></span>
+          <span class="card-prog"><i style="width:${pct}%"></i></span>
         </div>
         <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} \u00b7 ${at}</div></div>
         <button class="cw-x" data-unwatch="${esc(r.k)}" tabindex="${IS_TV ? '0' : '-1'}"
@@ -786,6 +880,44 @@
     }).join('');
     return `<section class="rail">
       <div class="rail-head"><h2>Continue watching</h2></div>
+      <div class="rail-wrap">
+        <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
+        <div class="track">${tiles}</div>
+        <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
+      </div>
+    </section>`;
+  }
+
+  /**
+   * Recently watched, as a rail. Continue watching answers "finish this"; this
+   * answers "take me back to that", which includes things already finished -- a
+   * series you are rewatching, an episode you want to re-open. Anything already
+   * shown in Continue watching is excluded so the two rails never duplicate.
+   */
+  function recentRailHTML() {
+    const resumable = new Set(progResumable().map(r => r.k));
+    let rows = histAll().filter(r => !resumable.has(r.k));
+    if (!rows.length) return '';
+    if (IS_TV) rows = rows.slice(0, 14);
+    const tiles = rows.slice(0, 20).map(r => {
+      const href = r.type === 'tv'
+        ? ('#/watch/tv/' + r.id + '?s=' + (r.s || 1) + '&e=' + (r.e || 1))
+        : ('#/watch/movie/' + r.id);
+      const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' \u00b7 E' + (r.e || 1)) : 'Film';
+      const pr = progGet(r.type, r.id, r.s, r.e);
+      const pct = pr ? Math.round(Math.min(1, pr.pct || 0) * 100) : 0;
+      return `<div class="card" data-nav="${href}" tabindex="0" role="button"
+                   aria-label="${esc(r.title || 'title')}, ${sub}, watched ${relTime(r.at)}">
+        <div class="poster">
+          <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+          ${pct > 1 ? `<span class="card-prog"><i style="width:${pct}%"></i></span>` : ''}
+        </div>
+        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} \u00b7 ${relTime(r.at)}</div></div>
+      </div>`;
+    }).join('');
+    return `<section class="rail">
+      <div class="rail-head"><h2>Recently watched</h2>
+        <a class="more" href="#/watchlist" data-nav="#/watchlist"${IS_TV ? ' tabindex="-1"' : ''}>Full history ${ICON.chevR}</a></div>
       <div class="rail-wrap">
         <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
         <div class="track">${tiles}</div>
@@ -1025,6 +1157,7 @@
       let html = buildBillboard(heroItems);
       html += '<div class="rows">';
       html += continueRailHTML();      // above Top 10: it is why most people opened the app
+      html += recentRailHTML();        // and the things already finished, to go back to
       html += rankRailHTML('Top 10 today', trendItems);
       html += railHTML('Popular movies', popM.results, '#/movies', 'movie');
       html += railHTML('Popular shows', popT.results, '#/tv', 'tv');
@@ -1248,18 +1381,26 @@
         ? ((d.number_of_seasons || 0) + ' season' + (d.number_of_seasons === 1 ? '' : 's'))
         : runtimeStr(d.runtime);
       const on = isInWatch(d.id, type);
+      const hasProgress = hasAnyProgress(type, d.id);
 
       let html = `<div class="detail-hero">
         <div class="bg" style="background-image:url('${img(d.backdrop_path, 'w1280')}')"></div>
         <div class="scrim"></div>
         <div class="dv-stage">
-          <div class="dv-kicker">${isTV ? 'Series' : 'Film'}${y ? ' \u00b7 ' + y : ''}${runtime ? ' \u00b7 ' + esc(runtime) : ''}</div>
           ${logoUrl
             ? `<img class="detail-logo" src="${logoUrl}" alt="${esc(title)}" onerror="this.style.display='none';var h=this.nextElementSibling;if(h)h.style.display='block'"><h1 class="dv-title" style="display:none">${esc(title)}</h1>`
             : `<h1 class="dv-title">${esc(title)}</h1>`}
           ${d.tagline ? `<p class="dv-tagline">${esc(d.tagline)}</p>` : ''}
+          <div class="metarow">
+            <span class="pill rating">${ICON.star}${d.vote_average ? d.vote_average.toFixed(1) : '\u2014'}</span>
+            <span class="pill">${isTV ? 'Series' : 'Film'}</span>
+            ${y ? `<span class="pill">${y}</span>` : ''}
+            ${runtime ? `<span class="pill">${esc(runtime)}</span>` : ''}
+            ${d.status ? `<span class="pill">${esc(d.status)}</span>` : ''}
+          </div>
           <div class="dv-cta cta">
             <button class="btn primary" data-nav="${watchHref(type, d.id)}">${ICON.play} ${watchLabel(type, d.id)}</button>
+            ${hasProgress ? `<button class="btn glass" data-nav="${restartHref(type, d.id)}" title="Start from the beginning">Restart</button>` : ''}
             ${trailer ? `<button class="btn glass" data-trailer="${trailer.key}">▶ Trailer</button>` : ''}
             <button class="btn ${on ? 'primary' : 'glass'}" data-wl="${d.id}" data-type="${type}" id="detail-wl">
               ${on ? ICON.bookmarkFill : ICON.bookmark} ${on ? 'In watchlist' : 'Watchlist'}
@@ -1267,6 +1408,19 @@
           </div>
         </div>
       </div>`;
+
+      // Cast is built BEFORE the body so it can sit inside the prose column. As its
+      // own full-width section further down it left a large dead area beside the
+      // overview, which is the emptiest part of the page and the obvious home for it.
+      const cast = (credits.cast || []).slice(0, 14);
+      const castBlock = cast.length ? `
+        <h3 class="dv-sub">Cast</h3>
+        <div class="cast-track">
+          ${cast.map(c => `<div class="person" data-nav="#/person/${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}${c.character ? ' as ' + esc(c.character) : ''}">
+            <img loading="lazy" src="${img(c.profile_path, 'w185')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+            <div class="n">${esc(c.name)}</div><div class="c">${esc(c.character || '')}</div>
+          </div>`).join('')}
+        </div>` : '';
 
       // Body: prose on the left at a readable measure, reference material on the
       // right. The poster lives here now -- useful for recognition, but no longer
@@ -1276,6 +1430,7 @@
           <h3>Overview</h3>
           <p class="overview">${esc(d.overview || 'No overview available.')}</p>
           <div class="genre-row">${gEls}</div>
+          ${castBlock}
         </div>
         <aside class="dv-facts">
           <img class="dv-poster" src="${img(d.poster_path, 'w500')}" alt="" loading="lazy" onerror="this.style.display='none'">
@@ -1304,16 +1459,6 @@
         </div>`;
       }
 
-      // Cast
-      const cast = (credits.cast || []).slice(0, 14);
-      if (cast.length) {
-        html += `<div class="section"><h3>Cast</h3><div class="cast-track">
-          ${cast.map(c => `<div class="person" data-nav="#/person/${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}${c.character ? ' as ' + esc(c.character) : ''}">
-            <img loading="lazy" src="${img(c.profile_path, 'w185')}" alt="" onerror="this.src='${PLACEHOLDER}'">
-            <div class="n">${esc(c.name)}</div><div class="c">${esc(c.character || '')}</div>
-          </div>`).join('')}
-        </div></div>`;
-      }
 
       // Similar
       const sim = (similar.results || []).filter(x => x.poster_path).slice(0, 14);
@@ -1464,6 +1609,7 @@
     }
     const seasonEps = (seasonData && seasonData.episodes) || [];
     const epMeta = seasonEps.find(x => x.episode_number === episode) || null;
+    const nextEpMeta = seasonEps.find(x => x.episode_number === episode + 1) || null;
 
     // Episode bounds. TMDB tells us how many episodes each season actually has, so a
     // Next button running off the end -- or a hand-typed ?s=/?e= -- is answerable
@@ -1485,7 +1631,10 @@
     // Only a position a MIRROR reported is used to seek -- the wall-clock estimate is
     // good enough to draw a bar with, but would drop the viewer at the wrong moment.
     const seen = progGet(type, id, isTV ? season : null, isTV ? episode : null);
-    const resumeAt = (seen && seen.src === 'provider' && !progDone(seen)) ? (seen.t || 0) : 0;
+    // ?restart=1 is an explicit "start over": ignore the saved position for THIS
+    // load without discarding it, so backing out still leaves the resume point.
+    const resumeAt = (params.restart || !seen || seen.src !== 'provider' || progDone(seen))
+      ? 0 : (seen.t || 0);
 
     let frameInner;
     if (missing) {
@@ -1540,6 +1689,9 @@
         <h2 style="font-size:16px">Episodes <span class="muted" style="font-weight:600;font-size:13px">\u00b7 Season ${season}</span></h2>
         <button class="btn sm ghost" data-nav="#/tv/${id}">All seasons</button>
       </div>
+      <div class="rail-wrap">
+        <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll episodes left">${ICON.back}</button>
+        <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll episodes right">${ICON.chevR}</button>
       <div class="ep-strip" id="ep-strip">${seasonEps.map(ep => {
         const pr = progGet('tv', id, season, ep.episode_number);
         const done = progDone(pr);
@@ -1558,7 +1710,8 @@
           <span class="epx-n">E${ep.episode_number}</span>
           <span class="epx-t">${esc(ep.name || '')}</span>
         </button>`;
-      }).join('')}</div>` : '';
+      }).join('')}</div>
+      </div>` : '';
 
     const roomTiles = sources.map((s, i) => `
       <button class="mirror ${i === cfg.activeSource ? 'on' : ''}${isTracked(s.name) ? ' tracked' : ''}"
@@ -1594,26 +1747,33 @@
         </div>
         <p class="tv-controls-hint muted">Volume, full screen and the pointer are ours and always work. Play and seek are passed to the mirror — if one ignores them, use <b>Pointer</b> to press its own controls.</p>` : ''}
         <div class="source-bar">
-          <span class="lbl">${src ? 'Now playing: <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
-          ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try next server →</button>` : ''}
-          <button class="btn sm ghost" id="toggle-sandbox" aria-pressed="${!!cfg.blockPlayerAds}"
-                  title="Restrict what the embedded player is allowed to do (may break some mirrors)">
-            ${cfg.blockPlayerAds ? '🛡 Player locked down' : '🛡 Lock down player'}</button>
-          <button class="btn sm ghost" id="movie-mode" title="Fill this window">⛶ Movie mode</button>
-          <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.tv} TV mode</button>
+          <span class="lbl">${src ? 'Playing on <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
+          ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
         </div>
         ${epStrip}
         ${sources.length ? `
-        <div class="rail-head" style="margin:26px 0 12px">
-          <h2 style="font-size:16px">Server room <span class="muted" style="font-weight:600;font-size:13px">· ${sources.length} mirrors</span></h2>
-        </div>
-        <div class="server-room">${roomTiles}</div>
-        <p class="muted" style="font-size:12px;margin-top:12px;text-transform:uppercase;letter-spacing:.5px">Switch mirrors if a server stutters or the title won't load \u2014 no single mirror has everything.</p>
-        <p class="muted mirror-note"><span class="mbadge static">${ICON.check} Verified</span>
-          reports its exact playback position, so resume points are accurate to the second.
-          Every other mirror is tracked by time on screen instead \u2014 progress still saves, but it
-          drifts if you pause, skip or leave it running. A mirror earns the badge automatically
-          the first time it reports a real position.</p>
+        <details class="srv" id="srv"${srvWasOpen ? ' open' : ''}>
+          <summary tabindex="0">
+            <span class="srv-t">Servers &amp; playback</span>
+            <span class="srv-n">${sources.length} mirrors${src ? ' · ' + esc(src.name) : ''}</span>
+          </summary>
+          <div class="srv-body">
+            <div class="srv-opts">
+              <button class="btn sm ghost" id="toggle-sandbox" aria-pressed="${!!cfg.blockPlayerAds}"
+                      title="Restrict what the embedded player is allowed to do (may break some mirrors)">
+                ${cfg.blockPlayerAds ? 'Player locked down' : 'Lock down player'}</button>
+              <button class="btn sm ghost" id="movie-mode" title="Fill this window">Movie mode</button>
+              <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.tv} TV mode</button>
+            </div>
+            <div class="server-room">${roomTiles}</div>
+            <p class="muted mirror-note"><span class="mbadge static">${ICON.check} Verified</span>
+              reports its exact playback position, so resume points are accurate to the second.
+              Every other mirror is tracked by time on screen instead — progress still saves, but it
+              drifts if you pause, skip or leave it running. A mirror earns the badge automatically the
+              first time it reports a real position. Switch mirrors if one stutters or a title will not
+              load — no single mirror has everything.</p>
+          </div>
+        </details>
         ` : ''}
       </div>`;
     window.scrollTo(0, 0);
@@ -1653,7 +1813,16 @@
       toast('Switched to ' + (sources[i].name || 'the next server'));
     };
     const tgl = $('#toggle-sandbox');
-    if (tgl) tgl.onclick = () => { cfg.blockPlayerAds = !cfg.blockPlayerAds; saveConfig(); watchView(type, id, params); };
+    if (tgl) tgl.onclick = () => {
+      cfg.blockPlayerAds = !cfg.blockPlayerAds; saveConfig();
+      // This control lives INSIDE the disclosure and its handler re-renders the whole
+      // view, which closed the panel, scrolled to the top and left the only label
+      // describing the new state hidden inside the thing that just shut. Say what
+      // happened, and re-open the panel so the toggle is still where it was pressed.
+      srvWasOpen = true;
+      toast(cfg.blockPlayerAds ? 'Player locked down' : 'Player restrictions off');
+      watchView(type, id, params);
+    };
     const qa = $('#quick-add');
     if (qa) qa.onclick = () => {
       const val = $('#quick-src').value.trim();
@@ -1681,8 +1850,23 @@
       type: type, id: id,
       season: isTV ? season : null, episode: isTV ? episode : null,
       title: title, poster_path: d && d.poster_path, source: src && src.name,
+      // Where "up next" goes, and what to call it. Computed here because the bounds
+      // and the season rollover are already worked out at this point.
+      nextHref: isTV ? nextHref : null,
+      nextLabel: isTV ? (hasNextEp
+        ? ('S' + season + ' \u00b7 E' + (episode + 1) + (nextEpMeta && nextEpMeta.name ? ' \u00b7 ' + nextEpMeta.name : ''))
+        : (nextSeason ? ('Season ' + (season + 1) + ' \u00b7 E1') : null)) : null,
       runtime: 60 * (isTV ? ((d && d.episode_run_time && d.episode_run_time[0]) || 0)
                           : ((d && d.runtime) || 0))
+    });
+    const srv = $('#srv');
+    if (srv) srv.addEventListener('toggle', () => {
+      srvWasOpen = srv.open;      // survive the re-render a setting in here triggers
+      if (!IS_TV) return;
+      tvInvalidate();
+      // Land the ring on the first thing revealed, rather than leaving it on the
+      // summary with a panel of new controls the user has to hunt for.
+      if (srv.open) { const first = srv.querySelector('button'); if (first) tvFocusEl(first); }
     });
     const tvc = $('#tv-controls');
     if (tvc) tvc.onclick = (e) => {
@@ -2496,7 +2680,11 @@
     const oe = e.target.closest('[data-openext]');
     if (oe) { e.preventDefault(); openExternal(oe.dataset.openext); return; }
     const ra = e.target.closest('[data-rail]');
-    if (ra) { const track = ra.parentElement.querySelector('.track'); if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: 'smooth' }); return; }
+    if (ra) {
+      const track = ra.parentElement.querySelector('.track, .ep-strip, .season-pills');
+      if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: 'smooth' });
+      return;
+    }
     // A resume rail that can only grow is one you stop trusting: a title you abandoned
     // sits at the front for good. Handled BEFORE [data-nav], because the control lives
     // inside a card that navigates.
@@ -2528,7 +2716,7 @@
     if (e.key !== 'Enter' && e.key !== ' ') return;
     if (cursorActive()) { e.preventDefault(); cursorTap(); return; }
     const el = document.activeElement;
-    if (!el || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(el.tagName)) return; // native handles these
+    if (!el || /^(INPUT|TEXTAREA|SELECT|BUTTON|SUMMARY)$/.test(el.tagName)) return; // native handles these
     const nav = el.closest && el.closest('[data-nav]');
     if (nav) { e.preventDefault(); go(nav.dataset.nav); }
   });
@@ -2662,6 +2850,9 @@
       // BEFORE the user has accepted or cancelled. Cancelling used to leave a message
       // with no button; offer the retry here rather than making them find the header.
       html = '<p class="upd-t">Installer opened — confirm it on screen to finish.</p>' +
+             '<p class="upd-t upd-warn">If it says <b>App not installed</b>, this copy was signed with a ' +
+             'different key to the new one. Uninstall Reeldeck and install again — once only; ' +
+             'later updates will apply normally.</p>' +
              '<button class="btn sm" id="upd-go">Install again</button>';
     } else if (st.s === 'error') {
       html = '<p class="upd-t upd-warn">' + esc(st.msg || 'Update failed.') + '</p>' +
@@ -2798,7 +2989,7 @@
     // see occlusion, so name the chrome that is genuinely ON TOP of the player.
     // (Skipped when a modal is open: the modal is its own scope and sits above both.)
     if (document.body.classList.contains('cinema-on') && !el.closest('.modal-back') &&
-        !el.closest('.player-frame.cinema, #tv-controls, #cinema-exit')) return null;
+        !el.closest('.player-frame.cinema, #tv-controls, #cinema-exit, #next-up')) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return null;
     const cs = getComputedStyle(el);
