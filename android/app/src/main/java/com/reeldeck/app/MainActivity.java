@@ -362,6 +362,15 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void install(File apk) {
+        // minSdkVersion is 22, but the pre-Nougat package installer only accepts
+        // file:// URIs for ACTION_VIEW, and this APK sits in app-private cache which a
+        // file:// URI cannot expose. Rather than launch an installer that is certain to
+        // fail, send the user somewhere that works.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            toWeb("upd:err:This Android version cannot install updates in-app \u2014 "
+                    + "download the APK from the Releases page instead.");
+            return;
+        }
         try {
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk);
             Intent i = new Intent(Intent.ACTION_VIEW);

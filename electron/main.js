@@ -120,6 +120,16 @@ function setupSecurity() {
 // build; downloads in the background and applies on quit. Renderer shows a toast.
 function setupUpdater() {
   if (!app.isPackaged) return;
+  // electron-builder sets this only for the PORTABLE build. Its update feed points at
+  // the NSIS web installer, so "Restart & update" would install a SECOND, installed
+  // copy and leave the portable exe running and stale. A portable build is meant to be
+  // replaced by downloading a new one, so say that instead of pretending.
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('reeldeck:update', { state: 'portable' });
+    }
+    return;
+  }
   try {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
