@@ -1,8 +1,62 @@
 /* ============================================================
    Reeldeck — client-side app logic (no build step, no framework)
+
    Data: TMDB API v3 (same backend the source site uses).
    Everything routes through CONFIG so you can re-point the app
    at a different base URL / key / player source from Settings.
+
+   ONE file, one IIFE, in this order. Order matters more than usual here:
+   route() runs at boot and reaches deep into the file, so anything a view or
+   the TV navigation touches must be DECLARED ABOVE IT or it dies in the
+   temporal dead zone (this has shipped a blank screen on TV before).
+
+     1. Config + storage keys      the persisted-state schema, below
+     2. TV/D-pad module state      declared early, on purpose — see above
+     3. Icons, TMDB fetch helpers
+     4. Watchlist                  simple id list
+     5. Watch progress + history   resume points; see its own header
+     6. Card / rail / grid builders
+     7. Views                      home, discover, detail, watch, search,
+                                   person, watchlist+history, get-app
+     8. Settings + updater         incl. Android self-install over the bridge
+     9. TV / D-pad navigation      row model, focus, glide-scrolling, pointer
+    10. Router + boot
+
+   THE constraint that shapes half of this app: the video mirrors are
+   CROSS-ORIGIN iframes. They cannot be scripted, their controls cannot be
+   focused, and their playback position cannot be read. Anything that looks
+   like a workaround for that (the synthetic-touch pointer, the postMessage
+   progress listener, the elapsed-time fallback) is there because the direct
+   route does not exist — not because it was the first thing tried.
+
+   PERSISTED STATE  (localStorage — all of it is per-device, none of it syncs)
+
+     reeldeck.config.v5     Settings: theme, region, API key, player sources.
+                            Sources are SNAPSHOTTED on first run, so shipping a
+                            change to DEFAULT_SOURCES needs the migration in
+                            loadConfig() to reach anyone who already has the app.
+
+     reeldeck.watchlist.v1  [ { id, type, title, poster_path, vote_average, date } ]
+                            Newest first. Purely user-curated.
+
+     reeldeck.progress.v1   { key: { t, d, pct, at, src } } plus a per-show pointer.
+                              key  'movie:<id>'  |  'tv:<id>:<season>:<episode>'
+                              t    position in seconds        d    duration in seconds
+                              pct  t/d, 0..1                  at   last touched (ms)
+                              src  'provider' (the mirror told us — exact) or
+                                   'elapsed'  (wall-clock guess — approximate)
+                            'tv:<id>' → { s, e, at } is the resume pointer: which
+                            episode to drop the viewer back on, and which season the
+                            detail page opens to.
+                            Episodes persist forever; movies age out after 60 days.
+
+     reeldeck.history.v1    [ { k, id, type, title, poster_path, s, e, pct, at } ]
+                            Newest first, capped at 300, one row per key. Drives the
+                            history log AND "Continue watching".
+
+     reeldeck.tracked.v1    { '<mirror name>': 1 } — mirrors that have PROVEN they
+                            report real playback position. Earned at runtime, not
+                            assumed; see the verified-mirror block.
    ============================================================ */
 (function () {
   'use strict';
@@ -13,6 +67,9 @@
      ------------------------------------------------------------ */
   const CONFIG_KEY = 'reeldeck.config.v5';
   const WATCH_KEY  = 'reeldeck.watchlist.v1';
+  const PROG_KEY   = 'reeldeck.progress.v1';
+  const HIST_KEY   = 'reeldeck.history.v1';
+  const TRACK_KEY  = 'reeldeck.tracked.v1';
 
   // Mirror list lifted verbatim from the source site's own player module.
   // These are third-party embed providers — the app just frames them. Fully
@@ -157,7 +214,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.9';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.10';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -186,7 +243,12 @@
   let routeKey = null;      // identifies the view, to tell a filter change from a navigation
   const routeIs = (n) => n === routeSeq;
   let tvUserMoved = false;  // the user has taken over — stop placing the ring for them
-  const TV_ROW_CONTAINERS = '.track, .cast-track, .ep-list';   // a carousel is ONE D-pad row
+  // Every horizontal scroller in the app. ONE list, used for three separate jobs:
+  // grouping a carousel into a single D-pad row, correcting a cached column for the
+  // rail's scrollLeft, and scrolling the focused item into view. They drifted apart
+  // once already -- the season rail was in none of them, so the ring could sit on a
+  // season that was off screen with nothing scrolling to reveal it.
+  const TV_ROW_CONTAINERS = '.track, .cast-track, .ep-list, .season-pills';
   // Where a freshly rendered page should put the ring — the thing the user came to
   // press. This is a PRIORITY ORDER, tried one selector at a time: as a single
   // querySelectorAll it would have returned document order instead, which only
@@ -304,6 +366,238 @@
     setWatch(list); toast('Added to watchlist'); return true;
   }
 
+
+  /* ------------------------------------------------------------
+     Watch progress + history (localStorage)
+
+     A cross-origin player cannot be scripted, so there is no reading currentTime
+     off the <video> inside a mirror. Two tiers instead:
+
+       provider - the mirror POSTS its own position to the parent. VidLink documents
+                  MEDIA_DATA / PLAYER_EVENT with currentTime + duration; others use
+                  the same shape. Exact, and the only real answer available.
+       elapsed  - nobody posted, so we count wall-clock seconds the player was open.
+                  Enough to say "you were here" and to draw a bar; never shown as an
+                  exact timestamp, and never allowed to overwrite a provider value.
+
+     Episodes are kept forever — coming back to a series after a year is the norm.
+     A half-watched film is only interesting for a while, so movies age out.
+     ------------------------------------------------------------ */
+  // 90%, not 100%: credits, next-episode teasers and provider padding mean a
+  // finished episode almost never reports 100%, and an episode stuck at "96%
+  // watched" in Continue-watching forever is worse than one marked done early.
+  const DONE_PCT = 0.9;
+  const MOVIE_TTL = 60 * 86400000;      // 60 days
+  const HIST_MAX = 300;
+
+  function num(v) {
+    const n = (typeof v === 'string') ? parseFloat(v) : v;
+    return (typeof n === 'number' && isFinite(n)) ? n : null;
+  }
+  function fmtClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = sec % 60;
+    const mm = h ? String(m).padStart(2, '0') : String(m);
+    return (h ? h + ':' : '') + mm + ':' + String(s2).padStart(2, '0');
+  }
+  function progAll() {
+    let p; try { p = JSON.parse(localStorage.getItem(PROG_KEY) || '{}'); } catch (e) { p = {}; }
+    return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
+  }
+  function progSave(p) { try { localStorage.setItem(PROG_KEY, JSON.stringify(p)); } catch (e) {} }
+  function progKey(type, id, s2, e2) {
+    return type === 'tv' ? ('tv:' + id + ':' + (s2 || 1) + ':' + (e2 || 1)) : ('movie:' + id);
+  }
+  function progPrune(p) {
+    const now = Date.now(); let changed = false;
+    for (const k in p) {
+      if (k.indexOf('movie:') === 0 && (now - ((p[k] && p[k].at) || 0)) > MOVIE_TTL) { delete p[k]; changed = true; }
+    }
+    return changed;
+  }
+  function progGet(type, id, s2, e2) {
+    const p = progAll();
+    if (progPrune(p)) progSave(p);
+    return p[progKey(type, id, s2, e2)] || null;
+  }
+  /** Where you left off in a series: { s, e, at }. */
+  function progShow(id) { return progAll()['tv:' + id] || null; }
+  function progDone(pr) { return !!(pr && pr.pct >= DONE_PCT); }
+
+  function progRecord(o) {
+    if (!o || !o.id) return;
+    const p = progAll(); progPrune(p);
+    const k = progKey(o.type, o.id, o.season, o.episode);
+    const prev = p[k] || {};
+    const dur = (o.d > 0) ? o.d : (prev.d || 0);
+    let t = (num(o.t) != null && o.t >= 0) ? o.t : (prev.t || 0);
+    // A wall-clock guess must never walk over a real timestamp from the player.
+    if (o.src !== 'provider' && prev.src === 'provider') return;
+    const pct = dur > 0 ? Math.max(0, Math.min(1, t / dur)) : (prev.pct || 0);
+    p[k] = { t: Math.round(t), d: Math.round(dur), pct: pct, at: Date.now(), src: o.src || prev.src || 'elapsed' };
+    // Series-level pointer: which episode to drop the user back on.
+    if (o.type === 'tv') p['tv:' + o.id] = { s: +o.season || 1, e: +o.episode || 1, at: Date.now() };
+    progSave(p);
+    histPush(o, pct);
+  }
+
+  function histAll() {
+    try { const h = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); return Array.isArray(h) ? h : []; }
+    catch (e) { return []; }
+  }
+  function histSave(h) { try { localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, HIST_MAX))); } catch (e) {} }
+  function histClear() { try { localStorage.removeItem(HIST_KEY); } catch (e) {} }
+  function progClear() { try { localStorage.removeItem(PROG_KEY); } catch (e) {} }
+  function relTime(ms) {
+    const sec = Math.max(0, (Date.now() - (ms || 0)) / 1000);
+    if (sec < 90) return 'just now';
+    const m = sec / 60; if (m < 60) return Math.round(m) + 'm ago';
+    const h = m / 60; if (h < 24) return Math.round(h) + 'h ago';
+    const dd = h / 24; if (dd < 7) return Math.round(dd) + 'd ago';
+    try { return new Date(ms).toLocaleDateString(); } catch (e) { return 'a while ago'; }
+  }
+  function histPush(o, pct) {
+    const h = histAll();
+    const k = progKey(o.type, o.id, o.season, o.episode);
+    const i = h.findIndex(x => x.k === k);
+    const old = i >= 0 ? h[i] : {};
+    const row = {
+      k: k, id: o.id, type: o.type,
+      title: o.title || old.title || '',
+      poster_path: o.poster_path || old.poster_path || '',
+      s: o.season || null, e: o.episode || null,
+      pct: pct, at: Date.now()
+    };
+    if (i >= 0) h.splice(i, 1);
+    h.unshift(row);
+    histSave(h);
+  }
+
+  /** Everything started but not finished, newest first — drives "Continue watching". */
+  function progResumable() {
+    const p = progAll(); if (progPrune(p)) progSave(p);
+    const hist = histAll();
+    const out = [];
+    for (const row of hist) {
+      const pr = p[row.k];
+      if (!pr || progDone(pr) || !(pr.pct > 0.01)) continue;
+      out.push(Object.assign({}, row, { pr: pr }));
+    }
+    return out;
+  }
+
+  /** The shared progress strip: a bar plus an honest label. */
+  function progBar(pr) {
+    if (!pr || !(pr.pct > 0.01)) return '';
+    const done = progDone(pr);
+    const pctN = Math.round(Math.min(1, pr.pct) * 100);
+    // Only claim a timestamp when the mirror actually gave us one.
+    const label = done ? 'Watched'
+      : (pr.src === 'provider' && pr.t > 0) ? ('Resume at ' + fmtClock(pr.t))
+      : (pctN + '% in');
+    return '<div class="prog' + (done ? ' done' : '') + '">' +
+      '<div class="prog-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"' +
+      ' aria-valuenow="' + pctN + '" aria-label="' + (done ? 'Watched' : 'Watched ' + pctN + ' percent') + '">' +
+      '<i style="width:' + pctN + '%"></i></div>' +
+      '<span class="prog-lbl">' + label + '</span></div>';
+  }
+
+  /* ---- Which mirrors actually report their position -----------------------
+     We cannot add a postMessage API to somebody else's player, so "verified" is
+     something a mirror demonstrates, not something we can grant it. Seeded with the
+     one provider that documents the API, then grown AT RUNTIME: the first time a
+     mirror sends us a usable position it is promoted for good on this device. That
+     way the badge reflects what actually happened here rather than a claim. */
+  const TRACK_SEED = { 'VidLink': 1 };          // documents MEDIA_DATA / PLAYER_EVENT
+  function trackedAll() {
+    let t; try { t = JSON.parse(localStorage.getItem(TRACK_KEY) || 'null'); } catch (e) { t = null; }
+    return Object.assign({}, TRACK_SEED, (t && typeof t === 'object' && !Array.isArray(t)) ? t : {});
+  }
+  function isTracked(name) { return !!(name && trackedAll()[name]); }
+  function markTracked(name) {
+    if (!name || isTracked(name)) return;
+    const t = trackedAll(); t[name] = 1;
+    try { localStorage.setItem(TRACK_KEY, JSON.stringify(t)); } catch (e) {}
+    // Light the badge on the tile that is already on screen, rather than waiting for
+    // the next render to explain what just changed.
+    document.querySelectorAll('.mirror').forEach(el => {
+      if (el.dataset.mirrorName === name) el.classList.add('tracked');
+    });
+    toast(name + ' verified \u2014 it reports exact playback position');
+  }
+
+  /* ---- Reading position out of the mirror --------------------------------
+     The ONLY way to learn a cross-origin player's position is for the player to
+     volunteer it. We accept that, but only from the exact origin we are framing:
+     any page can postMessage at us, and this writes the user's history. */
+  let watchNow = null;
+  function playerOrigin() {
+    const fr = document.getElementById('player-iframe');
+    if (!fr || !fr.src) return null;
+    try { return new URL(fr.src).origin; } catch (e) { return null; }
+  }
+  window.addEventListener('message', (ev) => {
+    if (!watchNow) return;
+    const want = playerOrigin();
+    if (!want || ev.origin !== want) return;      // not the mirror we are showing
+    let d = ev.data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
+    if (!d || typeof d !== 'object') return;
+    const body = d.data || d;
+    let t = num(body.currentTime), dur = num(body.duration);
+    if (t == null && body.progress) { t = num(body.progress.watched); dur = num(body.progress.duration); }
+    if (t == null || !(dur > 0)) return;
+    progRecord(Object.assign({}, watchNow, { t: t, d: dur, src: 'provider' }));
+    markTracked(watchNow.source);   // it just proved it — promote it
+  });
+
+  function watchBegin(o) {
+    watchEnd();
+    const prev = progGet(o.type, o.id, o.season, o.episode);
+    watchNow = Object.assign({}, o, {
+      started: Date.now(),
+      base: (prev && !progDone(prev)) ? (prev.t || 0) : 0
+    });
+    watchNow._t = setInterval(watchTick, 15000);
+    // Wall-clock counts time the app was not even on screen. Lock the phone on a
+    // 100-minute film for 90 minutes and a single tick on resume writes the whole
+    // 90 minutes: pct crosses DONE_PCT, the title is labelled "Watched" and
+    // progResumable drops it from Continue watching -- the resume point is destroyed.
+    // 13 of the 14 default mirrors take this path on a fresh install, so it is the
+    // common case, not the edge one. Bank the foreground seconds on the way out and
+    // restart the clock on the way back in; only visible time is ever counted.
+    watchNow._vis = () => {
+      if (!watchNow) return;
+      if (document.hidden) {
+        watchNow.base += Math.round((Date.now() - watchNow.started) / 1000);
+        clearInterval(watchNow._t); watchNow._t = 0;
+      } else {
+        watchNow.started = Date.now();
+        clearInterval(watchNow._t);
+        watchNow._t = setInterval(watchTick, 15000);
+      }
+    };
+    document.addEventListener('visibilitychange', watchNow._vis);
+  }
+  // Deliberately coarse, and skipped entirely once a mirror has told us the truth
+  // for this episode.
+  function watchTick() {
+    if (!watchNow) return;
+    const cur = progGet(watchNow.type, watchNow.id, watchNow.season, watchNow.episode);
+    if (cur && cur.src === 'provider') return;
+    const secs = Math.round((Date.now() - watchNow.started) / 1000);
+    progRecord(Object.assign({}, watchNow, {
+      t: watchNow.base + secs, d: watchNow.runtime || 0, src: 'elapsed'
+    }));
+  }
+  function watchEnd() {
+    if (watchNow) {
+      if (watchNow._t) clearInterval(watchNow._t);
+      if (watchNow._vis) document.removeEventListener('visibilitychange', watchNow._vis);
+    }
+    watchNow = null;
+  }
+
   /* ------------------------------------------------------------
      Card + rail + grid builders
      ------------------------------------------------------------ */
@@ -360,6 +654,64 @@
         <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
       </div>
     </section>`;
+  }
+
+  /** Everything started and not finished, deep-linked to the exact episode. */
+  function continueRailHTML() {
+    let rows = progResumable();
+    if (!rows.length) return '';
+    if (IS_TV) rows = rows.slice(0, 14);
+    const tiles = rows.slice(0, 20).map(r => {
+      const href = r.type === 'tv'
+        ? ('#/watch/tv/' + r.id + '?s=' + (r.s || 1) + '&e=' + (r.e || 1))
+        : ('#/watch/movie/' + r.id);
+      const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' \u00b7 E' + (r.e || 1)) : 'Film';
+      const pct = Math.round(Math.min(1, r.pr.pct) * 100);
+      const at = (r.pr.src === 'provider' && r.pr.t > 0) ? fmtClock(r.pr.t) : (pct + '%');
+      return `<div class="card" data-nav="${href}" tabindex="0" role="button"
+                   aria-label="Resume ${esc(r.title || 'title')}, ${sub}, ${pct} percent watched">
+        <div class="poster">
+          <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+          <span class="ep-fill" style="width:${pct}%"></span>
+        </div>
+        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} \u00b7 ${at}</div></div>
+      </div>`;
+    }).join('');
+    return `<section class="rail">
+      <div class="rail-head"><h2>Continue watching</h2></div>
+      <div class="rail-wrap">
+        <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
+        <div class="track">${tiles}</div>
+        <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
+      </div>
+    </section>`;
+  }
+
+  /** The history log, newest first. */
+  function histSectionHTML() {
+    const h = histAll();
+    if (!h.length) return '';
+    const rows = h.slice(0, 80).map(r => {
+      const href = r.type === 'tv'
+        ? ('#/watch/tv/' + r.id + '?s=' + (r.s || 1) + '&e=' + (r.e || 1))
+        : ('#/watch/movie/' + r.id);
+      const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' \u00b7 E' + (r.e || 1)) : 'Film';
+      const pr = progGet(r.type, r.id, r.s, r.e);
+      return `<div class="hist-row" data-nav="${href}" tabindex="0" role="button"
+                   aria-label="${esc(r.title || 'title')}, ${sub}, watched ${relTime(r.at)}">
+        <img class="hist-poster" loading="lazy" src="${img(r.poster_path, 'w154')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+        <div style="min-width:0;flex:1">
+          <div class="hist-t">${esc(r.title || 'Untitled')}</div>
+          <div class="hist-s">${sub} \u00b7 ${relTime(r.at)}</div>
+          ${progBar(pr)}
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="section" id="history">
+      <div class="rail-head"><h2>Watch history</h2>
+        <button class="btn sm ghost" id="hist-clear">Clear history</button></div>
+      <div class="hist-list">${rows}</div>
+    </div>`;
   }
 
   // "Top 10"-style ranked row with big numerals
@@ -447,7 +799,7 @@
           ? `<img class="bb-logo" src="${it._logo}" alt="${esc(title)}" onerror="this.style.display='none';var h=this.nextElementSibling;if(h)h.style.display='block'"><h1 class="bb-title" style="display:none">${esc(title)}</h1>`
           : `<h1 class="bb-title">${esc(title)}</h1>`}
         <div class="bb-meta">
-          ${rating ? `<span class="star">${ICON.star} ${rating}</span>` : ''}
+          ${rating ? `<span class="pill rating">${ICON.star}${rating}</span>` : ''}
           <span>${y || ''}</span>
           <span class="pill-type">${type === 'tv' ? 'Series' : 'Film'}</span>
         </div>
@@ -465,6 +817,8 @@
     if (!items.length) return '';
     return `<div class="billboard" id="billboard">
       ${items.map(billboardSlide).join('')}
+      <button class="bb-arrow left" data-bb="-1" tabindex="-1" aria-label="Previous featured title">${ICON.back}</button>
+      <button class="bb-arrow right" data-bb="1" tabindex="-1" aria-label="Next featured title">${ICON.chevR}</button>
       <div class="bb-dots">${items.map((it, i) => `<button class="bb-dot ${i === 0 ? 'on' : ''}" data-dot="${i}" tabindex="${IS_TV ? '0' : '-1'}" aria-label="Featured ${i + 1}${(it.title || it.name) ? ': ' + esc(it.title || it.name) : ''}"></button>`).join('')}</div>
     </div>`;
   }
@@ -513,6 +867,28 @@
     // Choosing a slide by hand does NOT re-arm the timer; focusout does that, and only
     // once focus has actually left the hero.
     dots.forEach((d, i) => d.addEventListener('click', () => { stopForGood(); show(i); }));
+    bb.querySelectorAll('[data-bb]').forEach(b => b.addEventListener('click', () => {
+      stopForGood(); show(idx + (+b.dataset.bb || 1));
+    }));
+    // Drag to change slide. Pointer events cover mouse and touch in one path. A move
+    // is only claimed once it is clearly horizontal, so a vertical swipe still scrolls
+    // the page instead of being eaten by the hero.
+    let sx = 0, sy = 0, dx = 0, dy = 0, dragging = false;
+    bb.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button, a')) return;      // let the CTAs be pressed
+      dragging = true; sx = e.clientX; sy = e.clientY; dx = dy = 0;
+    });
+    bb.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      dx = e.clientX - sx; dy = e.clientY - sy;
+      bb.classList.toggle('dragging', Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy));
+    });
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false; bb.classList.remove('dragging');
+      if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)) { stopForGood(); show(idx + (dx < 0 ? 1 : -1)); }
+    };
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => bb.addEventListener(ev, endDrag));
     // A hero that rotates out from under you is how you press Play and get the wrong
     // film — and rotating a slide away now also makes it inert, which would throw a
     // keyboard user's focus to the body. So whoever is holding focus owns the hero.
@@ -541,6 +917,7 @@
       heroItems.forEach((h, i) => { h._logo = logos[i]; itemCache[ck(h.media_type, h.id)] = h; });
       let html = buildBillboard(heroItems);
       html += '<div class="rows">';
+      html += continueRailHTML();      // above Top 10: it is why most people opened the app
       html += rankRailHTML('Top 10 today', trendItems);
       html += railHTML('Popular movies', popM.results, '#/movies', 'movie');
       html += railHTML('Popular shows', popT.results, '#/tv', 'tv');
@@ -776,7 +1153,7 @@
               : `<h1>${esc(title)} ${y ? `<span class="muted" style="font-weight:600">(${y})</span>` : ''}</h1>`}
             ${d.tagline ? `<p class="tagline">${esc(d.tagline)}</p>` : ''}
             <div class="metarow">
-              <span class="pill"><span class="star">${ICON.star}</span> ${d.vote_average ? d.vote_average.toFixed(1) : '—'}</span>
+              <span class="pill rating">${ICON.star}${d.vote_average ? d.vote_average.toFixed(1) : '\u2014'}</span>
               ${runtime ? `<span class="pill">${esc(runtime)}</span>` : ''}
               ${y ? `<span class="pill">${y}</span>` : ''}
               ${d.status ? `<span class="pill">${esc(d.status)}</span>` : ''}
@@ -802,10 +1179,10 @@
         const seasons = (d.seasons || []).filter(s => s.season_number >= 1);
         html += `<div class="section" id="seasons">
           <h3>Episodes</h3>
-          <div class="season-picker">
-            <select id="season-sel" class="field" aria-label="Select season" style="height:40px;background:var(--bg-2);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:0 12px">
-              ${seasons.map(s => `<option value="${s.season_number}">Season ${s.season_number}${s.episode_count ? ' · ' + s.episode_count + ' eps' : ''}</option>`).join('')}
-            </select>
+          <div class="season-pills" id="season-pills" role="group" aria-label="Choose a season">
+            ${seasons.map(x => `<button class="spill" aria-pressed="false" data-season="${x.season_number}">
+                <span class="sp-n">Season ${x.season_number}</span>${x.episode_count ? `<span class="sp-c">${x.episode_count} eps</span>` : ''}
+              </button>`).join('')}
           </div>
           <div class="ep-list" id="ep-list"></div>
         </div>`;
@@ -832,7 +1209,7 @@
 
       // Wire seasons
       if (isTV) {
-        const sel = $('#season-sel');
+        const pills = $('#season-pills');
         // Season changes are not cancellable, so without a sequence number whichever
         // response lands LAST wins — pick S1, S2, S3 quickly and a slow S2 can end up
         // rendered under a select reading "Season 3", with every episode link pointing
@@ -845,26 +1222,60 @@
           try {
             const s = await tmdb('/tv/' + id + '/season/' + n);
             if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
-            box.innerHTML = (s.episodes || []).map(ep => `
-              <div class="ep" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}" tabindex="0" role="button"
-                   aria-label="Play season ${n} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}">
-                <img class="thumb" alt="" loading="lazy" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+            box.innerHTML = (s.episodes || []).map(ep => {
+              const pr = progGet('tv', id, n, ep.episode_number);
+              const done = progDone(pr);
+              const part = !!(pr && !done && pr.pct > 0.01);
+              return `
+              <div class="ep${done ? ' watched' : ''}" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}" tabindex="0" role="button"
+                   aria-label="${done ? 'Rewatch' : part ? 'Resume' : 'Play'} season ${n} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}">
+                <div class="ep-thumb">
+                  <img class="thumb" alt="" loading="lazy" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+                  ${(pr && pr.pct > 0.01) ? `<span class="ep-fill" style="width:${Math.round(Math.min(1, pr.pct) * 100)}%"></span>` : ''}
+                  ${done ? `<span class="ep-tick" aria-hidden="true">${ICON.check}</span>` : ''}
+                </div>
                 <div style="min-width:0">
-                  <div class="en">S${n} · E${ep.episode_number}</div>
+                  <div class="en">S${n} \u00b7 E${ep.episode_number}${ep.runtime ? ' \u00b7 ' + ep.runtime + 'm' : ''}</div>
                   <div class="et">${esc(ep.name || 'Episode ' + ep.episode_number)}</div>
                   <div class="eo">${esc(ep.overview || '')}</div>
+                  ${progBar(pr)}
                 </div>
-                <button class="btn primary sm play" tabindex="-1" aria-hidden="true">${ICON.play} Play</button>
-              </div>`).join('') || '<div class="center-note">No episode data.</div>';
+                <button class="btn primary sm play" tabindex="-1" aria-hidden="true">${ICON.play} ${part ? 'Resume' : done ? 'Again' : 'Play'}</button>
+              </div>`;
+            }).join('') || '<div class="center-note">No episode data.</div>';
+            // The row model caches; replacing every episode under it would otherwise
+            // leave the D-pad navigating the season that just went away.
+            if (IS_TV) tvInvalidate();
           } catch (e) {
             if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
             box.innerHTML = ''; errorState(e, '#ep-list');
           }
         };
-        sel.onchange = () => loadSeason(sel.value);
-        // A specials-only show leaves the select empty, and requesting season 1 then
+        const markPill = (n) => {
+          if (!pills) return;
+          pills.querySelectorAll('.spill').forEach(b => {
+            const on = (+b.dataset.season === +n);
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-pressed', String(on));
+            // block:'nearest' so centring the pill never drags the PAGE around too.
+            if (on) { try { b.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) {} }
+          });
+        };
+        if (pills) pills.onclick = (e2) => {
+          const b = e2.target.closest('.spill'); if (!b) return;
+          markPill(b.dataset.season); loadSeason(b.dataset.season);
+        };
+        // Open on the season you were last watching, not always season 1.
+        // Recomputed from `d`, NOT read from the `seasons` const above: that one is
+        // block-scoped to the markup builder, and the bare name `seasons` resolves
+        // instead to window.seasons -- the <div id="seasons"> -- whose .map is not a
+        // function. Named access on window is a trap for any id used as a variable.
+        const nums = (d.seasons || []).filter(x => x.season_number >= 1).map(x => x.season_number);
+        const lastSeen = progShow(id);
+        const startSeason = (lastSeen && nums.indexOf(lastSeen.s) >= 0) ? lastSeen.s : nums[0];
+        // A specials-only show has no regular seasons at all; requesting season 1 then
         // renders a raw TMDB 404 under the "Episodes" heading.
-        if (sel.options.length) loadSeason(sel.value || 1);
+        if (nums.length) { markPill(startSeason); loadSeason(startSeason); }
         else $('#ep-list').innerHTML = '<div class="center-note">No regular seasons listed for this title.</div>';
       }
     } catch (e) { if (routeIs(my)) errorState(e); }
@@ -922,8 +1333,33 @@
     if (cfg.activeSource >= sources.length) cfg.activeSource = 0;
     const src = sources[cfg.activeSource];
 
+    // Episode bounds. TMDB tells us how many episodes each season actually has, so a
+    // Next button running off the end -- or a hand-typed ?s=/?e= -- is answerable
+    // instead of framing a mirror for an episode that was never made.
+    const seasonList = (isTV && d && Array.isArray(d.seasons))
+      ? d.seasons.filter(x => x.season_number >= 1) : [];
+    const seasonMeta = seasonList.find(x => x.season_number === season) || null;
+    const epCount = seasonMeta ? (seasonMeta.episode_count || 0) : 0;
+    const prevSeason = isTV ? seasonList.find(x => x.season_number === season - 1) : null;
+    const nextSeason = isTV ? seasonList.find(x => x.season_number === season + 1) : null;
+    // Only claim something is missing when TMDB actually described the shape; a failed
+    // detail fetch must not turn a working episode into an error page.
+    const missing = isTV && seasonList.length > 0 && (!seasonMeta || (epCount > 0 && episode > epCount));
+    const hasNextEp = isTV && (epCount ? episode < epCount : true);
+
     let frameInner;
-    if (!src) {
+    if (missing) {
+      frameInner = `<div class="player-empty"><div class="box">
+        <h3>That episode doesn\u2019t exist</h3>
+        <p>${seasonMeta
+            ? esc(title) + ' season ' + season + ' has ' + epCount + ' episode' + (epCount === 1 ? '' : 's') + ', so there is no episode ' + episode + '.'
+            : esc(title) + ' has no season ' + season + '.'}</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+          ${seasonMeta && epCount ? `<button class="btn primary" data-nav="#/watch/tv/${id}?s=${season}&e=${epCount}">Play S${season} \u00b7 E${epCount}</button>` : ''}
+          <button class="btn" data-nav="#/tv/${id}">All episodes</button>
+        </div>
+      </div></div>`;
+    } else if (!src) {
       frameInner = `<div class="player-empty"><div class="box">
         <h3>No playback source configured</h3>
         <p>Add a source in <b>Settings → Playback sources</b>, or paste a URL template below.
@@ -937,18 +1373,32 @@
       frameInner = `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
     }
 
+    // Roll over to the neighbouring season rather than dead-ending, but never past
+    // the ends of the show.
+    const prevHref = !isTV ? null
+      : episode > 1 ? ('#/watch/tv/' + id + '?s=' + season + '&e=' + (episode - 1))
+      : prevSeason ? ('#/watch/tv/' + id + '?s=' + (season - 1) + '&e=' + (prevSeason.episode_count || 1))
+      : null;
+    const nextHref = !isTV ? null
+      : hasNextEp ? ('#/watch/tv/' + id + '?s=' + season + '&e=' + (episode + 1))
+      : nextSeason ? ('#/watch/tv/' + id + '?s=' + (season + 1) + '&e=1')
+      : null;
     const epNav = isTV ? `
       <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
-        <button class="btn sm" data-nav="#/watch/tv/${id}?s=${season}&e=${Math.max(1, episode - 1)}" ${episode <= 1 ? 'disabled' : ''}>‹ Prev</button>
-        <span class="muted" style="font-weight:700">S${season} · E${episode}</span>
-        <button class="btn sm" data-nav="#/watch/tv/${id}?s=${season}&e=${episode + 1}">Next ›</button>
+        ${prevHref ? `<button class="btn sm" data-nav="${prevHref}">\u2039 Prev</button>`
+                   : `<button class="btn sm" disabled>\u2039 Prev</button>`}
+        <span class="muted" style="font-weight:700">S${season} \u00b7 E${episode}${epCount ? ' of ' + epCount : ''}</span>
+        ${nextHref ? `<button class="btn sm" data-nav="${nextHref}">${hasNextEp ? 'Next \u203a' : 'Season ' + (season + 1) + ' \u203a'}</button>`
+                   : `<button class="btn sm" disabled>Next \u203a</button>`}
       </div>` : '';
 
     const roomTiles = sources.map((s, i) => `
-      <button class="mirror ${i === cfg.activeSource ? 'on' : ''}" data-src="${i}" aria-pressed="${i === cfg.activeSource}">
+      <button class="mirror ${i === cfg.activeSource ? 'on' : ''}${isTracked(s.name) ? ' tracked' : ''}"
+              data-src="${i}" data-mirror-name="${esc(s.name || '')}" aria-pressed="${i === cfg.activeSource}">
         <span class="num">${String(i + 1).padStart(2, '0')}</span>
         <span class="mn">${esc(s.name || ('Source ' + (i + 1)))}</span>
-        <span class="ms">${i === cfg.activeSource ? '● Projecting' : 'Mirror ' + (i + 1)}</span>
+        <span class="ms">${i === cfg.activeSource ? '\u25cf Projecting' : 'Mirror ' + (i + 1)}</span>
+        <span class="mbadge">${ICON.check} Verified</span>
       </button>`).join('');
 
     view().innerHTML = `
@@ -985,7 +1435,12 @@
           <h2 style="font-size:16px">Server room <span class="muted" style="font-weight:600;font-size:13px">· ${sources.length} mirrors</span></h2>
         </div>
         <div class="server-room">${roomTiles}</div>
-        <p class="muted" style="font-size:12px;margin-top:12px;text-transform:uppercase;letter-spacing:.5px">Switch mirrors if a server stutters or the title won't load — no single mirror has everything.</p>
+        <p class="muted" style="font-size:12px;margin-top:12px;text-transform:uppercase;letter-spacing:.5px">Switch mirrors if a server stutters or the title won't load \u2014 no single mirror has everything.</p>
+        <p class="muted mirror-note"><span class="mbadge static">${ICON.check} Verified</span>
+          reports its exact playback position, so resume points are accurate to the second.
+          Every other mirror is tracked by time on screen instead \u2014 progress still saves, but it
+          drifts if you pause, skip or leave it running. A mirror earns the badge automatically
+          the first time it reports a real position.</p>
         ` : ''}
       </div>`;
     window.scrollTo(0, 0);
@@ -1035,6 +1490,15 @@
     const fr = $('#player-iframe');
     if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
     nativeSetPlayer(!!fr);
+    // Start tracking position for this exact episode. Runtime is the denominator the
+    // wall-clock fallback needs; the mirror overrides it the moment it posts its own.
+    if (fr) watchBegin({
+      type: type, id: id,
+      season: isTV ? season : null, episode: isTV ? episode : null,
+      title: title, poster_path: d && d.poster_path, source: src && src.name,
+      runtime: 60 * (isTV ? ((d && d.episode_run_time && d.episode_run_time[0]) || 0)
+                          : ((d && d.runtime) || 0))
+    });
     const tvc = $('#tv-controls');
     if (tvc) tvc.onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
@@ -1341,15 +1805,22 @@
   /* ---------- Watchlist ---------- */
   function watchlistView() {
     const list = getWatch();
-    if (!list.length) {
-      view().innerHTML = `<h1 class="page-title">Watchlist</h1>
-        <div class="center-note">Nothing saved yet — use the bookmark on any title to keep it here.
+    let html = `<h1 class="page-title">Watchlist${list.length ? ` <span class="muted" style="font-size:16px">(${list.length})</span>` : ''}</h1>`;
+    html += list.length
+      ? `<div class="grid">${list.map(i => cardHTML(i, i.type)).join('')}</div>`
+      : `<div class="center-note">Nothing saved yet \u2014 use the bookmark on any title to keep it here.
           <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div>
         </div>`;
-      return;
-    }
-    view().innerHTML = `<h1 class="page-title">Watchlist <span class="muted" style="font-size:16px">(${list.length})</span></h1>
-      <div class="grid">${list.map(i => cardHTML(i, i.type)).join('')}</div>`;
+    html += histSectionHTML();
+    view().innerHTML = html;
+    const hc = $('#hist-clear');
+    // History and progress are one idea to a viewer, so Clear takes both -- leaving
+    // progress bars behind with no history to explain them reads as a bug.
+    if (hc) hc.onclick = () => {
+      if (confirm('Clear your watch history and all resume positions?')) {
+        histClear(); progClear(); route(); toast('History cleared');
+      }
+    };
   }
 
   /* ---------- Install on TV / other devices ---------- */
@@ -1594,6 +2065,17 @@
   function route() {
     routeSeq++;
     tvGlideStop();               // the nodes we were animating are about to be replaced
+    watchEnd();                  // stop counting against whatever was playing
+    // Re-measure the scrollbar once this view has actually painted. The boot
+    // measurement runs against an empty page, where there is no scrollbar to measure
+    // yet -- so --sbw stayed 0 and the 100vw hero bled ~5px past the right edge,
+    // giving the whole page a horizontal scrollbar until something else resized.
+    // Timers, NOT requestAnimationFrame: rAF is suspended in a background tab or a
+    // hidden container, which is precisely when a restored page needs re-measuring.
+    // Twice, because views render after an await and the second pass catches content
+    // that only lands once the network does.
+    setTimeout(syncScrollbarWidth, 0);
+    setTimeout(syncScrollbarWidth, 350);
     nativeSetPlayer(false);      // every view starts with no player; watchView re-arms it
     const { parts, params } = parseHash();
     closeSuggest();
@@ -1792,8 +2274,14 @@
   // layout box does not have — 5px of horizontal overflow at each edge on any platform
   // that shows one. Measure it and let CSS subtract it.
   function syncScrollbarWidth() {
-    const w = window.innerWidth - (document.documentElement.clientWidth || window.innerWidth);
-    document.documentElement.style.setProperty('--sbw', Math.max(0, w) + 'px');
+    const cw = document.documentElement.clientWidth;
+    // A zero client width means the document is not laid out yet, or is inside a
+    // hidden container. The old `|| innerWidth` fallback turned that into a confident
+    // --sbw of 0, which is indistinguishable from "measured, and there is no
+    // scrollbar" -- so the 100vw hero kept its 5px of overflow with nothing to
+    // correct it. Record nothing instead and let a later call do the measuring.
+    if (!cw) return;
+    document.documentElement.style.setProperty('--sbw', Math.max(0, window.innerWidth - cw) + 'px');
   }
   syncScrollbarWidth();
   // At boot the page is empty, so there is no scrollbar to measure yet — recompute when
@@ -2021,6 +2509,15 @@
     // by the row model. Excluding it here means a stale tabindex="0" left behind by
     // navigating away mid-playback cannot turn it into a D-pad target.
     if (el.id === 'player-iframe') return null;
+    // Cinema mode fixes the player over the WHOLE viewport at z-index 300, but the
+    // page behind it is still laid out and still passes every test below -- so the
+    // header, the mirror tiles and the episode nav stayed live D-pad targets hidden
+    // under the video. One LEFT press off the control bar landed on the invisible
+    // header, and OK navigated away mid-film with no visible ring. Nothing here can
+    // see occlusion, so name the chrome that is genuinely ON TOP of the player.
+    // (Skipped when a modal is open: the modal is its own scope and sits above both.)
+    if (document.body.classList.contains('cinema-on') && !el.closest('.modal-back') &&
+        !el.closest('.player-frame.cinema, #tv-controls, #cinema-exit')) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return null;
     const cs = getComputedStyle(el);
@@ -2068,7 +2565,7 @@
       const pinned = !inModal && !!el.closest(TV_PINNED) && !el.closest('.suggest');
       // A carousel scrolls under the cached x, so remember which one this item is in
       // and what its scrollLeft was; tvColOf() corrects for the difference later.
-      const sc = el.closest('.track, .cast-track, .ep-list');
+      const sc = el.closest(TV_ROW_CONTAINERS);
       let cy;
       if (inModal || pinned) {
         cy = r.top + r.height / 2;
@@ -2085,7 +2582,12 @@
     const keyed = new Map(), loose = [];
     for (const m of metas) {
       let key = null;
-      if (m.pinned) key = 'hdr';
+      // Every pinned element used to share the key 'hdr', which merged the update
+      // banner INTO row 0 and dragged the header row's mean cy to the middle of the
+      // page: UP from the hero then reached nothing, and the banner's two buttons were
+      // interleaved into the middle of the nav bar. The +docH offset above already
+      // marks bottom-pinned chrome -- key it separately so that offset means something.
+      if (m.pinned) key = (m.cy > docH) ? 'pin-bottom' : 'hdr';
       else {
         const c = m.el.closest(TV_ROW_CONTAINERS);
         if (c) key = (c.__tvRow || (c.__tvRow = 'c' + (++tvRowSeq)));
@@ -2160,7 +2662,7 @@
     try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
     tvMark(el);
     tvRemember(el);
-    const hs = el.closest('.track, .cast-track, .ep-list');
+    const hs = el.closest(TV_ROW_CONTAINERS);
     if (hs && hs.scrollWidth > hs.clientWidth + 4) {
       const r = el.getBoundingClientRect(), hr = hs.getBoundingClientRect();
       const left = Math.max(0, hs.scrollLeft + (r.left - hr.left) - (hr.width - r.width) / 2);

@@ -33,16 +33,35 @@ const PREFERRED_PORTS = Array.from({ length: 30 }, (_, i) => 43110 + i);
 
 function startServer() {
   return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      let rel = decodeURIComponent((req.url || '/').split('?')[0]);
+    // A throw out of a request listener is an UNCAUGHT exception: Node does not turn
+    // it into a 500, and Electron's default handler pops a MODAL error box that
+    // freezes the window until it is dismissed. Both inputs below are attacker
+    // reachable -- the loopback port is one of 30 fixed values and the framed players
+    // are deliberately not sandboxed -- so every one of them is guarded, and the whole
+    // handler is wrapped as a backstop.
+    const serveFile = (req, res) => {
+      let rel;
+      try { rel = decodeURIComponent((req.url || '/').split('?')[0]); }
+      catch (e) { res.writeHead(400); return res.end('Bad request'); }   // e.g. GET /%
+      // path.join/normalize preserve NUL, and fs.readFile throws synchronously on it.
+      if (rel.indexOf('\0') >= 0) { res.writeHead(400); return res.end('Bad request'); }
       if (rel === '/' || rel === '') rel = '/index.html';
       const file = path.normalize(path.join(ROOT, rel));
-      if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end('Forbidden'); }
+      // startsWith(ROOT) is string containment, not path containment: it also admits
+      // SIBLINGS, so "<root>-backup/notes.txt" passed. Compare as a path.
+      const inside = path.relative(ROOT, file);
+      if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) {
+        res.writeHead(403); return res.end('Forbidden');
+      }
       fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(404); return res.end('Not found'); }
         res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' });
         res.end(data);
       });
+    };
+    const server = http.createServer((req, res) => {
+      try { serveFile(req, res); }
+      catch (e) { try { res.writeHead(500); res.end('Server error'); } catch (e2) {} }
     });
     let idx = 0;
     server.on('error', (e) => {
@@ -84,7 +103,15 @@ async function setupAdblock() {
 function setupSecurity() {
   const ses = session.defaultSession;
   ses.on('will-download', (e) => { e.preventDefault(); });                 // no downloads, ever
-  ses.setPermissionRequestHandler((wc, permission, cb) => cb(false));      // deny all requests
+  // Deny-all also denied 'fullscreen', which is a permission -- so NO frame could ever
+  // go fullscreen, and the request never settled (it hung rather than rejecting, so
+  // the .catch() in app.js never fired and one denial poisoned the document's
+  // fullscreen state until reload). Clipboard-write was collateral: the Get-app screen
+  // said "Copied" while the write rejected asynchronously. Grant exactly these two;
+  // camera, mic, geolocation, notifications, MIDI, USB and downloads stay denied, and
+  // neither grant gives a framed player any reach into the machine.
+  ses.setPermissionRequestHandler((wc, permission, cb) =>
+    cb(permission === 'fullscreen' || permission === 'clipboard-sanitized-write'));
   ses.setPermissionCheckHandler(() => false);
   if (ses.setDevicePermissionHandler) ses.setDevicePermissionHandler(() => false);
 }
