@@ -32,6 +32,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 
 public class MainActivity extends BridgeActivity {
@@ -91,7 +92,7 @@ public class MainActivity extends BridgeActivity {
                     boolean inApp = url.startsWith("https://localhost")
                             || url.startsWith("http://localhost")
                             || url.startsWith("capacitor://");
-                    if (!inApp) {
+                    if (!inApp && !isOwnOutboundLink(request.getUrl())) {
                         // Swallow the redirect — do NOT navigate away and do NOT open a browser.
                         return true;
                     }
@@ -99,6 +100,27 @@ public class MainActivity extends BridgeActivity {
                 return super.shouldOverrideUrlLoading(view, request);
             }
         });
+    }
+
+    /**
+     * The app's OWN outbound links, which must reach the system browser.
+     *
+     * Returning true for every off-origin main-frame load also swallowed the two links
+     * the app itself offers: the Releases page, and the TMDB attribution in the footer
+     * that TMDB's API terms require to work. WebView retargets window.open(_blank) and
+     * target="_blank" into main-frame navigations, so both landed here and died
+     * silently. Falling through to super hands them to Capacitor's launchIntent.
+     *
+     * Matched on HOST and https only, so a player redirect cannot dress itself up as
+     * one of ours with a lookalike path.
+     */
+    private static boolean isOwnOutboundLink(Uri uri) {
+        if (uri == null || !"https".equals(uri.getScheme())) return false;
+        String host = uri.getHost();
+        if (host == null) return false;
+        host = host.toLowerCase(Locale.ROOT);
+        return host.equals("github.com") || host.endsWith(".github.com")
+                || host.equals("themoviedb.org") || host.endsWith(".themoviedb.org");
     }
 
     /**

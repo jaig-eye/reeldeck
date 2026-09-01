@@ -31,11 +31,22 @@ const MIME = {
   '.ico': 'image/x-icon', '.webp': 'image/webp'
 };
 
-http.createServer((req, res) => {
-  let rel = decodeURIComponent((req.url || '/').split('?')[0]);
+// Identical guarding to electron/main.js, and it matters MORE here: this binds
+// 0.0.0.0 so anything on the Wi-Fi can reach it, and plain Node really does exit the
+// process on an uncaught request-listener throw -- one malformed URL would kill the
+// dev server for every device using it.
+const serveFile = (req, res) => {
+  let rel;
+  try { rel = decodeURIComponent((req.url || '/').split('?')[0]); }
+  catch (e) { res.writeHead(400); return res.end('Bad request'); }   // e.g. GET /%
+  if (rel.indexOf('\0') >= 0) { res.writeHead(400); return res.end('Bad request'); }
   if (rel === '/' || rel === '') rel = '/index.html';
   const file = path.normalize(path.join(ROOT, rel));
-  if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end('Forbidden'); }
+  // Path containment, not string containment -- startsWith also admitted siblings.
+  const inside = path.relative(ROOT, file);
+  if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) {
+    res.writeHead(403); return res.end('Forbidden');
+  }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, {
@@ -44,6 +55,13 @@ http.createServer((req, res) => {
     });
     res.end(data);
   });
+};
+
+// Backstop: nothing may escape the handler, because an uncaught throw here takes the
+// whole dev server down for every device on the LAN.
+http.createServer((req, res) => {
+  try { serveFile(req, res); }
+  catch (e) { try { res.writeHead(500); res.end('Server error'); } catch (e2) {} }
 }).listen(PORT, HOST, () => {
   console.log(`\nReeldeck is serving on port ${PORT}\n`);
   console.log(`  On THIS computer:   http://localhost:${PORT}`);

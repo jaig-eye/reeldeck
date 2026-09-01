@@ -105,7 +105,17 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
+/* Reserve the scrollbar gutter permanently. Two wins, one line:
+   1. The hero bleeds edge-to-edge with 100vw, which counts a scrollbar the layout box
+      does not have. Measuring it (--sbw) only works if the measurement is taken while
+      the scrollbar exists -- at boot the page is empty and there is none, so --sbw
+      stayed 0 and the hero hung ~5px past the right edge, giving the WHOLE page a
+      horizontal scrollbar. A reserved gutter is there from the first paint.
+   2. Navigating from a long page to a short one no longer shifts the layout sideways
+      as the scrollbar comes and goes.
+   Ignored by engines without it (and by the overlay scrollbars on TV and mobile,
+   which reserve nothing anyway), where the measured --sbw still applies. */
+html { scroll-behavior: smooth; scrollbar-gutter: stable; }
 body {
   background: radial-gradient(1200px 600px at 70% -10%, var(--glow) 0%, var(--bg) 55%) fixed;
   color: var(--text);
@@ -236,14 +246,53 @@ body::before {
 .bb-logo { max-height: 168px; max-width: min(420px, 72vw); object-fit: contain; object-position: left bottom; margin-bottom: 18px; filter: drop-shadow(0 6px 22px rgba(0,0,0,.6)); }
 .bb-title { color: #fff; font-size: clamp(30px, 5.4vw, 62px); font-weight: 900; letter-spacing: -1.5px; line-height: 1; margin: 0 0 18px; text-shadow: 0 3px 22px rgba(0,0,0,.6); }
 .bb-meta { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; color: rgba(255,255,255,.9); font-weight: 700; font-size: 15px; flex-wrap: wrap; }
-.bb-meta .star { color: var(--accent-on-dark); display: inline-flex; align-items: center; gap: 5px; }
-.bb-meta .star svg { width: 16px; height: 16px; }
+/* The rating reads as one more pill, not a loose glyph with a number under it: the
+   star is sized to the text and locked on the same baseline. */
+.pill.rating { display: inline-flex; align-items: center; gap: 6px; line-height: 1; white-space: nowrap; }
+.pill.rating svg { width: 1em; height: 1em; flex: none; color: var(--accent); }
+.bb-meta .pill.rating {
+  border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: 20px;
+  font-size: 13px; color: #fff;
+}
+.bb-meta .pill.rating svg { color: var(--accent-on-dark); }
 .bb-meta .pill-type { border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: 20px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
 .bb-ovw { color: rgba(255,255,255,.86); font-size: clamp(14px, 1.4vw, 16.5px); line-height: 1.55; margin: 0 0 22px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
 .bb-cta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .bb-cta .btn.primary { color: var(--accent-ink); }
-.bb-dots { position: absolute; right: clamp(18px, 5vw, 56px); bottom: 9%; z-index: 3; display: flex; gap: 8px; }
-.bb-dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.35); border: 0; cursor: pointer; padding: 0; transition: .25s; }
+.bb-dots {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 3.5%;
+  z-index: 3; display: flex; gap: 16px; justify-content: center;
+}
+/* Desktop/mouse: give the hero real arrows. Hidden on touch, where the drag is the
+   affordance and a pair of floating buttons is just clutter over the artwork. */
+.bb-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
+  width: 46px; height: 46px; border-radius: 50%; display: none;
+  align-items: center; justify-content: center; cursor: pointer;
+  background: rgba(11,13,18,.6); border: 1px solid rgba(255,255,255,.25); color: #fff;
+  opacity: 0; transition: opacity .2s, background .2s;
+}
+.bb-arrow svg { width: 20px; height: 20px; }
+.bb-arrow.left { left: clamp(10px, 2vw, 22px); }
+.bb-arrow.right { right: clamp(10px, 2vw, 22px); }
+@media (hover: hover) {
+  .bb-arrow { display: flex; }
+  .billboard:hover .bb-arrow { opacity: 1; }
+  .bb-arrow:hover { background: rgba(11,13,18,.85); }
+}
+/* A horizontal drag is a drag, not a text selection. */
+.billboard.dragging { cursor: grabbing; user-select: none; }
+.billboard.dragging .bb-info { pointer-events: none; }
+/* The dot you SEE is 9px. The thing you TAP must not be: a 9px target is under any
+   reasonable minimum and is genuinely hard to hit with a thumb. An invisible ::after
+   grows the hit area to full row height and out to the gap -- out to the GAP and no
+   further, so neighbouring dots never overlap and steal each other's presses. The
+   visual, the active-pill sizing and the TV overrides are all left untouched. */
+.bb-dot { position: relative; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.35); border: 0; cursor: pointer; padding: 0; transition: .25s; }
+.bb-dot::after {
+  content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  height: 44px; width: calc(100% + 16px);   /* == the gap, so targets tile without overlapping */
+}
 .bb-dot.on { background: var(--accent); width: 26px; border-radius: 6px; }
 .billboard-sk { width: var(--bleed-w); margin-left: var(--bleed-ml); margin-top: -22px; height: min(82vh, 760px); min-height: 460px; border-radius: 0; }
 
@@ -303,7 +352,7 @@ body::before {
   .bb-logo { max-height: 110px; margin-bottom: 14px; }
   .bb-ovw { -webkit-line-clamp: 2; margin-bottom: 16px; }
   .bb-cta .btn.lg { padding: 12px 18px; font-size: 14px; }
-  .bb-dots { bottom: 13%; }
+  .bb-dots { bottom: 5%; }   /* clear of .bb-info, which sits at 13% on mobile */
   .rank-num { font-size: 96px; letter-spacing: -6px; }
   .rank-rail .track { grid-auto-columns: 176px; }
   .rank-item .poster { width: 94px; }
@@ -353,7 +402,9 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .rail { margin-bottom: 34px; }
 .rail .rail-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 13px; }
 .rail h2 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -.2px; }
-.rail a.more { color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+/* 13px of text is a 20px-tall tap target. Pad it out and pull the padding back off
+   with margin, so the row reads identically but the link is actually hittable. */
+.rail a.more { color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; padding: 11px 6px; margin: -11px -6px; }
 .rail a.more svg { width: 15px; height: 15px; }
 .rail a.more:hover { color: var(--accent); }
 .rail .track {
@@ -438,7 +489,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .detail-body .detail-logo { max-height: 128px; max-width: min(380px, 62vw); object-fit: contain; object-position: left bottom; display: block; margin: 4px 0 12px; filter: drop-shadow(0 4px 18px rgba(0,0,0,.6)); }
 .detail-body .metarow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); font-weight: 600; font-size: 14px; margin-bottom: 16px; }
 .detail-body .metarow .pill { background: var(--surface-2); border: 1px solid var(--border); padding: 4px 11px; border-radius: 20px; color: var(--text); }
-.detail-body .metarow .star { color: var(--accent); }
+.detail-body .metarow .pill.rating { color: var(--text); }
 .detail-body .cta { display: flex; gap: 11px; flex-wrap: wrap; margin-top: 6px; }
 .section { max-width: var(--maxw); margin: 30px auto 0; padding: 0 22px; }
 .section h3 { font-size: 18px; font-weight: 800; margin: 0 0 14px; }
@@ -544,6 +595,8 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 footer.site { max-width: var(--maxw); margin: 50px auto 0; padding: 26px 22px 40px; border-top: 1px solid var(--border); color: var(--muted-2); font-size: 13px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 footer.site a { color: var(--muted); }
 footer.site a:hover { color: var(--accent); }
+/* 16px-tall text is not a tap target; grow it without moving the row. */
+footer.site a { display: inline-block; padding: 8px 4px; margin: -8px -4px; }
 
 /* Pagination */
 .pager { display: flex; gap: 10px; justify-content: center; align-items: center; margin: 30px 0 10px; }
@@ -581,6 +634,12 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .card:focus-visible { outline: none; box-shadow: none; }
 .card:focus-visible .poster { outline: none; box-shadow: var(--ring); }
 
+/* A horizontal rail must not swallow a VERTICAL swipe. Dragging down inside Top 10
+   was being captured by the rail, so the page stayed put and the finger felt stuck in
+   the row. pan-x lets the rail keep horizontal gestures and hands vertical ones back
+   to the document. */
+.track, .cast-track, .rank-rail .track { touch-action: pan-x; }
+
 /* Momentum scroll + no scrollbar clutter on horizontal rails (touch) */
 .rail .track, .cast-track { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .rail .track::-webkit-scrollbar, .cast-track::-webkit-scrollbar { height: 0; width: 0; display: none; }
@@ -603,6 +662,81 @@ textarea:focus-visible, [tabindex]:focus-visible {
 
 /* ---------- Mobile bottom tab bar ---------- */
 .bottom-nav { display: none; }
+
+/* ---------- Verified mirrors ----------
+   "Verified" is demonstrated, not claimed: the badge appears only for a mirror that
+   has actually reported a real playback position to us. */
+.mbadge { display: none; }
+.mirror.tracked .mbadge, .mbadge.static {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 800; letter-spacing: .3px;
+  color: var(--accent); background: var(--bg-3);
+  border: 1px solid var(--accent-2); border-radius: 20px; padding: 2px 8px;
+}
+.mbadge svg { width: 11px; height: 11px; }
+.mirror.tracked .mbadge { margin-top: 6px; }
+.mirror.on.tracked .mbadge { color: var(--accent-ink); background: rgba(0,0,0,.22); border-color: rgba(0,0,0,.3); }
+.mirror-note {
+  font-size: 12.5px; line-height: 1.6; margin-top: 10px; max-width: 78ch;
+  text-transform: none; letter-spacing: normal;
+}
+.mirror-note .mbadge.static { vertical-align: middle; margin-right: 2px; }
+
+/* ---------- Watch progress ---------- */
+.prog { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
+.prog-bar { flex: 1; min-width: 60px; max-width: 260px; height: 4px; border-radius: 99px; background: var(--bg-3); overflow: hidden; }
+.prog-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); }
+.prog-lbl { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.prog.done .prog-bar i { background: var(--muted-2); }
+.prog.done .prog-lbl { color: var(--muted-2); }
+
+/* The bar that sits ON artwork — episode stills and Continue-watching posters. */
+.ep-thumb { position: relative; flex: none; }
+.ep-fill {
+  position: absolute; left: 0; bottom: 0; height: 4px; background: var(--accent);
+  border-radius: 0 2px 2px 0; box-shadow: 0 0 0 1px rgba(0,0,0,.45); z-index: 2;
+}
+.card .poster .ep-fill { bottom: 0; }
+.ep-tick {
+  position: absolute; top: 6px; right: 6px; z-index: 2; width: 22px; height: 22px;
+  border-radius: 50%; background: rgba(11,13,18,.82); color: var(--accent);
+  display: grid; place-items: center; border: 1px solid rgba(255,255,255,.25);
+}
+.ep-tick svg { width: 13px; height: 13px; }
+.ep.watched .thumb { opacity: .5; }
+.ep.watched .et { color: var(--muted); }
+
+/* ---------- Season pills ---------- */
+/* Replaces a <select>: on a remote a native picker is a modal you have to escape, and
+   on touch it hides how many seasons there even are. A scrolling rail shows them. */
+.season-pills {
+  display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px;
+  scroll-behavior: smooth; scrollbar-width: none; touch-action: pan-x;
+}
+.season-pills::-webkit-scrollbar { height: 0; display: none; }
+.spill {
+  flex: none; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 12px; padding: 8px 14px; cursor: pointer; transition: .15s;
+  font-weight: 700; font-size: 14px; white-space: nowrap;
+}
+.spill .sp-c { font-size: 11.5px; font-weight: 600; color: var(--muted-2); }
+.spill:hover { color: var(--text); border-color: var(--accent-2); }
+.spill.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.spill.on .sp-c { color: var(--accent-ink); }
+
+/* ---------- Watch history ---------- */
+.hist-list { display: grid; gap: 8px; }
+.hist-row {
+  display: flex; gap: 12px; align-items: center; padding: 10px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  cursor: pointer; transition: .15s;
+}
+.hist-row:hover { background: var(--surface-2); border-color: var(--accent-2); }
+.hist-poster { width: 46px; aspect-ratio: 2/3; object-fit: cover; border-radius: 6px; background: var(--bg-3); flex: none; }
+.hist-t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-s { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.hist-row .prog { margin-top: 6px; }
 
 /* ---------- Cinema / TV mode (full-viewport player) ---------- */
 .player-frame.cinema {
@@ -878,6 +1012,10 @@ body.tv .ep-list {
 }
 body.tv .ep-list::-webkit-scrollbar { height: 0; display: none; }
 body.tv .ep { flex-direction: column; align-items: stretch; gap: 10px; padding: 14px; }
+body.tv .spill { font-size: clamp(14px, 2.4vh, 18px); padding: clamp(8px, 1.6vh, 14px) clamp(14px, 1.8vw, 22px); }
+body.tv .season-pills { gap: clamp(8px, 1.4vw, 14px); padding-bottom: clamp(10px, 1.8vh, 18px); }
+body.tv .prog-lbl { font-size: clamp(12px, 1.9vh, 15px); }
+body.tv .hist-poster { width: clamp(46px, 6vh, 72px); }
 body.tv .ep .thumb { width: 100%; }
 body.tv .ep .play { display: none; }
 body.tv .ep .en { font-size: 15px; }
@@ -932,7 +1070,7 @@ body.tv .player-enter:focus .pe-pill, body.tv .player-enter.tv-focus .pe-pill {
    off wherever it does: setting scrollLeft/scrollTop obeys scroll-behavior, so leaving
    it on stacks a second, non-retargetable animation on top of ours — which is exactly
    the lag-then-bounce it was meant to remove. <html> is handled in app.js. */
-body.tv .track, body.tv .cast-track, body.tv .ep-list { scroll-behavior: auto; }
+body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { scroll-behavior: auto; }
 
 /* ---- Settings > About: the update panel ------------------------------------
    The banner announces; THIS is the control. The banner is pinned chrome that lands
@@ -1061,7 +1199,9 @@ body.tv .bb-cta .btn.lg { font-size: clamp(15px, 2.9vh, 19px); padding: clamp(10
    row you walk across, not two you have to discover. The 58px is tied to the button
    height above: the row model clusters within max(18px, …) of vertical centre, so
    changing either by more than ~18px splits the hero into two rows. */
-body.tv .bb-dots { right: var(--tvpad); bottom: var(--bb-bottom); gap: 12px; height: clamp(38px, 7vh, 58px); align-items: center; }
+/* TV keeps the dots to the side: they are a D-pad row there, not a swipe hint. */
+body.tv .bb-dots { left: auto; transform: none; right: var(--tvpad); bottom: var(--bb-bottom); gap: 12px; height: clamp(38px, 7vh, 58px); align-items: center; }
+body.tv .bb-arrow { display: none; }
 body.tv .bb-dot { width: 18px; height: 18px; }
 body.tv .bb-dot.on { width: 44px; border-radius: 9px; }
 /* Same ring as everything else — a bespoke outline here made the selection change
