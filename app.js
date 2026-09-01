@@ -77,26 +77,29 @@
   // Autoplay: the WebView is started with setMediaPlaybackRequiresUserGesture(false)
   // (Capacitor's Bridge does it) and the player iframe carries allow="autoplay", so a
   // mirror that asks to autoplay is permitted to. Whether it ASKS is per-provider:
-  //   verified   - VidSrc family (autoplay=1), VidKing (autoPlay=true), VidLink
-  //                (autoplay defaults to ON; passing autoplay=false is what disables it)
-  //   unverified - Cinemaos, MultiEmbed, AutoEmbed, 111Movies, VidFast publish no
-  //                parameter we could confirm, so none is invented here. An unknown
-  //                query parameter would be ignored, but so would our claim to know it.
+  //   verified   - all but two, each read from the provider's own docs page or its own
+  //                shipped player bundle. Note the CASE: VidKing, Cinemaos and VidFast
+  //                parse the literal string 'autoPlay=true' and ignore 'autoplay=1'.
+  //   unverified - MultiEmbed and AutoEmbed publish nothing we could confirm, so no
+  //                parameter is invented for them. An unknown query parameter would be
+  //                ignored, but so would our claim to know it.
+  // Caveat worth knowing: VidSrc's own docs say click-free autoplay works on custom
+  // domains only, so on their public hosts a play button still appears first.
   // Ad-free tiers commonly ignore autoplay on purpose, and no parameter overrides a
   // browser's own block on unmuted autoplay — this raises the odds, it is not a promise.
   const DEFAULT_SOURCES = [
     { name: 'VidSrcMe',   movie: 'https://vidsrcme.su/embed/movie/{id}?autoplay=1',           tv: 'https://vidsrcme.su/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'VidKing',    movie: 'https://www.vidking.net/embed/movie/{id}?autoPlay=true',    tv: 'https://www.vidking.net/embed/tv/{id}/{season}/{episode}?autoPlay=true&nextEpisode=true&episodeSelector=true' },
     { name: 'VidEasy',    movie: 'https://player.videasy.net/movie/{id}?color=%23{color}',    tv: 'https://player.videasy.net/tv/{id}/{season}/{episode}?color=%23{color}&nextEpisode=true&autoplayNextEpisode=true&episodeSelector=true' },
-    { name: 'Cinemaos',   movie: 'https://cinemaos.tech/player/{id}',                         tv: 'https://cinemaos.tech/player/{id}/{season}/{episode}' },
+    { name: 'Cinemaos',   movie: 'https://cinemaos.tech/player/{id}?autoPlay=true',                         tv: 'https://cinemaos.tech/player/{id}/{season}/{episode}?autoPlay=true' },
     { name: 'VidSrc RU',  movie: 'https://vidsrc-embed.ru/embed/movie/{id}?autoplay=1',       tv: 'https://vidsrc-embed.ru/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'VidSrc SU',  movie: 'https://vidsrc-embed.su/embed/movie/{id}?autoplay=1',       tv: 'https://vidsrc-embed.su/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'MultiEmbed', movie: 'https://multiembed.mov/?video_id={id}&tmdb=1',              tv: 'https://multiembed.mov/?video_id={id}&tmdb=1&s={season}&e={episode}' },
     { name: 'Vsrc',       movie: 'https://vsrc.su/embed/movie/{id}?autoplay=1',               tv: 'https://vsrc.su/embed/tv/{id}/{season}/{episode}?autoplay=1' },
     { name: 'VidLink',    movie: 'https://vidlink.pro/movie/{id}',                            tv: 'https://vidlink.pro/tv/{id}/{season}/{episode}' },
     { name: 'AutoEmbed',  movie: 'https://player.autoembed.app/embed/movie/{id}',             tv: 'https://player.autoembed.app/embed/tv/{id}/{season}/{episode}' },
-    { name: 'VidFast',    movie: 'https://vidfast.pro/movie/{id}',                            tv: 'https://vidfast.pro/tv/{id}/{season}/{episode}' },
-    { name: '111Movies',  movie: 'https://111movies.com/movie/{id}',                          tv: 'https://111movies.com/tv/{id}/{season}/{episode}' },
+    { name: 'VidFast',    movie: 'https://vidfast.pro/movie/{id}?autoPlay=true',                            tv: 'https://vidfast.pro/tv/{id}/{season}/{episode}?autoPlay=true' },
+    { name: '111Movies',  movie: 'https://111movies.com/movie/{id}?autoplay=true',                          tv: 'https://111movies.com/tv/{id}/{season}/{episode}?autoplay=true' },
     { name: 'Vidora',     movie: 'https://vidora.su/movie/{id}?autoplay=true',                tv: 'https://vidora.su/tv/{id}/{season}/{episode}?autoplay=true' },
     { name: 'Smashy',     movie: 'https://player.smashystream.com/movie/{id}?autoplay=true',  tv: 'https://player.smashystream.com/tv/{id}?s={season}&e={episode}&autoplay=true' }
   ];
@@ -214,7 +217,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.10';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.11';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -248,7 +251,7 @@
   // rail's scrollLeft, and scrolling the focused item into view. They drifted apart
   // once already -- the season rail was in none of them, so the ring could sit on a
   // season that was off screen with nothing scrolling to reveal it.
-  const TV_ROW_CONTAINERS = '.track, .cast-track, .ep-list, .season-pills';
+  const TV_ROW_CONTAINERS = '.track, .cast-track, .ep-list, .season-pills, .ep-strip';
   // Where a freshly rendered page should put the ring — the thing the user came to
   // press. This is a PRIORITY ORDER, tried one selector at a time: as a single
   // querySelectorAll it would have returned document order instead, which only
@@ -258,7 +261,7 @@
   // results — but once results exist they win, instead of trapping the ring on the box
   // you just typed into and making you press Back to reach what you searched for.
   const TV_LANDING = ['#player-enter', '.bb-slide.on .bb-cta .btn.primary',
-                      '.detail-hero .cta .btn.primary', '.grid .card', '.rail .track .card'];
+                      '.dv-stage .cta .btn.primary', '.grid .card', '.rail .track .card'];
   // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
   // offset so its row keeps a fixed place in the order — otherwise the update
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
@@ -349,8 +352,16 @@
   /* ------------------------------------------------------------
      Watchlist (localStorage)
      ------------------------------------------------------------ */
-  function getWatch() { try { return JSON.parse(localStorage.getItem(WATCH_KEY) || '[]'); } catch (e) { return []; } }
-  function setWatch(a) { localStorage.setItem(WATCH_KEY, JSON.stringify(a)); }
+  // Shape-checked like progAll/histAll/trackedAll: JSON.parse succeeding does not mean
+  // an ARRAY came back, and every caller here calls .some/.map/.findIndex on it -- so a
+  // single corrupt value would throw through every card render on the page.
+  function getWatch() {
+    try { const a = JSON.parse(localStorage.getItem(WATCH_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+    catch (e) { return []; }
+  }
+  // Quota is the realistic failure (a big watchlist plus history plus progress); losing
+  // the write is survivable, throwing out of a click handler is not.
+  function setWatch(a) { try { localStorage.setItem(WATCH_KEY, JSON.stringify(a)); } catch (e) { toast('Could not save \u2014 storage is full'); } }
   function isInWatch(id, type) { return getWatch().some(x => x.id == id && x.type === type); }
   function toggleWatch(item, type) {
     const list = getWatch();
@@ -473,6 +484,40 @@
     histSave(h);
   }
 
+  /**
+   * Where "play this show" should actually go.
+   *
+   * A series is not a thing you start from episode 1 every time. progShow() remembers
+   * the last episode opened for a show, so every Play / Watch now / poster-overlay
+   * link resumes there instead of dropping the viewer back on S1E1. Movies have
+   * nowhere else to go, and an unwatched show correctly falls through to the default.
+   */
+  function watchHref(type, id) {
+    if (type !== 'tv') return '#/watch/movie/' + id;
+    const last = progShow(id);
+    return last ? ('#/watch/tv/' + id + '?s=' + (last.s || 1) + '&e=' + (last.e || 1))
+                : ('#/watch/tv/' + id);
+  }
+  /** "Watch now" / "Resume S2 E5" — say which it is before they press it. */
+  function watchLabel(type, id) {
+    if (type !== 'tv') return 'Watch now';
+    const last = progShow(id);
+    return last ? ('Resume S' + (last.s || 1) + ' \u00b7 E' + (last.e || 1)) : 'Watch now';
+  }
+
+  /** Drop one entry from BOTH stores, so a dismissed title stops resurfacing. */
+  function progForget(key) {
+    if (!key) return;
+    const p = progAll();
+    delete p[key];
+    // A series pointer with no episodes left behind it would keep aiming "Resume" at
+    // an episode the user has explicitly dismissed.
+    const m = /^tv:(\d+):/.exec(key);
+    if (m && !Object.keys(p).some(k => k.indexOf('tv:' + m[1] + ':') === 0)) delete p['tv:' + m[1]];
+    progSave(p);
+    histSave(histAll().filter(r => r.k !== key));
+  }
+
   /** Everything started but not finished, newest first — drives "Continue watching". */
   function progResumable() {
     const p = progAll(); if (progPrune(p)) progSave(p);
@@ -508,7 +553,19 @@
      one provider that documents the API, then grown AT RUNTIME: the first time a
      mirror sends us a usable position it is promoted for good on this device. That
      way the badge reflects what actually happened here rather than a claim. */
-  const TRACK_SEED = { 'VidLink': 1 };          // documents MEDIA_DATA / PLAYER_EVENT
+  // Every entry here was confirmed against a FIRST-PARTY source: the provider's own
+  // docs page or, where there is no docs page, its own shipped player bundle. Nothing
+  // is seeded on resemblance to another provider. MultiEmbed and AutoEmbed publish
+  // nothing we could confirm and are deliberately absent -- they can still earn the
+  // badge at runtime the first time they report a real position.
+  const TRACK_SEED = {
+    'VidSrcMe': 1, 'VidSrc RU': 1, 'VidSrc SU': 1, 'Vsrc': 1,   // vidsrc/docs PLAYER_EVENT
+    'VidKing': 1,                                                // its own VideoPlayer bundle
+    'VidEasy': 1,                                                // videasy.to/docs
+    'Cinemaos': 1,                                               // cinemaos.tech/embed docs
+    'VidLink': 1, 'VidFast': 1, '111Movies': 1,                  // MEDIA_DATA / PLAYER_EVENT
+    'Vidora': 1, 'Smashy': 1
+  };
   function trackedAll() {
     let t; try { t = JSON.parse(localStorage.getItem(TRACK_KEY) || 'null'); } catch (e) { t = null; }
     return Object.assign({}, TRACK_SEED, (t && typeof t === 'object' && !Array.isArray(t)) ? t : {});
@@ -530,6 +587,55 @@
      The ONLY way to learn a cross-origin player's position is for the player to
      volunteer it. We accept that, but only from the exact origin we are framing:
      any page can postMessage at us, and this writes the user's history. */
+  /**
+   * Pull { t, d } in SECONDS out of whatever shape a mirror posts.
+   *
+   * Confirmed shapes, all from first-party sources:
+   *   PLAYER_EVENT  data.currentTime / data.duration          VidKing, VidEasy, VidFast,
+   *                                                           111Movies, VidLink, Smashy
+   *   PLAYER_EVENT  data.player_progress / player_duration    the whole VidSrc family
+   *   MEDIA_DATA    data.progress.watched / .duration         Vidora
+   *   MEDIA_DATA    data[<id>].progress.watched / .duration   VidLink, Cinemaos, VidFast
+   *
+   * Two traps this deliberately avoids:
+   *  - VidKing's TV MEDIA_DATA carries progress.watched/TOTAL counting EPISODES, not
+   *    seconds. Requiring a `duration` (never `total`) rejects it, and the real
+   *    per-episode seconds are picked up from show_progress instead.
+   *  - VidKing's and 111Movies' PLAYER_EVENT `progress` is a PERCENTAGE. It is never
+   *    read as a position; only currentTime is.
+   */
+  function readPosition(msg) {
+    const body = (msg && msg.data) || msg;
+    if (!body || typeof body !== 'object') return null;
+    const pick = (t, d) => (num(t) != null && num(d) > 0) ? { t: num(t), d: num(d) } : null;
+
+    let hit = pick(body.currentTime, body.duration)
+           || pick(body.player_progress, body.player_duration);
+    if (hit) return hit;
+    if (body.progress) hit = pick(body.progress.watched, body.progress.duration);
+    if (hit) return hit;
+
+    // MEDIA_DATA keyed by content id ("550", "m550", "t1399"). One level deep only.
+    for (const k in body) {
+      const v = body[k];
+      if (!v || typeof v !== 'object') continue;
+      if (v.progress) {
+        hit = pick(v.progress.watched, v.progress.duration);
+        if (hit) return hit;
+        // TV: the seconds live per episode, under show_progress["s2e5"].
+        const sp = v.show_progress;
+        if (sp && typeof sp === 'object' && watchNow && watchNow.season) {
+          const ep = sp['s' + watchNow.season + 'e' + watchNow.episode];
+          if (ep && ep.progress) {
+            hit = pick(ep.progress.watched, ep.progress.duration);
+            if (hit) return hit;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   let watchNow = null;
   function playerOrigin() {
     const fr = document.getElementById('player-iframe');
@@ -543,10 +649,9 @@
     let d = ev.data;
     if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
     if (!d || typeof d !== 'object') return;
-    const body = d.data || d;
-    let t = num(body.currentTime), dur = num(body.duration);
-    if (t == null && body.progress) { t = num(body.progress.watched); dur = num(body.progress.duration); }
-    if (t == null || !(dur > 0)) return;
+    const pos = readPosition(d);
+    if (!pos) return;
+    const t = pos.t, dur = pos.d;
     progRecord(Object.assign({}, watchNow, { t: t, d: dur, src: 'provider' }));
     markTracked(watchNow.source);   // it just proved it — promote it
   });
@@ -620,7 +725,7 @@
           ${on ? ICON.bookmarkFill : ICON.bookmark}
         </button>
         <div class="card-hover">
-          <button class="ch-play" data-nav="#/watch/${type}/${item.id}" tabindex="-1" aria-hidden="true">${ICON.play}</button>
+          <button class="ch-play" data-nav="${watchHref(type, item.id)}" tabindex="-1" aria-hidden="true">${ICON.play}</button>
           <div class="ch-cap"><div class="ch-title">${esc(title)}</div><div class="ch-meta">${y || ''}${rating ? ' · ★ ' + rating : ''}</div></div>
         </div>
       </div>
@@ -675,6 +780,8 @@
           <span class="ep-fill" style="width:${pct}%"></span>
         </div>
         <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} \u00b7 ${at}</div></div>
+        <button class="cw-x" data-unwatch="${esc(r.k)}" tabindex="${IS_TV ? '0' : '-1'}"
+                aria-label="Remove ${esc(r.title || 'this title')} from Continue watching">${ICON.x}</button>
       </div>`;
     }).join('');
     return `<section class="rail">
@@ -729,7 +836,7 @@
             <span class="rank-num">${i + 1}</span>
             <div class="poster">
               <img loading="lazy" src="${img(it.poster_path, 'w342')}" onerror="this.src='${PLACEHOLDER}'" alt="${esc(it.title || it.name)}">
-              <div class="card-hover"><button class="ch-play" data-nav="#/watch/${type}/${it.id}" tabindex="-1" aria-hidden="true">${ICON.play}</button></div>
+              <div class="card-hover"><button class="ch-play" data-nav="${watchHref(type, it.id)}" tabindex="-1" aria-hidden="true">${ICON.play}</button></div>
             </div>
           </div>`;
         }).join('')}</div>
@@ -805,7 +912,7 @@
         </div>
         <p class="bb-ovw">${esc(ov)}${(it.overview || '').length > 200 ? '…' : ''}</p>
         <div class="bb-cta">
-          <button class="btn primary lg" data-nav="#/watch/${type}/${it.id}">${ICON.play} Play</button>
+          <button class="btn primary lg" data-nav="${watchHref(type, it.id)}">${ICON.play} Play</button>
           <button class="btn glass lg" data-nav="#/${type}/${it.id}">${ICON.info} More Info</button>
           <button class="btn glass icon" data-wl="${it.id}" data-type="${type}" aria-pressed="${on}" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">${on ? ICON.check : ICON.plus}</button>
         </div>
@@ -1145,34 +1252,43 @@
       let html = `<div class="detail-hero">
         <div class="bg" style="background-image:url('${img(d.backdrop_path, 'w1280')}')"></div>
         <div class="scrim"></div>
-        <div class="detail-body">
-          <div class="poster"><img src="${img(d.poster_path, 'w500')}" alt="${esc(title)}" onerror="this.src='${PLACEHOLDER}'"></div>
-          <div class="info">
-            ${logoUrl
-              ? `<img class="detail-logo" src="${logoUrl}" alt="${esc(title)}" onerror="this.style.display='none';var h=this.nextElementSibling;if(h)h.style.display='block'"><h1 style="display:none">${esc(title)} ${y ? `<span class="muted" style="font-weight:600">(${y})</span>` : ''}</h1>`
-              : `<h1>${esc(title)} ${y ? `<span class="muted" style="font-weight:600">(${y})</span>` : ''}</h1>`}
-            ${d.tagline ? `<p class="tagline">${esc(d.tagline)}</p>` : ''}
-            <div class="metarow">
-              <span class="pill rating">${ICON.star}${d.vote_average ? d.vote_average.toFixed(1) : '\u2014'}</span>
-              ${runtime ? `<span class="pill">${esc(runtime)}</span>` : ''}
-              ${y ? `<span class="pill">${y}</span>` : ''}
-              ${d.status ? `<span class="pill">${esc(d.status)}</span>` : ''}
-            </div>
-            <div class="genre-row">${gEls}</div>
-            <div class="cta">
-              <button class="btn primary" data-nav="#/watch/${type}/${d.id}">${ICON.play} Watch now</button>
-              ${trailer ? `<button class="btn" data-trailer="${trailer.key}">▶ Trailer</button>` : ''}
-              <button class="btn ${on ? 'primary' : ''}" data-wl="${d.id}" data-type="${type}" id="detail-wl">
-                ${on ? ICON.bookmarkFill : ICON.bookmark} ${on ? 'In watchlist' : 'Watchlist'}
-              </button>
-            </div>
+        <div class="dv-stage">
+          <div class="dv-kicker">${isTV ? 'Series' : 'Film'}${y ? ' \u00b7 ' + y : ''}${runtime ? ' \u00b7 ' + esc(runtime) : ''}</div>
+          ${logoUrl
+            ? `<img class="detail-logo" src="${logoUrl}" alt="${esc(title)}" onerror="this.style.display='none';var h=this.nextElementSibling;if(h)h.style.display='block'"><h1 class="dv-title" style="display:none">${esc(title)}</h1>`
+            : `<h1 class="dv-title">${esc(title)}</h1>`}
+          ${d.tagline ? `<p class="dv-tagline">${esc(d.tagline)}</p>` : ''}
+          <div class="dv-cta cta">
+            <button class="btn primary" data-nav="${watchHref(type, d.id)}">${ICON.play} ${watchLabel(type, d.id)}</button>
+            ${trailer ? `<button class="btn glass" data-trailer="${trailer.key}">▶ Trailer</button>` : ''}
+            <button class="btn ${on ? 'primary' : 'glass'}" data-wl="${d.id}" data-type="${type}" id="detail-wl">
+              ${on ? ICON.bookmarkFill : ICON.bookmark} ${on ? 'In watchlist' : 'Watchlist'}
+            </button>
           </div>
         </div>
       </div>`;
 
-      html += `<div class="section"><h3>Overview</h3><p class="overview">${esc(d.overview || 'No overview available.')}</p>
-        ${director ? `<p class="muted" style="margin-top:12px"><b style="color:var(--text)">Director:</b> ${esc(director)}</p>` : ''}
-        ${creators ? `<p class="muted"><b style="color:var(--text)">Created by:</b> ${esc(creators)}</p>` : ''}</div>`;
+      // Body: prose on the left at a readable measure, reference material on the
+      // right. The poster lives here now -- useful for recognition, but no longer
+      // covering a quarter of the artwork it was pasted on top of.
+      html += `<div class="dv-body">
+        <div class="dv-main">
+          <h3>Overview</h3>
+          <p class="overview">${esc(d.overview || 'No overview available.')}</p>
+          <div class="genre-row">${gEls}</div>
+        </div>
+        <aside class="dv-facts">
+          <img class="dv-poster" src="${img(d.poster_path, 'w500')}" alt="" loading="lazy" onerror="this.style.display='none'">
+          <dl>
+            <dt>Rating</dt><dd class="dv-rate">${ICON.star}${d.vote_average ? d.vote_average.toFixed(1) : '\u2014'}${d.vote_count ? ` <span class="muted">(${d.vote_count.toLocaleString()})</span>` : ''}</dd>
+            ${director ? `<dt>Director</dt><dd>${esc(director)}</dd>` : ''}
+            ${creators ? `<dt>Created by</dt><dd>${esc(creators)}</dd>` : ''}
+            ${runtime ? `<dt>${isTV ? 'Length' : 'Runtime'}</dt><dd>${esc(runtime)}</dd>` : ''}
+            ${d.status ? `<dt>Status</dt><dd>${esc(d.status)}</dd>` : ''}
+            ${(d.release_date || d.first_air_date) ? `<dt>Released</dt><dd>${esc(d.release_date || d.first_air_date)}</dd>` : ''}
+          </dl>
+        </aside>
+      </div>`;
 
       // TV seasons
       if (isTV) {
@@ -1333,6 +1449,22 @@
     if (cfg.activeSource >= sources.length) cfg.activeSource = 0;
     const src = sources[cfg.activeSource];
 
+    // The season's episode list: the NAME of what is playing (the header only ever
+    // said "S2 E5", which tells you nothing about which episode you are on), and the
+    // strip below the player. Cached per season, so stepping through episodes with
+    // Next does not refetch the same list every time.
+    let seasonData = null;
+    if (isTV) {
+      const sk = 'season:' + id + ':' + season;
+      seasonData = itemCache[sk] || null;
+      if (!seasonData) {
+        try { seasonData = await tmdb('/tv/' + id + '/season/' + season); itemCache[sk] = seasonData; }
+        catch (e) { seasonData = null; }   // header degrades to S/E, strip is omitted
+      }
+    }
+    const seasonEps = (seasonData && seasonData.episodes) || [];
+    const epMeta = seasonEps.find(x => x.episode_number === episode) || null;
+
     // Episode bounds. TMDB tells us how many episodes each season actually has, so a
     // Next button running off the end -- or a hand-typed ?s=/?e= -- is answerable
     // instead of framing a mirror for an episode that was never made.
@@ -1346,6 +1478,14 @@
     // detail fetch must not turn a working episode into an error page.
     const missing = isTV && seasonList.length > 0 && (!seasonMeta || (epCount > 0 && episode > epCount));
     const hasNextEp = isTV && (epCount ? episode < epCount : true);
+
+    // Where to reopen the mirror. Declared at FUNCTION scope, not inside the branch
+    // that builds the frame: switchTo() below reads it when the viewer changes mirror
+    // mid-episode, and a block-scoped const left that throwing ReferenceError.
+    // Only a position a MIRROR reported is used to seek -- the wall-clock estimate is
+    // good enough to draw a bar with, but would drop the viewer at the wrong moment.
+    const seen = progGet(type, id, isTV ? season : null, isTV ? episode : null);
+    const resumeAt = (seen && seen.src === 'provider' && !progDone(seen)) ? (seen.t || 0) : 0;
 
     let frameInner;
     if (missing) {
@@ -1368,7 +1508,7 @@
         <button class="btn primary" id="quick-add">Save source &amp; play</button>
       </div></div>`;
     } else {
-      const url = buildSourceUrl(src, type, id, imdb, season, episode);
+      const url = buildSourceUrl(src, type, id, imdb, season, episode, resumeAt);
       const sandbox = cfg.blockPlayerAds ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"' : '';
       frameInner = `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
     }
@@ -1392,6 +1532,34 @@
                    : `<button class="btn sm" disabled>Next \u203a</button>`}
       </div>` : '';
 
+    // Change episode without leaving the player. Same idea as the server room right
+    // below it: the thing you most often want next is one press away, and on a remote
+    // it is a single D-pad row rather than a trip back to the show page.
+    const epStrip = (isTV && seasonEps.length) ? `
+      <div class="rail-head" style="margin:26px 0 12px">
+        <h2 style="font-size:16px">Episodes <span class="muted" style="font-weight:600;font-size:13px">\u00b7 Season ${season}</span></h2>
+        <button class="btn sm ghost" data-nav="#/tv/${id}">All seasons</button>
+      </div>
+      <div class="ep-strip" id="ep-strip">${seasonEps.map(ep => {
+        const pr = progGet('tv', id, season, ep.episode_number);
+        const done = progDone(pr);
+        const cur = ep.episode_number === episode;
+        const pct = (pr && pr.pct > 0.01) ? Math.round(Math.min(1, pr.pct) * 100) : 0;
+        return `<button class="epx${cur ? ' on' : ''}${done ? ' watched' : ''}"
+                data-nav="#/watch/tv/${id}?s=${season}&e=${ep.episode_number}"
+                aria-current="${cur}"
+                aria-label="${cur ? 'Now playing: ' : ''}Episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}${done ? ', watched' : ''}">
+          <span class="epx-thumb">
+            <img loading="lazy" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+            ${pct ? `<span class="ep-fill" style="width:${pct}%"></span>` : ''}
+            ${done ? `<span class="ep-tick">${ICON.check}</span>` : ''}
+            ${cur ? `<span class="epx-now">${ICON.play}</span>` : ''}
+          </span>
+          <span class="epx-n">E${ep.episode_number}</span>
+          <span class="epx-t">${esc(ep.name || '')}</span>
+        </button>`;
+      }).join('')}</div>` : '';
+
     const roomTiles = sources.map((s, i) => `
       <button class="mirror ${i === cfg.activeSource ? 'on' : ''}${isTracked(s.name) ? ' tracked' : ''}"
               data-src="${i}" data-mirror-name="${esc(s.name || '')}" aria-pressed="${i === cfg.activeSource}">
@@ -1405,7 +1573,10 @@
       <div class="player-shell">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
           <button class="icon-btn" data-nav="#/${type}/${id}" title="Back to details" aria-label="Back to details">${ICON.back}</button>
-          <div style="font-weight:800;font-size:18px">${esc(title)}${isTV ? ` <span class="muted">· S${season} E${episode}</span>` : ''}</div>
+          <div class="pl-head" style="min-width:0">
+            <div class="pl-title">${esc(title)}</div>
+            ${isTV ? `<div class="pl-sub">S${season} \u00b7 E${episode}${epMeta && epMeta.name ? ' \u00b7 <b>' + esc(epMeta.name) + '</b>' : ''}</div>` : ''}
+          </div>
           ${epNav}
         </div>
         <div class="player-frame">${frameInner}${IS_TV && src ? `<button class="player-enter" id="player-enter" aria-label="Control the player with the remote">
@@ -1428,8 +1599,10 @@
           <button class="btn sm ghost" id="toggle-sandbox" aria-pressed="${!!cfg.blockPlayerAds}"
                   title="Restrict what the embedded player is allowed to do (may break some mirrors)">
             ${cfg.blockPlayerAds ? '🛡 Player locked down' : '🛡 Lock down player'}</button>
-          <button class="btn sm ghost" id="tv-mode" title="Fill the screen — for casting / screen-mirroring to a TV">⛶ TV mode</button>
+          <button class="btn sm ghost" id="movie-mode" title="Fill this window">⛶ Movie mode</button>
+          <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.tv} TV mode</button>
         </div>
+        ${epStrip}
         ${sources.length ? `
         <div class="rail-head" style="margin:26px 0 12px">
           <h2 style="font-size:16px">Server room <span class="muted" style="font-weight:600;font-size:13px">· ${sources.length} mirrors</span></h2>
@@ -1455,7 +1628,11 @@
       cfg.activeSource = i; saveConfig();
       const s2 = sources[i];
       const fr2 = document.getElementById('player-iframe');
-      if (fr2) { releasePlayerFocus(); fr2.setAttribute('tabindex', '-1'); fr2.src = buildSourceUrl(s2, type, id, imdb, season, episode); }
+      if (fr2) { releasePlayerFocus(); fr2.setAttribute('tabindex', '-1'); fr2.src = buildSourceUrl(s2, type, id, imdb, season, episode, resumeAt); }
+      // The mirror changed under the same watch session. Without this the next
+      // position report is credited to whichever mirror happened to be active when
+      // the page rendered -- which would hand the Verified badge to the wrong one.
+      if (watchNow) watchNow.source = s2.name;
       const lbl = document.querySelector('.source-bar .lbl');
       if (lbl) lbl.innerHTML = 'Now playing: <b style="color:var(--text)">' + esc(s2.name) + '</b>';
       if (room) room.querySelectorAll('.mirror').forEach((el, idx) => {
@@ -1485,10 +1662,18 @@
       cfg.activeSource = cfg.sources.length - 1; saveConfig();
       watchView(type, id, params);
     };
+    const mm = $('#movie-mode');
+    if (mm) mm.onclick = () => toggleCinema(false);   // fills the window
     const tv = $('#tv-mode');
-    if (tv) tv.onclick = toggleCinema;
+    if (tv) tv.onclick = () => toggleCinema(true);    // fills the screen
     const fr = $('#player-iframe');
     if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
+    // Land the strip on the episode you are actually watching, not on E1.
+    const strip = $('#ep-strip');
+    if (strip) {
+      const on = strip.querySelector('.epx.on');
+      if (on) { try { on.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) {} }
+    }
     nativeSetPlayer(!!fr);
     // Start tracking position for this exact episode. Runtime is the denominator the
     // wall-clock fallback needs; the mirror overrides it the moment it posts its own.
@@ -1508,7 +1693,7 @@
       }
       if (b.dataset.vol) { nativeSend('vol:' + b.dataset.vol); return; }
       if (b.id === 'tvc-pointer') { cursorOn(); return; }
-      if (b.id === 'tvc-full') { toggleCinema(); return; }
+      if (b.id === 'tvc-full') { toggleCinema(true); return; }
     };
     const pe = $('#player-enter');
     if (pe) pe.onclick = cursorOn;
@@ -1535,13 +1720,26 @@
       if (t2 && !t2.contains(document.activeElement)) t2.classList.add('faded');
     }, 3000);
   }
-  function enterCinema() {
+  /**
+   * Two different "bigger" requests, which used to be one button.
+   *
+   *   wantScreen = false  MOVIE MODE. The player fills the WINDOW. Pure CSS, no
+   *                       permission, no gesture requirement, and the rest of the
+   *                       desktop stays usable around it.
+   *   wantScreen = true   TV MODE. The player fills the SCREEN, via real
+   *                       requestFullscreen.
+   *
+   * On a TV the window IS the screen, so the distinction is invisible there and the
+   * remote only ever gets one control.
+   */
+  function enterCinema(wantScreen) {
     const frame = $('.player-frame'); if (!frame) return;
     frame.classList.add('cinema'); document.body.classList.add('cinema-on');
+    document.body.classList.toggle('cinema-screen', !!wantScreen);
     if (!$('#cinema-exit')) {
       const ex = document.createElement('button');
       ex.id = 'cinema-exit'; ex.className = 'cinema-exit'; ex.innerHTML = ICON.x + ' Exit';
-      ex.setAttribute('aria-label', 'Exit TV mode');
+      ex.setAttribute('aria-label', wantScreen ? 'Exit TV mode' : 'Exit movie mode');
       ex.onclick = exitCinema; frame.appendChild(ex);
       // Top hot-zone: reliably re-reveals the control on hover/tap even though the
       // cross-origin <iframe> swallows pointer events over the video itself.
@@ -1556,8 +1754,13 @@
     revealCinema();  // start visible, then fade after 3s
     // requestFullscreen returns a promise; try/catch alone leaves an unhandled
     // rejection whenever the gesture requirement is not met.
-    const rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
-    if (rq) { try { Promise.resolve(rq.call(frame)).catch(() => {}); } catch (e) {} }
+    if (wantScreen) {
+      const rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
+      if (rq) { try { Promise.resolve(rq.call(frame)).catch(() => {}); } catch (e) {} }
+    } else if (document.fullscreenElement) {
+      // Stepping down from TV mode to Movie mode.
+      try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (e) {}
+    }
   }
   function exitCinema() {
     cursorOff();
@@ -1569,12 +1772,20 @@
     }
     const frame = $('.player-frame'); if (frame) frame.classList.remove('cinema');
     document.body.classList.remove('cinema-on');
+    document.body.classList.remove('cinema-screen');
     const ex = $('#cinema-exit'); if (ex) ex.remove();
     const hot = $('#cinema-hot'); if (hot) hot.remove();
     if (document.fullscreenElement) { try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (e) {} }
     releasePlayerFocus();   // hand D-pad focus back to our UI
   }
-  function toggleCinema() { (document.body.classList.contains('cinema-on') ? exitCinema : enterCinema)(); }
+  // Pressing the mode you are already in leaves; pressing the OTHER one switches to it
+  // rather than dropping you all the way out and making you press again.
+  function toggleCinema(wantScreen) {
+    const on = document.body.classList.contains('cinema-on');
+    const screen = document.body.classList.contains('cinema-screen');
+    if (on && screen === !!wantScreen) return exitCinema();
+    return enterCinema(wantScreen);
+  }
 
   // TV: hand keyboard/D-pad focus to the cross-origin player so the remote drives
   // playback. We can't script inside a cross-origin iframe, so once focus is in it
@@ -1792,14 +2003,27 @@
     if (!document.fullscreenElement && document.body.classList.contains('cinema-on')) exitCinema();
   });
 
-  function buildSourceUrl(src, type, id, imdb, season, episode) {
+  // The two mirrors that document a start-position parameter. Everything else simply
+  // starts from the beginning -- there is no generic way to seek a cross-origin player.
+  const RESUME_PARAM = { 'VidSrcMe': 'startAt', 'VidSrc RU': 'startAt', 'VidSrc SU': 'startAt',
+                         'Vsrc': 'startAt', 'VidKing': 'progress' };
+
+  function buildSourceUrl(src, type, id, imdb, season, episode, resumeAt) {
     let tpl = (type === 'tv' ? src.tv : src.movie) || src.movie || src.tv || '';
-    return tpl
+    tpl = tpl
       .replace(/\{id\}|\{tmdbId\}|\{externalId\}/g, id)   // source site uses tmdbId / externalId
       .replace(/\{imdb\}/g, imdb || id)
       .replace(/\{season\}/g, season || 1)
       .replace(/\{episode\}/g, episode || 1)
       .replace(/\{color\}|\{primaryColor\}/g, (cfg.accent || '#f5c518').replace('#', ''));
+    // Hand the mirror our saved position so it opens where the viewer stopped rather
+    // than at 0:00. Only where the provider documents the parameter, and never for
+    // something already finished.
+    const rp = src && RESUME_PARAM[src.name];
+    if (rp && resumeAt > 30) {
+      tpl += (tpl.indexOf('?') >= 0 ? '&' : '?') + rp + '=' + Math.floor(resumeAt);
+    }
+    return tpl;
   }
 
   /* ---------- Watchlist ---------- */
@@ -1904,7 +2128,16 @@
       });
     }
 
-    const cp = $('#ga-copy'); if (cp) cp.onclick = () => { try { navigator.clipboard.writeText($('#ga-url').textContent); } catch (e) {} toast('Copied'); };
+    const cp = $('#ga-copy');
+    if (cp) cp.onclick = () => {
+      const text = $('#ga-url').textContent;
+      let p = null;
+      try { p = navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) { p = null; }
+      // Only claim success once the write actually resolved. On a refusal, say so and
+      // leave the address on screen to copy by hand.
+      if (p && p.then) p.then(() => toast('Copied'), () => toast('Could not copy — select the address above'));
+      else toast('Could not copy — select the address above');
+    };
     const sv = $('#ga-save'); if (sv) sv.onclick = () => { cfg.apkShortUrl = $('#ga-short').value.trim(); saveConfig(); toast('Saved'); getAppView(); };
     const rs = $('#ga-reset'); if (rs) rs.onclick = () => { cfg.apkShortUrl = ''; saveConfig(); toast('Using the auto short link'); getAppView(); };
   }
@@ -1993,6 +2226,10 @@
     $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
   }
 
+  // Closing a modal must also drop pointer mode — openTrailer hands the remote to the
+  // cursor, and the Back handler closes the modal and returns before reaching it.
+  function modalCursorReset() { if (document.body.classList.contains('cursor-on')) cursorOff(); }
+
   function modalMount(back) {
     back._opener = document.activeElement;
     const heading = back.querySelector('.mh h3');
@@ -2023,6 +2260,7 @@
   }
   function closeModal(back) {
     if (!back || !back.parentNode) return;
+    modalCursorReset();   // a trailer hands the remote to the pointer; take it back
     if (back._esc) { document.removeEventListener('keydown', back._esc); back._esc = null; }
     const opener = back._opener;
     back.parentNode.removeChild(back);
@@ -2064,6 +2302,10 @@
 
   function route() {
     routeSeq++;
+    // Pointer mode was only ever cleared by exitCinema, so closing a trailer modal (or
+    // navigating from the watch page) left body.cursor-on set: the D-pad kept driving
+    // an invisible cursor around a page that had no player on it.
+    cursorOff();
     tvGlideStop();               // the nodes we were animating are about to be replaced
     watchEnd();                  // stop counting against whatever was playing
     // Re-measure the scrollbar once this view has actually painted. The boot
@@ -2239,10 +2481,37 @@
     }
     const tr = e.target.closest('[data-trailer]');
     if (tr) { openTrailer(tr.dataset.trailer); return; }
+    // A plain <a href> to another origin: Electron denies window.open outright and
+    // Android's main-frame guard swallows it, so the TMDB attribution the API terms
+    // require was dead on both. Route every off-origin anchor through the one path
+    // that works per platform.
+    const ext = e.target.closest('a[href]');
+    if (ext && /^https?:/i.test(ext.getAttribute('href') || '')) {
+      try {
+        if (new URL(ext.href, location.href).origin !== location.origin) {
+          e.preventDefault(); openExternal(ext.href); return;
+        }
+      } catch (e2) { /* unparseable href — fall through to normal handling */ }
+    }
     const oe = e.target.closest('[data-openext]');
     if (oe) { e.preventDefault(); openExternal(oe.dataset.openext); return; }
     const ra = e.target.closest('[data-rail]');
     if (ra) { const track = ra.parentElement.querySelector('.track'); if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: 'smooth' }); return; }
+    // A resume rail that can only grow is one you stop trusting: a title you abandoned
+    // sits at the front for good. Handled BEFORE [data-nav], because the control lives
+    // inside a card that navigates.
+    const uw = e.target.closest('[data-unwatch]');
+    if (uw) {
+      e.preventDefault(); e.stopPropagation();
+      progForget(uw.dataset.unwatch);
+      const card = uw.closest('.card'), rail = uw.closest('.rail');
+      if (card) card.remove();
+      // The last one out takes the rail with it, rather than leaving a bare heading.
+      if (rail && !rail.querySelector('.card')) rail.remove();
+      if (IS_TV) { tvInvalidate(); tvFocusFirst(); }
+      toast('Removed from Continue watching');
+      return;
+    }
     const nav = e.target.closest('[data-nav]');
     if (nav) { e.preventDefault(); go(nav.dataset.nav); return; }
     // click outside search closes suggestions
@@ -2389,7 +2658,11 @@
     } else if (st.s === 'ready') {
       html = '<p class="upd-t">Update ready.</p><button class="btn sm primary" id="upd-go">Restart &amp; update</button>';
     } else if (st.s === 'done') {
-      html = '<p class="upd-t">Installer opened — confirm it on screen to finish.</p>';
+      // Native reports 'done' the moment startActivity() does not throw, which is
+      // BEFORE the user has accepted or cancelled. Cancelling used to leave a message
+      // with no button; offer the retry here rather than making them find the header.
+      html = '<p class="upd-t">Installer opened — confirm it on screen to finish.</p>' +
+             '<button class="btn sm" id="upd-go">Install again</button>';
     } else if (st.s === 'error') {
       html = '<p class="upd-t upd-warn">' + esc(st.msg || 'Update failed.') + '</p>' +
              '<button class="btn sm primary" id="upd-go">Try again</button>';
@@ -2398,6 +2671,9 @@
              '<button class="btn sm primary" id="upd-go">' +
              (updCanInstall() ? 'Download &amp; install' : IS_DESKTOP ? 'Download &amp; restart' : 'How to install') +
              '</button>';
+    } else if (st.s === 'portable') {
+      html = '<p class="upd-t">This is the portable build — it updates by downloading a new copy.</p>' +
+             '<button class="btn sm" id="upd-rel">Open Releases</button>';
     } else if (st.s === 'none') {
       html = '<p class="upd-t">You are on the latest version.</p><button class="btn sm" id="upd-check">Check again</button>';
     } else {
@@ -2406,6 +2682,8 @@
     box.innerHTML = html;
     box.dataset.s = st.s;
     const c = box.querySelector('#upd-check'); if (c) c.onclick = () => checkForUpdate(true, true);
+    const rl = box.querySelector('#upd-rel');
+    if (rl) rl.onclick = () => openExternal('https://github.com/' + REPO + '/releases/latest');
     const g = box.querySelector('#upd-go');    if (g) g.onclick = updInstall;
     if (IS_TV) tvInvalidate();
     // The button we were standing on has just been replaced. Put the ring on its
@@ -2444,6 +2722,9 @@
       else if (d.state === 'ready') { updSet('ready', { v: d.version }); updReady(d.version); updInteractive = false; }
       else if (d.state === 'none') { updSet('none'); if (updInteractive) updNone(); updInteractive = false; }
       else if (d.state === 'error') { updSet('error', { msg: 'Update failed — ' + (d.message || 'try again later.') }); if (updInteractive) updError('Update failed — ' + (d.message || 'try again later.')); updInteractive = false; }
+      // The portable exe cannot replace itself; electron-updater would install a
+      // second, separate copy and leave this one running and stale.
+      else if (d.state === 'portable') updSet('portable');
     });
   }
 
@@ -2874,6 +3155,19 @@
     }
     if (target) tvFocusEl(target.el);
   }
+
+  // '/' jumps to search, the way every content app on a desktop does. Never on TV
+  // (no keyboard there, and the key is itself a D-pad target) and never while the
+  // caret is already sitting in a field.
+  document.addEventListener('keydown', (e) => {
+    if (IS_TV || e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+    const inp = $('#search-input');
+    if (!inp) return;
+    e.preventDefault();
+    try { inp.focus(); inp.select(); } catch (e2) {}
+  });
 
   if (IS_TV) {
     document.body.classList.add('tv');

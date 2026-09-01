@@ -32,6 +32,14 @@
      old 2px --accent-2 outline measured 2.54:1 against Daylight's white surfaces,
      below the 3:1 WCAG 2.4.11 minimum for a focus indicator. The inner band guarantees
      an edge against whatever is underneath, in every theme. body.tv scales it up. */
+  /* ---- Signature accent -----------------------------------------------------
+     One two-tone sweep, reused everywhere something is ACTIVE or PROGRESSING, so
+     the app has a mark of its own instead of a flat swatch. Deliberately used only
+     where nothing sits on top of it - rules, bars, underlines, glows. Text never
+     rides the gradient, because the far end of it has no contrast guarantee, and
+     the themes each swap --accent and --accent-2 independently. */
+  --accent-grad: linear-gradient(120deg, var(--accent) 0%, var(--accent-2) 100%);
+  --accent-glow: 0 0 34px -8px color-mix(in srgb, var(--accent) 70%, transparent);
   --ring: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent);
   --ring-glow: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent), 0 0 22px -6px var(--accent);
   /* The badges over poster art sit on a near-black scrim in EVERY theme, so they need
@@ -49,7 +57,12 @@
   --shadow: 0 12px 40px rgba(0,0,0,.45);
   --maxw: 1400px;
   --header-h: 62px;
-  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Reserved for things that should sound like a title, never for UI or body text:
+     a high-contrast serif is beautiful at 40px and tiring at 13. The fallbacks are
+     chosen to still be SERIF, so the hierarchy survives even when the webfont does
+     not load - a sans fallback would quietly erase the whole idea. */
+  --font-display: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
 }
 
 /* ---------- Themes (set via data-theme on <html>) ---------- */
@@ -225,7 +238,9 @@ body::before {
 /* ---------- Billboard hero (rotating title-art) ---------- */
 .billboard {
   position: relative; width: var(--bleed-w); margin-left: var(--bleed-ml); margin-top: -22px; margin-bottom: 10px;
-  height: min(82vh, 760px); min-height: 460px; overflow: hidden; background: var(--bg);
+  height: min(82vh, 760px); min-height: 460px; overflow: hidden;
+  /* No background: the art is masked out at the bottom, so anything painted here
+     would be a flat band that the page's ambient gradient does not match. */
 }
 /* An off slide is transparent but still laid out, so its full-size Play / More Info
    / Save buttons stayed clickable AND focusable — five slides meant fifteen live
@@ -241,7 +256,7 @@ body::before {
 @keyframes bbzoom { from { transform: scale(1.1); } to { transform: scale(1); } }
 .bb-scrim { position: absolute; inset: 0; background:
   linear-gradient(90deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.6) 34%, rgba(6,8,12,.05) 62%, transparent 100%),
-  linear-gradient(0deg, var(--bg) 1%, rgba(6,8,12,.5) 24%, transparent 60%); }
+  linear-gradient(0deg, transparent 0%, rgba(6,8,12,.62) 20%, rgba(6,8,12,.28) 42%, transparent 64%); }
 .bb-info { position: absolute; left: 0; bottom: 9%; z-index: 2; max-width: min(620px, 84vw); padding: 0 clamp(18px, 5vw, 56px); }
 .bb-logo { max-height: 168px; max-width: min(420px, 72vw); object-fit: contain; object-position: left bottom; margin-bottom: 18px; filter: drop-shadow(0 6px 22px rgba(0,0,0,.6)); }
 .bb-title { color: #fff; font-size: clamp(30px, 5.4vw, 62px); font-weight: 900; letter-spacing: -1.5px; line-height: 1; margin: 0 0 18px; text-shadow: 0 3px 22px rgba(0,0,0,.6); }
@@ -479,8 +494,13 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
    blending to the page background at the very bottom. Keeps white hero text
    readable in light themes too. */
 .detail-hero .scrim { position: absolute; inset: 0; background:
-  linear-gradient(0deg, var(--bg) 0%, rgba(8,10,14,.82) 13%, rgba(8,10,14,.55) 48%, rgba(8,10,14,.22) 78%, transparent 100%); }
-.detail-body { position: relative; max-width: var(--maxw); margin: 0 auto; padding: 60px 22px 0; display: flex; gap: 30px; align-items: flex-end; }
+  linear-gradient(0deg, transparent 0%, rgba(8,10,14,.80) 16%, rgba(8,10,14,.55) 48%, rgba(8,10,14,.22) 78%, transparent 100%); }
+/* .detail-body is NO LONGER the movie/TV detail layout - that moved to .dv-stage +
+   .dv-body. It is still the PERSON page (personView in app.js), which is the one
+   place a portrait-beside-biography row is genuinely the right shape. Deleting this
+   rule outright collapsed that page to a full-bleed stack, so it stays - scoped by
+   intent rather than by accident. */
+.detail-body { position: relative; max-width: var(--maxw); margin: 0 auto; padding: 22px; display: flex; gap: 30px; align-items: flex-start; }
 .detail-body .poster { width: 220px; flex: none; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); background: var(--bg-3); aspect-ratio: 2/3; }
 .detail-body .info { flex: 1; min-width: 0; padding-bottom: 6px; }
 .detail-body h1 { font-size: clamp(26px, 3.4vw, 42px); font-weight: 900; margin: 0 0 8px; letter-spacing: -.6px; color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,.6); }
@@ -663,6 +683,69 @@ textarea:focus-visible, [tabindex]:focus-visible {
 /* ---------- Mobile bottom tab bar ---------- */
 .bottom-nav { display: none; }
 
+/* Dismiss a Continue-watching entry. Sits over the poster corner, revealed on
+   hover/focus on a pointer device and always visible on TV, where there is no hover
+   and the remote needs a real target. */
+.card .cw-x {
+  position: absolute; top: 6px; left: 6px; z-index: 7;
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(11,13,18,.82); color: #fff; border: 1px solid rgba(255,255,255,.25);
+  cursor: pointer; opacity: 0; transition: opacity .15s, background .15s;
+}
+.card .cw-x svg { width: 13px; height: 13px; }
+.card .cw-x:hover { background: rgba(11,13,18,.95); }
+@media (hover: hover) { .card:hover .cw-x { opacity: 1; } }
+.card .cw-x:focus-visible { opacity: 1; }
+body.tv .card .cw-x { opacity: 1; width: 34px; height: 34px; }
+
+/* ---------- Player header + episode strip ----------
+   The header used to read "Grey's Anatomy - S2 E5", which names everything except
+   the episode. Title on top, the episode's own name under it. */
+.pl-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pl-title { font-weight: 800; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-sub { font-size: 13.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-sub b { color: var(--text); font-weight: 700; }
+
+/* Change episode without leaving playback. One horizontal row, like the server room
+   below it, so on a remote it is a single D-pad row rather than a trip back out. */
+.ep-strip {
+  display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 12px;
+  scrollbar-width: none; touch-action: pan-x;
+}
+.ep-strip::-webkit-scrollbar { height: 0; display: none; }
+.epx {
+  flex: none; width: 190px; display: flex; flex-direction: column; gap: 6px;
+  background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
+  color: var(--muted); font: inherit; transition: color .15s;
+}
+.epx-thumb {
+  position: relative; display: block; aspect-ratio: 16/9; border-radius: 10px;
+  overflow: hidden; background: var(--bg-3); border: 1px solid var(--border);
+}
+.epx-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.epx-n { font-size: 12px; font-weight: 800; color: var(--accent); letter-spacing: .3px; }
+.epx-t {
+  font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.epx.watched .epx-t { color: var(--muted); }
+.epx.watched .epx-thumb img { opacity: .5; }
+.epx.on .epx-thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.epx.on .epx-t { color: var(--text); }
+/* "This is the one playing" — the ring alone reads as focus, not as state. */
+.epx-now {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: rgba(0,0,0,.45); color: var(--accent);
+}
+.epx-now svg { width: 26px; height: 26px; }
+@media (hover: hover) { .epx:hover .epx-t { color: var(--accent); } }
+
+body.tv .ep-strip { scroll-behavior: auto; gap: clamp(12px, 1.6vw, 20px); }
+body.tv .epx { width: clamp(190px, 20vw, 280px); }
+body.tv .epx-t { font-size: clamp(13px, 2.1vh, 16px); }
+body.tv .pl-title { font-size: clamp(18px, 3vh, 26px); }
+body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
+
 /* ---------- Verified mirrors ----------
    "Verified" is demonstrated, not claimed: the badge appears only for a mirror that
    has actually reported a real playback position to us. */
@@ -805,6 +888,12 @@ body.tv .player-enter:focus .pe-pill { outline: 4px solid #fff; outline-offset: 
 .cinema-exit.faded { opacity: 0; pointer-events: none; }
 /* transparent top strip that re-reveals the Exit control on hover/tap */
 .cinema-hot { position: fixed; top: 0; left: 0; right: 0; height: 20vh; z-index: 305; }
+/* In pointer mode this 20vh strip sits ABOVE the player and hit-tests the synthetic
+   MotionEvent before the embed does, so taps in the top fifth of the screen -- where a
+   player keeps its title bar, cast and settings controls -- silently did nothing. The
+   pointer has its own on-screen hint and Back exits, so the hover-reveal is expendable
+   while it is up; reaching the embed is not. */
+body.tv.cursor-on .cinema-hot { pointer-events: none; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
@@ -1105,8 +1194,9 @@ body.tv.cinema-on .tv-controls {
 body.tv.cinema-on .tv-controls.faded { opacity: 0; pointer-events: none; }
 /* The pointer owns the D-pad outright while it is up. */
 body.tv.cursor-on .tv-controls { display: none; }
-/* One full-screen control, not two: the source bar's "TV mode" does the same job. */
-body.tv .source-bar #tv-mode { display: none; }
+/* On a TV the window IS the screen, so "Movie mode" and "TV mode" would be the same
+   button twice -- and the control bar's Full screen already covers it. */
+body.tv .source-bar #tv-mode, body.tv .source-bar #movie-mode { display: none; }
 body.tv .tv-controls-hint { display: block; font-size: 13px; margin: 10px 0 0; max-width: 78ch; line-height: 1.5; }
 
 /* ---- Focus: cards ---------------------------------------------------------- */
@@ -1209,3 +1299,384 @@ body.tv .bb-dot.on { width: 44px; border-radius: 9px; }
 body.tv .bb-dot:focus, body.tv .bb-dot.tv-focus {
   box-shadow: var(--ring-glow); transform: scale(1.15); background: var(--accent);
 }
+
+/* ============================================================================
+   PRESENTATION LAYER — depth, material and motion
+   ----------------------------------------------------------------------------
+   Everything above this point is structure and colour. This block is what makes
+   it feel like a product rather than a wireframe, and it is deliberately kept
+   in one place so it can be reasoned about (or removed) as a unit.
+
+   Three rules it holds to:
+
+   1. MOTION IS SUBORDINATE TO CONTENT. Entrances are short (< 500ms), move a
+      small distance, and never delay interaction — nothing here gates a click.
+   2. TV IS EXEMPT. body.tv opts OUT of every entrance animation. The D-pad row
+      model measures getBoundingClientRect(), and elements mid-transform report
+      positions they are about to leave; a 10-foot UI needs a ring that lands
+      exactly, not one that arrives poetically. TV keeps the material work.
+   3. REDUCED MOTION IS HONOURED. The global prefers-reduced-motion block already
+      flattens durations; the entrances below additionally start at their END
+      state so nothing is left invisible if an animation never runs.
+   ========================================================================== */
+
+:root {
+  /* Two curves, used consistently. Entrances decelerate hard (things arrive and
+     settle); interactions are symmetric and quick. */
+  --ease-enter: cubic-bezier(.22, 1, .36, 1);
+  --ease-ui: cubic-bezier(.4, 0, .2, 1);
+  --dur-enter: 460ms;
+  --dur-ui: 180ms;
+}
+
+/* ---- Ambient depth ---------------------------------------------------------
+   A single flat #0b0d12 reads as "unstyled". Two very low-opacity blobs — one
+   accent-tinted, one cool — give the page a light source without ever competing
+   with the artwork. Fixed, so scrolling moves content THROUGH the light. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(900px 520px at 12% -8%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    radial-gradient(1100px 700px at 92% 8%, color-mix(in srgb, var(--accent-2) 9%, transparent), transparent 72%);
+}
+/* color-mix is Chromium 111+. Older WebViews just get the base background, which
+   is the current look — no fallback needed beyond doing nothing. */
+@supports not (background: color-mix(in srgb, red 5%, transparent)) {
+  body::before { background: none; }
+}
+
+/* ---- Entrances -------------------------------------------------------------
+   The page had no arrival at all: content simply existed. A short rise+fade
+   gives navigation a direction, and staggering the rails makes the home page
+   assemble rather than appear. */
+@keyframes rd-rise { from { opacity: 0; transform: translate3d(0, 14px, 0); } to { opacity: 1; transform: none; } }
+@keyframes rd-fade { from { opacity: 0; } to { opacity: 1; } }
+
+body:not(.tv) .billboard,
+body:not(.tv) .page-title,
+body:not(.tv) .detail-hero { animation: rd-fade var(--dur-enter) var(--ease-enter) both; }
+
+/* Rails assemble in sequence. Capped at six: past that the last rail would wait
+   long enough to read as jank rather than choreography. */
+body:not(.tv) .rows > .rail,
+body:not(.tv) .rows > section { animation: rd-rise var(--dur-enter) var(--ease-enter) both; }
+body:not(.tv) .rows > *:nth-child(1) { animation-delay: 40ms; }
+body:not(.tv) .rows > *:nth-child(2) { animation-delay: 100ms; }
+body:not(.tv) .rows > *:nth-child(3) { animation-delay: 160ms; }
+body:not(.tv) .rows > *:nth-child(4) { animation-delay: 210ms; }
+body:not(.tv) .rows > *:nth-child(5) { animation-delay: 250ms; }
+body:not(.tv) .rows > *:nth-child(n+6) { animation-delay: 280ms; }
+/* Grids get one collective arrival — 60 individually-staggered posters is a
+   slot machine, not an interface. */
+body:not(.tv) .grid { animation: rd-rise var(--dur-enter) var(--ease-enter) both; }
+
+/* ---- Material: buttons -----------------------------------------------------
+   Flat fills are the single biggest "unfinished" tell. Every button now has a
+   light source: a top-edge highlight, a gradient body, and a shadow that grows
+   on hover so the control lifts toward the cursor. */
+.btn {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
+  box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 2px 8px rgba(0,0,0,.22);
+  transition: transform var(--dur-ui) var(--ease-ui),
+              box-shadow var(--dur-ui) var(--ease-ui),
+              background-color var(--dur-ui) var(--ease-ui),
+              filter var(--dur-ui) var(--ease-ui);
+}
+.btn.primary {
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 88%, white), var(--accent));
+  box-shadow: 0 1px 0 rgba(255,255,255,.35) inset,
+              0 6px 18px -6px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+@media (hover: hover) {
+  .btn:hover { box-shadow: 0 1px 0 rgba(255,255,255,.07) inset, 0 10px 26px -8px rgba(0,0,0,.6); }
+  .btn.primary:hover {
+    box-shadow: 0 1px 0 rgba(255,255,255,.4) inset,
+                0 12px 30px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+  }
+}
+.btn:active { transform: translateY(1px) scale(.985); }
+
+/* The hero's glass buttons should actually look like glass. */
+.btn.glass {
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  border-color: rgba(255,255,255,.18);
+  background-image: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04));
+}
+
+/* ---- Material: pills and chips --------------------------------------------- */
+.detail-body .metarow .pill, .bb-meta .pill-type, .bb-meta .pill.rating {
+  background-image: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.01));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.chip { transition: transform var(--dur-ui) var(--ease-ui), color var(--dur-ui) var(--ease-ui), border-color var(--dur-ui) var(--ease-ui); }
+@media (hover: hover) { .chip:hover { transform: translateY(-1px); } }
+
+/* ---- Header: dissolve over the hero, solidify on scroll --------------------
+   A permanently opaque bar sitting on the artwork is what made the hero look
+   cropped. Over the hero it is a gradient that fades to nothing; once the page
+   scrolls it becomes real chrome with a hairline. */
+header.top {
+  background: linear-gradient(180deg, rgba(6,8,12,.82) 0%, rgba(6,8,12,.45) 55%, transparent 100%);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-bottom: 1px solid transparent;
+  transition: background var(--dur-ui) var(--ease-ui),
+              backdrop-filter var(--dur-ui) var(--ease-ui),
+              border-color var(--dur-ui) var(--ease-ui),
+              box-shadow var(--dur-ui) var(--ease-ui);
+}
+header.top.scrolled {
+  background: var(--chrome-bg);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border-bottom-color: var(--border);
+  box-shadow: 0 8px 30px rgba(0,0,0,.35);
+}
+/* Not on the home hero only — every page gets the same treatment, so the bar
+   behaves consistently instead of looking broken off-Home. */
+body:not(.home) header.top:not(.scrolled) { background: var(--chrome-bg); }
+
+/* ---- Hero: dissolve into the page ------------------------------------------
+   The artwork used to stop on a hard horizontal line. A mask feathers the last
+   fifth of the billboard into the page background regardless of what colour the
+   image is there, which a fixed gradient overlay cannot do on bright art. */
+/* The mask goes on the ARTWORK layer, never on .billboard: masking the whole
+   element also faded the title, the meta pills and the Play button, which sit in the
+   bottom quarter — the hero looked washed out and the primary action looked disabled.
+   Fading only .bb-bg dissolves the image into the billboard's own background, which
+   is already the page colour, so the seam disappears and the text stays at full
+   strength. */
+.bb-bg {
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 94%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 94%);
+}
+/* The slide's own art drifts almost imperceptibly, so a still frame is never
+   quite still. 24s, 3% — any more and it reads as a bug. */
+@media (prefers-reduced-motion: no-preference) {
+  body:not(.tv) .bb-slide.on .bb-bg { animation: rd-drift 24s ease-in-out infinite alternate; }
+}
+@keyframes rd-drift { from { transform: scale(1.03) translate3d(0,0,0); } to { transform: scale(1.08) translate3d(-1.2%, -1%, 0); } }
+
+/* ---- Cards -----------------------------------------------------------------
+   A caption scrim gives every poster a consistent base regardless of artwork,
+   and the lift gets a real curve instead of a linear nudge. */
+.card .poster::after {
+  content: ''; position: absolute; inset: auto 0 0 0; height: 38%;
+  background: linear-gradient(180deg, transparent, rgba(0,0,0,.5));
+  opacity: 0; transition: opacity var(--dur-ui) var(--ease-ui); pointer-events: none;
+}
+@media (hover: hover) {
+  .card:hover .poster::after { opacity: 1; }
+  .card .poster { transition: transform 260ms var(--ease-enter), box-shadow 260ms var(--ease-enter); }
+}
+
+/* ---- Rail headings ---------------------------------------------------------
+   19px semi-bold reads like a form label. Larger, tighter, with a short accent
+   rule so a section announces itself. */
+.rail h2, .section > h3 {
+  font-size: clamp(19px, 1.5vw, 23px); letter-spacing: -.4px; font-weight: 800;
+}
+.rail .rail-head h2 { position: relative; padding-left: 14px; }
+.rail .rail-head h2::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 4px; height: 1em; border-radius: 99px;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 35%, transparent));
+}
+
+/* ---- Focus ------------------------------------------------------------------
+   NO blanket !important here, deliberately. The material work above adds a
+   box-shadow to .btn, but `.btn` (0,1,0) already loses to `button:focus-visible`
+   (0,1,1) and to `body.tv .tv-focus` (0,2,0), so the ring wins on its own. An
+   !important would have flattened the nav bar's combined shadow -- ring PLUS the
+   inset "you are here" underline -- leaving a focused Home and a focused Movies
+   pixel-identical on TV, which is the exact bug that underline was added to fix. */
+
+/* Anything that animates in must be visible if the animation never runs. */
+@media (prefers-reduced-motion: reduce) {
+  body:not(.tv) .billboard, body:not(.tv) .page-title, body:not(.tv) .detail-hero,
+  body:not(.tv) .rows > .rail, body:not(.tv) .rows > section, body:not(.tv) .grid {
+    animation: none !important; opacity: 1 !important; transform: none !important;
+  }
+}
+
+
+/* ---- Detail hero -----------------------------------------------------------
+   Same hard horizontal cut the billboard had: the backdrop simply stopped and the
+   page began. .scrim already darkens toward the bottom, but on bright artwork a
+   translucent overlay cannot reach the page colour — the seam survives. Feather the
+   IMAGE itself (never the container, which holds the title and the CTAs) so the art
+   dissolves regardless of what is in it. */
+.detail-hero .bg {
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 88%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 88%);
+}
+/* Give the poster real weight: a long soft shadow plus a hairline so it reads as a
+   physical card sitting on the page rather than a pasted rectangle. */
+.detail-body .poster {
+  box-shadow: 0 30px 60px -20px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.07);
+  transition: transform 320ms var(--ease-enter), box-shadow 320ms var(--ease-enter);
+}
+@media (hover: hover) {
+  .detail-body .poster:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 40px 70px -20px rgba(0,0,0,.9), 0 0 0 1px rgba(255,255,255,.12);
+  }
+}
+
+/* ---- Navigation ------------------------------------------------------------
+   The active pill was a flat block. An accent underline plus a soft wash reads as
+   "you are here" without shouting, and the inactive items get a hover that moves. */
+nav.main a { position: relative; transition: color var(--dur-ui) var(--ease-ui), background var(--dur-ui) var(--ease-ui); }
+body:not(.tv) nav.main a.active {
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent) 12%, transparent));
+  color: var(--text);
+}
+body:not(.tv) nav.main a.active::after {
+  content: ''; position: absolute; left: 12px; right: 12px; bottom: 3px; height: 2px;
+  border-radius: 99px; background: var(--accent);
+}
+
+/* ---- Search ---------------------------------------------------------------- */
+.search-wrap input {
+  transition: border-color var(--dur-ui) var(--ease-ui), box-shadow var(--dur-ui) var(--ease-ui), background var(--dur-ui) var(--ease-ui);
+}
+.search-wrap input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* ---- Rails: edge fade ------------------------------------------------------
+   A row that ends in a hard vertical slice at the viewport edge is the giveaway
+   that content is being cut rather than continuing. Fading the trailing edge says
+   "there is more" without an arrow. Pointer devices only — on TV the ring must stay
+   at full contrast wherever it lands. */
+@media (hover: hover) {
+  body:not(.tv) .rail-wrap {
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 92%, transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 92%, transparent 100%);
+  }
+}
+
+/* ---- Toast ----------------------------------------------------------------- */
+.toast {
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: 0 18px 50px -12px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+
+/* ============================================================================
+   TYPE — the display face, applied only to things that are titles
+   ========================================================================== */
+.bb-title, .detail-hero h1, .page-title, .rail h2, .section > h3, .modal .mh h3,
+.dv-title, .dv-main h3, .rail-head h2 {
+  font-family: var(--font-display);
+  font-weight: 400;              /* the serif carries weight through contrast, not mass */
+  letter-spacing: 0;             /* it is drawn with its own spacing; -.4px pinched it */
+}
+.bb-title { font-size: clamp(38px, 6vw, 82px); line-height: .95; }
+.page-title { font-size: clamp(30px, 4vw, 46px); }
+.rail h2, .section > h3, .dv-main h3 { font-size: clamp(22px, 1.7vw, 28px); }
+/* Small caps + tracking for the label-ish text next to a serif title reads as
+   editorial rather than as an unstyled span. */
+.dv-kicker, .bb-meta .pill-type {
+  font-family: var(--font); text-transform: uppercase;
+  letter-spacing: .14em; font-size: 11.5px; font-weight: 700;
+}
+
+/* ============================================================================
+   SIGNATURE ACCENT — the same sweep, everywhere something is active
+   ========================================================================== */
+.rail .rail-head h2::before { background: var(--accent-grad); }
+.prog-bar i { background: var(--accent-grad); }
+.ep-fill { background: var(--accent-grad); }
+body:not(.tv) nav.main a.active::after { background: var(--accent-grad); }
+.bb-dot.on { background: var(--accent-grad); }
+.spill.on { background: var(--accent-grad); border-color: transparent; }
+.upd-box .ub-bar i { background: var(--accent-grad); }
+/* The one place the sweep is allowed to glow: the primary action. The FILL stays a
+   contrast-safe accent-to-lighter-accent so the dark ink on it never drops below
+   its ratio; the gradient appears as light AROUND the button, not under the text. */
+.btn.primary { box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, var(--accent-glow); }
+@media (hover: hover) {
+  .btn.primary:hover {
+    box-shadow: 0 1px 0 rgba(255,255,255,.45) inset,
+                0 0 44px -6px color-mix(in srgb, var(--accent) 85%, transparent);
+  }
+}
+/* A hairline of the sweep under the header once it is real chrome. */
+header.top.scrolled { border-bottom-color: transparent; position: sticky; }
+header.top.scrolled::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: var(--accent-grad); opacity: .5;
+}
+
+/* ============================================================================
+   DETAIL PAGE — editorial layout
+   ----------------------------------------------------------------------------
+   The backdrop is the stage and the title owns it. Reference material (poster,
+   rating, credits) moves out of the artwork and into a column beside the prose,
+   where it can be read instead of decorated around.
+   ========================================================================== */
+.dv-stage {
+  position: relative; max-width: var(--maxw); margin: 0 auto;
+  padding: clamp(120px, 22vh, 260px) 22px clamp(28px, 5vh, 56px);
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 14px;
+}
+.dv-kicker { color: var(--accent); }
+.dv-title { margin: 0; font-size: clamp(40px, 6.4vw, 92px); line-height: .92; color: #fff;
+  text-shadow: 0 4px 30px var(--hero-text-shadow); max-width: 16ch; }
+.detail-logo { max-height: clamp(90px, 15vh, 190px); max-width: min(560px, 76vw); object-fit: contain;
+  object-position: left bottom; filter: drop-shadow(0 6px 26px rgba(0,0,0,.65)); }
+/* Italic, in the display face: a tagline is a line of copy, not a subtitle. */
+.dv-tagline {
+  font-family: var(--font-display); font-style: italic;
+  font-size: clamp(17px, 1.7vw, 24px); color: var(--text-soft);
+  margin: 0; max-width: 46ch; text-shadow: 0 2px 14px var(--hero-text-shadow);
+}
+.dv-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+
+.dv-body {
+  max-width: var(--maxw); margin: 0 auto; padding: clamp(24px, 4vh, 46px) 22px 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: clamp(28px, 4vw, 64px);
+  align-items: start;
+}
+.dv-main h3 { margin: 0 0 12px; }
+/* A measure, not a full-width paragraph: 100+ characters a line is where prose
+   stops being readable and starts being wallpaper. */
+.dv-main .overview { max-width: 68ch; font-size: 16.5px; line-height: 1.7; color: var(--text-soft); }
+.dv-main .genre-row { margin-top: 18px; }
+
+.dv-facts { display: flex; flex-direction: column; gap: 18px; }
+.dv-poster {
+  width: 100%; border-radius: 14px; display: block; background: var(--bg-3);
+  box-shadow: 0 24px 50px -18px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.07);
+}
+.dv-facts dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; align-items: baseline; }
+.dv-facts dt {
+  font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted-2); white-space: nowrap;
+}
+.dv-facts dd { margin: 0; font-size: 14.5px; font-weight: 600; color: var(--text); }
+.dv-rate { display: inline-flex; align-items: center; gap: 6px; }
+.dv-rate svg { width: 14px; height: 14px; color: var(--accent); }
+
+/* One column once the sidebar would squeeze the prose; the poster leads. */
+@media (max-width: 900px) {
+  .dv-body { grid-template-columns: 1fr; }
+  .dv-facts { flex-direction: column; }
+  .dv-poster { width: 160px; }
+}
+
+/* TV: the stage scales with viewport height like the rest of the 10-foot layout,
+   and the facts column is wide enough to read from a sofa. */
+body.tv .dv-title { font-size: clamp(40px, 8vh, 88px); }
+body.tv .dv-tagline { font-size: clamp(16px, 2.6vh, 24px); }
+body.tv .dv-kicker { font-size: clamp(11px, 1.8vh, 15px); }
+body.tv .dv-stage { padding-top: clamp(120px, 26vh, 300px); }
+body.tv .dv-body { grid-template-columns: minmax(0, 1fr) clamp(260px, 24vw, 380px); }
+body.tv .dv-main .overview { font-size: clamp(16px, 2.4vh, 21px); }
+body.tv .dv-facts dd { font-size: clamp(15px, 2.2vh, 19px); }
+body.tv .dv-facts dt { font-size: clamp(11px, 1.6vh, 14px); }
