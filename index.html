@@ -20,15 +20,16 @@
   <link rel="preconnect" href="https://image.tmdb.org" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <!-- Two faces doing two jobs. Instrument Serif is the VOICE: high-contrast,
-       editorial, the register a film magazine uses for a title - and the single
-       fastest way to stop looking like every other app that shipped with Inter.
-       Manrope is the INTERFACE: geometric, slightly warm, quiet at small sizes.
+  <!-- Two faces doing two jobs. Archivo is the VOICE: a tight, heavy grotesque
+       built for headlines - authority rather than elegance, which is what a title
+       card in front of a film needs. Manrope is the INTERFACE: geometric, quiet at
+       small sizes, and different enough in the letterforms that the two never read
+       as the same font at different weights.
        display=swap so a slow or blocked font never delays first paint; both have
        real fallback stacks in styles.css for offline and for TV WebViews that
        cannot reach Google Fonts at all. -->
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=30" />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=31" />
   <!-- Apply the saved theme before first paint to avoid a flash (key must match app.js CONFIG_KEY) -->
   <script>try{var c=JSON.parse(localStorage.getItem('reeldeck.config.v5')||'{}');if(c&&c.theme){document.documentElement.setAttribute('data-theme',c.theme);}}catch(e){}</script>
 </head>
@@ -41,6 +42,6 @@
     <div>Not affiliated with any streaming provider.</div>
   </footer>
   <script src="assets/vendor/qrcode.js"></script>
-  <script src="app.js?v=30"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>

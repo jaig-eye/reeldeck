@@ -96,7 +96,31 @@ jobs:
           node scripts/build-web.js
           npx cap sync android
 
+      # Without a stable key each runner generates its own debug keystore, so every
+      # release is signed differently and Android refuses to install one over the
+      # last ("App not installed"). Decoded from a secret so the key never lives in
+      # the repository. If the secret is absent the build still succeeds -- it just
+      # produces an APK that cannot update an existing install, which is the old
+      # behaviour and is flagged in the log rather than failing the release.
+      - name: Restore signing key
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/reeldeck.jks"
+            echo "keystore=$RUNNER_TEMP/reeldeck.jks" >> "$GITHUB_OUTPUT"
+            echo "Signing with the shared release key."
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set - this APK will NOT be able to update an existing install."
+          fi
+
       - name: Build debug APK
+        env:
+          RELEASE_KEYSTORE: ${{ steps.signing.outputs.keystore }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x android/gradlew
           cd android && ./gradlew assembleDebug --no-daemon

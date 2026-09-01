@@ -322,14 +322,43 @@ public class MainActivity extends BridgeActivity {
                 InputStream in = null;
                 FileOutputStream out = null;
                 File apk = new File(getCacheDir(), "update.apk");
+                boolean handedOver = false;   // true once the installer has the file
                 try {
-                    c = (HttpURLConnection) new URL(url).openConnection();
-                    c.setInstanceFollowRedirects(true);
-                    c.setConnectTimeout(20000);
-                    c.setReadTimeout(30000);
-                    c.connect();
-                    if (c.getResponseCode() / 100 != 2) throw new Exception("HTTP " + c.getResponseCode());
-                    int total = c.getContentLength();
+                    // A stale part-file from an interrupted attempt must never be
+                    // handed to the installer as if it were this release.
+                    if (apk.exists() && !apk.delete()) throw new Exception("Could not clear the previous download.");
+
+                    // Redirects by hand. HttpURLConnection follows them automatically
+                    // ONLY within the same protocol, and the release URL hops
+                    // github.com -> release-assets.githubusercontent.com; the moment
+                    // one of those hops changes scheme the automatic path stops and
+                    // hands back a redirect BODY, which would be written out as a
+                    // few hundred bytes of HTML named update.apk.
+                    String at = url;
+                    for (int hop = 0; ; hop++) {
+                        if (hop > 5) throw new Exception("Too many redirects.");
+                        c = (HttpURLConnection) new URL(at).openConnection();
+                        c.setInstanceFollowRedirects(false);
+                        c.setConnectTimeout(20000);
+                        c.setReadTimeout(30000);
+                        c.setRequestProperty("Accept", "*/*");
+                        c.connect();
+                        int code = c.getResponseCode();
+                        if (code / 100 == 3) {
+                            String next = c.getHeaderField("Location");
+                            if (next == null) throw new Exception("Redirect with no destination.");
+                            at = new URL(new URL(at), next).toString();     // may be relative
+                            if (!at.startsWith("https://")) throw new Exception("Refusing a non-HTTPS redirect.");
+                            c.disconnect(); c = null;
+                            continue;
+                        }
+                        if (code / 100 != 2) throw new Exception("HTTP " + code);
+                        break;
+                    }
+
+                    long total = -1;
+                    try { total = Long.parseLong(c.getHeaderField("Content-Length")); } catch (Exception ignored) {}
+
                     in = c.getInputStream();
                     out = new FileOutputStream(apk);
                     byte[] buf = new byte[65536];
@@ -346,16 +375,31 @@ public class MainActivity extends BridgeActivity {
                         }
                     }
                     out.flush();
+                    out.getFD().sync();          // on disk before the installer reads it
                     out.close(); out = null;
+
+                    // A truncated APK does not fail loudly -- the installer reports
+                    // "package appears to be invalid", which reads like a bad build.
+                    // Catch it here, where we can say what actually happened.
+                    if (total > 0 && got != total) {
+                        throw new Exception("Download incomplete (" + got + " of " + total + " bytes).");
+                    }
+                    if (got < 100000) throw new Exception("Downloaded file is too small to be the app.");
+
                     install(apk);
+                    handedOver = true;
                 } catch (Exception e) {
                     String m = e.getMessage();
                     toWeb("upd:err:" + (m == null ? "Download failed." : m));
                 } finally {
                     downloading = false;
+                    // Close BEFORE deleting: a delete with the stream still open fails
+                    // silently on some filesystems and leaves the part-file behind for
+                    // the next attempt to trip over.
                     try { if (out != null) out.close(); } catch (Exception ignored) {}
                     try { if (in != null) in.close(); } catch (Exception ignored) {}
                     if (c != null) c.disconnect();
+                    if (!handedOver) { try { apk.delete(); } catch (Exception ignored) {} }
                 }
             }
         }).start();
