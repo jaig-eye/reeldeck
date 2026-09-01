@@ -18,3 +18,11 @@ android/local.properties
 .idea/
 *.iml
 *.log
+
+# Signing key material. The Android release key must NEVER be committed: it is what
+# lets an update install over an existing app, and anyone holding it can sign an APK
+# that replaces yours. It lives outside the repo and reaches CI as a secret.
+*.jks
+*.keystore
+*.b64
+keystore.properties

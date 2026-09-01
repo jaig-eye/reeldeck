@@ -120,6 +120,9 @@ jobs:
           RELEASE_KEYSTORE: ${{ steps.signing.outputs.keystore }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          # Optional: only needed if the key has its OWN password. Left unset, Gradle
+          # falls back to the store password, which is what keytool uses when you
+          # accept its offer to reuse it.
           RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x android/gradlew
