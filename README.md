@@ -129,6 +129,80 @@ What the desktop shell adds over the browser version:
 
 ---
 
+---
+
+## Watching on more than one device (sync & sign-in)
+
+By default Reeldeck keeps everything on the device you are using and talks to nobody
+but TMDB. Signing in is optional, and the app is fully usable without it — the first
+launch offers **Continue as guest** and never asks again.
+
+Sign in and four things follow you between your phone, your TV and your desktop:
+
+| | |
+|---|---|
+| Watchlist | the titles you bookmarked |
+| History | what you watched and when |
+| Resume points | including which episode of a series you are on |
+| Theme | the colour scheme, and nothing else from Settings |
+
+Deliberately **not** synced: everything else in Settings. The mirror list, the TMDB
+base URL and the APK short link all stay local, because a server that could rewrite
+them could point the player somewhere else, redirect your searches, or change the
+address the "Install on TV" page tells you to type. The theme is whitelisted as a
+single value, by id.
+
+### How signing in works
+
+It is the same flow a TV uses for Netflix or YouTube: the app shows a QR code and a
+short code, you approve it on your phone, and the app signs itself in.
+
+That is not a stylistic choice. Google returns `disallowed_useragent` to OAuth attempts
+from embedded WebViews, and both the phone build and the TV build are the same
+Capacitor WebView — so a conventional "Sign in with Google" button cannot work there.
+The OAuth **device flow** needs no redirect URI and no registered JavaScript origin, so
+one code path serves all four targets, with no Google SDK loaded into the app.
+
+There is no password and no email to type, which is the point: a TV remote is a
+terrible keyboard.
+
+### What is stored, and where
+
+Your data lives in a Cloudflare Worker backed by Upstash Redis — see
+[`worker/reeldeck-sync.js`](worker/reeldeck-sync.js), which is the whole server and is
+about 400 lines. It is a dumb blob store: one JSON document per account, last write
+wins. Every decision about merging two devices happens in the app, which means there is
+exactly one place that logic can be wrong and it is a place that can be tested without
+a network.
+
+The server holds the Google client secret and the key that derives your account id, so
+neither ever reaches a browser. It keeps no Google tokens at all — the refresh token is
+revoked seconds after sign-in, because Reeldeck only ever calls TMDB and a stored Google
+credential on a living-room TV would be worth more than the movie list it protects.
+
+### Be clear-eyed about the security model
+
+**Your account id is the credential.** There is no password, so anyone who obtains that
+id can read and write your watch history. It never appears in the interface, in a URL or
+in an error message, and it is derived with a keyed HMAC rather than a plain hash of
+your Google id — a plain hash would be computable by anyone who has ever run a Google
+sign-in button, since Google gives every app the same identifier for you.
+
+What is protected is a list of films. Treat it accordingly: this is not a bank, and it
+is not trying to be.
+
+### Running your own
+
+Nothing about this is specific to one deployment. `worker/reeldeck-sync.js` pastes
+straight into the Cloudflare dashboard editor with no build step, takes five secrets
+(two for Upstash, two for Google, one random pepper), and `SYNC_URL` near the top of
+`app.js` points at it. Both free tiers are enough for a household.
+
+If you would rather not attach a Google account at all, **Use a code from another
+device** does the same job by pairing two installs directly.
+
+---
+
 ## Mobile, installing as an app & casting to a TV
 
 ### It's a PWA — install it on your phone (no store, no APK needed)
@@ -217,6 +291,9 @@ moviestream/
   electron/
     main.js             # desktop wrapper: loopback server, ad-blocker, popup denial
     preload.js          # trusted "open external" bridge (top-frame only)
+  worker/
+    reeldeck-sync.js    # the ENTIRE sync backend: a Cloudflare Worker over Upstash.
+                        # Pastes into the dashboard editor; never shipped to the browser.
   scripts/
     serve.js            # correct-MIME static server for the browser/PWA build (`npm run serve`)
     make-icons.js       # regenerates the PNG icons (`npm run icons`)

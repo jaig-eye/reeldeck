@@ -70,6 +70,22 @@
   const PROG_KEY   = 'reeldeck.progress.v1';
   const HIST_KEY   = 'reeldeck.history.v1';
   const TRACK_KEY  = 'reeldeck.tracked.v1';
+  const TOMB_KEY   = 'reeldeck.tomb.v1';
+  // Deliberately NOT inside config.v5. Settings' Reset does
+  // `cfg = Object.assign({}, DEFAULTS)` and drops every key DEFAULTS does not
+  // name, so a uid living there would be destroyed permanently -- with no list
+  // endpoint and no recovery -- by a button whose own confirm text promises
+  // "Your watchlist is kept". loadConfig() re-merging DEFAULTS on every boot is
+  // a hostile place for a credential besides.
+  const SYNC_KEY   = 'reeldeck.sync.v1';
+  const SYNC_URL   = 'https://reeldeck.disisbo.workers.dev';
+
+  const TOMB_TTL   = 90 * 86400000;     // a deletion is remembered for 90 days
+  const TOMB_MAX   = 200;
+  const WATCH_MAX  = 1000;
+  const PROG_MAX   = 4000;
+  const FUTURE_SLACK = 86400000;        // 24h of clock slop tolerated before clamping
+  const BODY_MAX   = 480000;            // the Worker rejects at 512K; stop short of it
 
   // Mirror list lifted verbatim from the source site's own player module.
   // These are third-party embed providers — the app just frames them. Fully
@@ -115,11 +131,17 @@
     region:   'US',
     theme:    'midnight',
     accent:   '#f5c518',   // derived from the theme; used for the player {color} placeholder
-    // Install-on-TV: where the Android APK lives. apkShortUrl is an optional
-    // manual override; apkShortAuto is the auto-generated short link (cached,
-    // keyed by apkShortAutoFor so it regenerates only when apkUrl changes).
+    // Install-on-TV: where the Android APK lives.
+    //
+    // apkShortUrl now ships with our own permanent alias rather than starting empty
+    // and asking TinyURL for a fresh code. It points at .../releases/latest/download,
+    // so it keeps working for every future release without being regenerated -- and
+    // "reeldeck" is the difference between typing a word and typing "2acbxg5l" with
+    // a D-pad, which is the whole point of this screen.
+    // apkShortAuto is still the auto-generated fallback (cached, keyed by
+    // apkShortAutoFor) for anyone who clears the alias.
     apkUrl:   'https://github.com/jaig-eye/reeldeck/releases/latest/download/Reeldeck.apk',
-    apkShortUrl: '',
+    apkShortUrl: 'https://tinyurl.com/reeldeck',
     apkShortAuto: '',
     apkShortAutoFor: '',
     // OFF by default: the iframe sandbox trips "Iframe Sandbox Detected" on most
@@ -165,6 +187,11 @@
     DEFAULT_SOURCES.forEach(d => {
       if (!c.sources.some(s => s.name === d.name)) c.sources.push(Object.assign({}, d));
     });
+    // Same trap as the source table: a stored empty string is still a stored value,
+    // so Object.assign lets it win over a default that arrived in a later release.
+    // Anyone who installed before the permanent alias existed has apkShortUrl: '',
+    // and would have gone on auto-shortening forever.
+    if (!c.apkShortUrl) c.apkShortUrl = DEFAULTS.apkShortUrl || '';
     return c;
   }
   function saveConfig() {
@@ -217,7 +244,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.14';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.15';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -295,8 +322,12 @@
     '<g fill="#39415a"><path d="M171 210a34 34 0 100 68 34 34 0 000-68zm0 20a14 14 0 110 28 14 14 0 010-28z"/>' +
     '<rect x="96" y="300" width="150" height="10" rx="5"/><rect x="121" y="322" width="100" height="8" rx="4"/></g></svg>'
   );
+  // TMDB paths are "/<alnum-or-._->.<ext>" and nothing else -- see any /movie/{id}
+  // response. Anything else is not a poster, so it gets the placeholder rather than a
+  // chance to break out of the attribute it is about to be interpolated into.
+  const RX_IMGPATH = /^\/[A-Za-z0-9._-]{1,72}$/;
   function img(path, size) {
-    if (!path) return PLACEHOLDER;
+    if (!path || !RX_IMGPATH.test(path)) return PLACEHOLDER;
     return cfg.imgBase.replace(/\/+$/, '') + '/' + size + path;
   }
   function esc(s) {
@@ -305,6 +336,50 @@
   }
   function year(d) { return d ? String(d).slice(0, 4) : ''; }
   function runtimeStr(m) { if (!m) return ''; const h = Math.floor(m / 60), mm = m % 60; return (h ? h + 'h ' : '') + (mm ? mm + 'm' : ''); }
+
+  /**
+   * Runtime, filled in on hover or focus rather than up front.
+   *
+   * TMDB's LIST endpoints do not carry runtime -- only /movie/{id} and /tv/{id} do --
+   * so showing it on every card would mean one request per card on every page. This
+   * fetches once for the card actually being looked at, reuses itemCache so the
+   * detail page it is probably about to open costs nothing, and writes into whatever
+   * slots for that title are on screen.
+   */
+  const rtPending = {};
+  async function fillRuntime(type, id) {
+    const slots = document.querySelectorAll('.ch-rt[data-rt="' + type + ':' + id + '"]');
+    if (!slots.length) return;
+    let d = itemCache[ck(type, id)];
+    if (!d || (d.runtime === undefined && d.episode_run_time === undefined)) {
+      const key = type + ':' + id;
+      if (rtPending[key]) return;                 // one flight per title
+      rtPending[key] = 1;
+      try { d = await tmdb('/' + type + '/' + id); itemCache[ck(type, id)] = d; }
+      catch (e) { return; }
+      finally { delete rtPending[key]; }
+    }
+    const mins = type === 'tv'
+      ? ((d.episode_run_time && d.episode_run_time[0]) || 0)
+      : (d.runtime || 0);
+    const txt = type === 'tv'
+      ? ((d.number_of_seasons ? d.number_of_seasons + ' season' + (d.number_of_seasons === 1 ? '' : 's') : '') +
+         (mins ? ' \u00b7 ' + runtimeStr(mins) : ''))
+      : runtimeStr(mins);
+    if (!txt) return;
+    document.querySelectorAll('.ch-rt[data-rt="' + type + ':' + id + '"]')
+      .forEach(el => { el.textContent = ' \u00b7 ' + txt; });
+  }
+  function runtimeFor(card) {
+    if (!card) return;
+    const slot = card.querySelector('.ch-rt');
+    if (!slot || slot.textContent) return;        // already filled
+    const parts = (slot.dataset.rt || '').split(':');
+    if (parts.length === 2) fillRuntime(parts[0], parts[1]);
+  }
+  // Debounced: walking a rail with a remote would otherwise fire a request per card
+  // as the ring passes over it.
+  const runtimeSoon = debounce((card) => runtimeFor(card), 350);
   function debounce(fn, ms) { let t; return function () { clearTimeout(t); const a = arguments, c = this; t = setTimeout(() => fn.apply(c, a), ms); }; }
 
   let toastTimer;
@@ -330,6 +405,7 @@
      ------------------------------------------------------------ */
   const ICON = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+    menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
     bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg>',
     bookmarkFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg>',
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>',
@@ -346,7 +422,11 @@
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>',
     ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>',
     x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
-    download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>'
+    download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>',
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>',
+    logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 12H4m0 0l4-4m-4 4l4 4M14 4h5a1 1 0 011 1v14a1 1 0 01-1 1h-5"/></svg>',
+    devices: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="14" height="10" rx="1"/><rect x="17" y="9" width="5" height="11" rx="1"/><path d="M6 18h6"/></svg>',
+    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/></svg>'
   };
 
   /* ------------------------------------------------------------
@@ -366,15 +446,22 @@
   function toggleWatch(item, type) {
     const list = getWatch();
     const i = list.findIndex(x => x.id == item.id && x.type === type);
-    if (i >= 0) { list.splice(i, 1); setWatch(list); toast('Removed from watchlist'); return false; }
+    if (i >= 0) {
+      list.splice(i, 1); setWatch(list);
+      // A splice leaves no evidence, so a union merge would hand this straight back
+      // from any device that still has it. The tombstone is the evidence.
+      tombMark('w:' + type + ':' + item.id);
+      toast('Removed from watchlist'); syncFlush('unwatch'); return false;
+    }
     list.unshift({
       id: item.id, type,
       title: item.title || item.name,
       poster_path: item.poster_path,
       vote_average: item.vote_average,
-      date: item.release_date || item.first_air_date || ''
+      date: item.release_date || item.first_air_date || '',
+      at: now()
     });
-    setWatch(list); toast('Added to watchlist'); return true;
+    setWatch(list); toast('Added to watchlist'); syncFlush('watch'); return true;
   }
 
 
@@ -420,9 +507,9 @@
     return type === 'tv' ? ('tv:' + id + ':' + (s2 || 1) + ':' + (e2 || 1)) : ('movie:' + id);
   }
   function progPrune(p) {
-    const now = Date.now(); let changed = false;
+    const nowMs = now(); let changed = false;
     for (const k in p) {
-      if (k.indexOf('movie:') === 0 && (now - ((p[k] && p[k].at) || 0)) > MOVIE_TTL) { delete p[k]; changed = true; }
+      if (k.indexOf('movie:') === 0 && (nowMs - ((p[k] && p[k].at) || 0)) > MOVIE_TTL) { delete p[k]; changed = true; }
     }
     return changed;
   }
@@ -445,11 +532,12 @@
     // A wall-clock guess must never walk over a real timestamp from the player.
     if (o.src !== 'provider' && prev.src === 'provider') return;
     const pct = dur > 0 ? Math.max(0, Math.min(1, t / dur)) : (prev.pct || 0);
-    p[k] = { t: Math.round(t), d: Math.round(dur), pct: pct, at: Date.now(), src: o.src || prev.src || 'elapsed' };
+    p[k] = { t: Math.round(t), d: Math.round(dur), pct: pct, at: now(), src: o.src || prev.src || 'elapsed' };
     // Series-level pointer: which episode to drop the user back on.
-    if (o.type === 'tv') p['tv:' + o.id] = { s: +o.season || 1, e: +o.episode || 1, at: Date.now() };
+    if (o.type === 'tv') p['tv:' + o.id] = { s: +o.season || 1, e: +o.episode || 1, at: now() };
     progSave(p);
     histPush(o, pct);
+    syncMark();
   }
 
   function histAll() {
@@ -457,10 +545,25 @@
     catch (e) { return []; }
   }
   function histSave(h) { try { localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, HIST_MAX))); } catch (e) {} }
-  function histClear() { try { localStorage.removeItem(HIST_KEY); } catch (e) {} }
-  function progClear() { try { localStorage.removeItem(PROG_KEY); } catch (e) {} }
+  // Two epochs rather than several hundred tombstones. Without them, "I cleared my
+  // history and it came back" is a guaranteed bug the first time a second device syncs.
+  // The epoch is only stamped while signed in. A guest clearing their own history has
+  // no account to propagate it to -- and stamping anyway means that epoch is max'd into
+  // the account on first sign-in and then deletes rows from devices that had nothing to
+  // do with the clear, which is the same class of bug as importing the account's epoch
+  // into a guest's local rows.
+  function histClear() {
+    try { localStorage.removeItem(HIST_KEY); } catch (e) {}
+    if (!syncOn()) return;
+    const st = syncState(); st.clearedAt.hist = now(); saveSyncState(st);
+  }
+  function progClear() {
+    try { localStorage.removeItem(PROG_KEY); } catch (e) {}
+    if (!syncOn()) return;
+    const st = syncState(); st.clearedAt.prog = now(); saveSyncState(st);
+  }
   function relTime(ms) {
-    const sec = Math.max(0, (Date.now() - (ms || 0)) / 1000);
+    const sec = Math.max(0, (now() - (ms || 0)) / 1000);
     if (sec < 90) return 'just now';
     const m = sec / 60; if (m < 60) return Math.round(m) + 'm ago';
     const h = m / 60; if (h < 24) return Math.round(h) + 'h ago';
@@ -477,7 +580,7 @@
       title: o.title || old.title || '',
       poster_path: o.poster_path || old.poster_path || '',
       s: o.season || null, e: o.episode || null,
-      pct: pct, at: Date.now()
+      pct: pct, at: now()
     };
     if (i >= 0) h.splice(i, 1);
     h.unshift(row);
@@ -525,9 +628,14 @@
     // A series pointer with no episodes left behind it would keep aiming "Resume" at
     // an episode the user has explicitly dismissed.
     const m = /^tv:(\d+):/.exec(key);
-    if (m && !Object.keys(p).some(k => k.indexOf('tv:' + m[1] + ':') === 0)) delete p['tv:' + m[1]];
+    tombMark('p:' + key);
+    if (m && !Object.keys(p).some(k => k.indexOf('tv:' + m[1] + ':') === 0)) {
+      delete p['tv:' + m[1]];
+      tombMark('p:tv:' + m[1]);
+    }
     progSave(p);
     histSave(histAll().filter(r => r.k !== key));
+    syncFlush('forget');
   }
 
   /**
@@ -587,6 +695,1052 @@
   // is seeded on resemblance to another provider. MultiEmbed and AutoEmbed publish
   // nothing we could confirm and are deliberately absent -- they can still earn the
   // badge at runtime the first time they report a real position.
+  /* ============================================================
+     CROSS-DEVICE SYNC
+     ------------------------------------------------------------
+     The server (worker/reeldeck-sync.js) is a dumb blob store: it holds one JSON
+     document per uid and has no merge, no compare-and-swap and no delete. Every
+     reconciliation decision therefore lives here, which is deliberate -- it means
+     there is exactly one place the logic can be wrong, and it is a place that can
+     be tested without a network.
+
+     WHAT IS SYNCED: watchlist, watch progress, history, and the theme id.
+     WHAT IS NOT, and why it matters: nothing else from cfg. `sources[].movie` is
+     the URL the player frames, and the postMessage origin check validates against
+     whatever we chose to frame -- so a rewritten source list defeats that check by
+     construction. `tmdbBase` would redirect every search. `apkShortUrl` is painted
+     by getAppView() as a QR code and a type-in address under printed instructions
+     to allow unknown sources and click past Play Protect. Syncing cfg would turn a
+     leaked uid from "they can see what I watched" into "they can install software
+     on my television". The theme is whitelisted as a single field, by id, because
+     applyTheme() resolves it through THEMES.find(...) || THEMES[0] and an unknown
+     value can therefore only fall back, never inject.
+     ============================================================ */
+
+  function syncState() {
+    let st;
+    try { st = JSON.parse(localStorage.getItem(SYNC_KEY) || '{}'); } catch (e) { st = {}; }
+    if (!st || typeof st !== 'object' || Array.isArray(st)) st = {};
+    if (!st.clearedAt || typeof st.clearedAt !== 'object') st.clearedAt = { prog: 0, hist: 0 };
+    return Object.assign({
+      on: false, uid: '', kind: '', name: '',
+      lastSyncAt: 0, skew: 0, dirty: false, migrated: 0,
+      themeAt: 0, stall: '', lastErr: ''
+    }, st);
+  }
+  function saveSyncState(st) {
+    try { localStorage.setItem(SYNC_KEY, JSON.stringify(st)); } catch (e) {}
+  }
+  function syncOn() { const st = syncState(); return !!(st.on && st.uid); }
+
+  /**
+   * Wall clock corrected toward the server.
+   *
+   * Every `at` in every store is stamped by whichever device wrote it, and a TV with
+   * a year-fast clock would otherwise win every last-write-wins comparison forever.
+   * The correction is learned from /v1/push, which is the only call that returns the
+   * server's CURRENT time -- /v1/pull returns the timestamp of the last push, which
+   * is stale by construction and on an empty account is 0.
+   */
+  function now() { return Date.now() + (syncState().skew || 0); }
+  function learnSkew(serverAt, t0, t1) {
+    if (!(serverAt > 0)) return;
+    // The midpoint estimate assumes the local clock is monotone ACROSS the request. On
+    // a TV box with no RTC that is exactly what fails: the app syncs at its build date,
+    // Android's NTP client corrects the clock while the request is in flight, and the
+    // apparent round trip becomes years. syncCall aborts at 8s, so any legitimate RTT
+    // is bounded -- a longer one is a clock jump, not a measurement, and trusting it
+    // would put syncNow years ahead, where the same pass expires every tombstone (which
+    // resurrects every deletion account-wide) and every movie resume point, then
+    // pushes that.
+    const rtt = t1 - t0;
+    if (!(rtt >= 0 && rtt <= 15000)) return;
+    const est = serverAt - (t0 + (t1 - t0) / 2);
+    const st = syncState();
+    // 30s hysteresis. Without it, a couple of hundred milliseconds of network noise
+    // changes skew on every sync, which changes every stamp written, which changes
+    // the blob, which forces another push -- ping-pong through the back door.
+    if (Math.abs(est - (st.skew || 0)) > 30000) { st.skew = est; saveSyncState(st); }
+  }
+
+  /* ---- tombstones ---------------------------------------------------------
+     Deletion in every one of these stores is invisible: a splice, a `delete`, a
+     removeItem. A union merge therefore resurrects everything the user ever removed,
+     which reads as the app being broken. A tombstone is the minimum information that
+     makes "absent" distinguishable from "deleted": one namespaced key, one timestamp.
+     "p:" covers both the progress entry and the history row, which already share a
+     key -- progForget deletes both by it.
+     ------------------------------------------------------------------------- */
+  function tombAll() {
+    let t; try { t = JSON.parse(localStorage.getItem(TOMB_KEY) || '{}'); } catch (e) { t = {}; }
+    return (t && typeof t === 'object' && !Array.isArray(t)) ? t : {};
+  }
+  function tombSave(t) { try { localStorage.setItem(TOMB_KEY, JSON.stringify(t)); } catch (e) {} }
+  function tombMark(key) {
+    const t = tombAll();
+    t[key] = now();
+    tombSave(t);
+  }
+
+  /** 192 bits from the CSPRNG. Math.random() is a predictable PRNG and this id is,
+   *  on its own, the entire credential for an account on an unauthenticated server. */
+  function newAnonUid() {
+    const b = new Uint8Array(24);
+    crypto.getRandomValues(b);
+    return btoa(String.fromCharCode.apply(null, b))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');   // 32 chars
+  }
+
+  /**
+   * One-time migration: give existing watchlist entries a timestamp.
+   *
+   * The stamp is anchored in the deep past and ordered by array position, because
+   * toggleWatch unshifts -- so index 0 is newest and must get the largest value to
+   * preserve the order the user already sees. Date.now() would flatten that order into
+   * a single millisecond AND rank every legacy entry above genuinely recent remote
+   * additions.
+   *
+   * This cannot cause a mass deletion: the only thing that removes a stamped entry is
+   * a tombstone, and no tombstone can predate the release that introduced them. It
+   * also cannot cause a mass resurrection, because a resurrection needs a delete that
+   * left no trace -- and the deletes that left no trace are exactly the ones made
+   * before this code shipped, which are unrecoverable on any design. First sync is a
+   * documented union of both devices' pre-upgrade lists.
+   */
+  const MIG_EPOCH = 1577836800000;                 // 2020-01-01
+  function runMigrations() {
+    const st = syncState();
+    if (st.migrated >= 1) return;
+    const list = getWatch();
+    let touched = false;
+    list.forEach((e, i) => {
+      if (!(e.at > 0)) { e.at = MIG_EPOCH + (list.length - i); touched = true; }
+    });
+    if (touched) setWatch(list);
+    st.migrated = 1;
+    saveSyncState(st);
+  }
+
+  /* ---- the pure merge engine ---------------------------------------------
+     No I/O and no Date.now() below this line: `syncNow` is passed in, frozen for the
+     whole pass. That is what makes the whole thing unit-testable.
+     ------------------------------------------------------------------------- */
+  const RX_PROGKEY = /^(movie:\d{1,9}|tv:\d{1,9}(:\d{1,4}:\d{1,4})?)$/;
+  const RX_TOMBKEY = /^(w:(movie|tv):\d{1,9}|p:(movie:\d{1,9}|tv:\d{1,9}(:\d{1,4}:\d{1,4})?))$/;
+
+  /** A bad or missing stamp coerces to 0, never to now(). Coercing to now() would make
+   *  every malformed remote row the newest thing in the account, so a hostile blob of
+   *  `at:"lol"` rows would win every comparison and overwrite the user's whole library.
+   *  The upper clamp doubles as the clock-skew defence: it is applied to BOTH sides, so
+   *  a device with a wildly fast clock has its own inflated stamps pulled back too. */
+  function clampAt(v, ceiling, floorTo) {
+    const n = +v;
+    if (!isFinite(n) || !(n > 0)) return 0;
+    return n > ceiling ? floorTo : n;
+  }
+
+  /**
+   * The newest stamp anywhere in a blob.
+   *
+   * This exists because the clamp ceiling cannot be derived from the local clock alone.
+   * A cheap Android TV box with no RTC boots at its build date; if it syncs in the
+   * seconds before Android's NTP client corrects the clock, every stamp in the ACCOUNT
+   * is above `syncNow + 24h` and would be flattened to that wrong value -- and then
+   * pushed, permanently destroying the ordering of the whole account, expiring every
+   * tombstone at once (resurrecting every deletion) and rolling back both clear epochs.
+   * The account's own newest stamp is a far better lower bound on "now" than a clock
+   * that has never been set, so it is what the ceiling is built from.
+   */
+  function blobMaxAt(b) {
+    if (!b || typeof b !== 'object') return 0;
+    let m = 0;
+    const bump = (v) => { const n = +v; if (isFinite(n) && n > m) m = n; };
+    (Array.isArray(b.watch) ? b.watch : []).forEach(w => w && bump(w.at));
+    (Array.isArray(b.hist) ? b.hist : []).forEach(r => r && bump(r.at));
+    if (b.prog && typeof b.prog === 'object') for (const k in b.prog) { const v = b.prog[k]; if (v) bump(v.at); }
+    if (b.tomb && typeof b.tomb === 'object') for (const k in b.tomb) bump(b.tomb[k]);
+    if (b.clearedAt) { bump(b.clearedAt.prog); bump(b.clearedAt.hist); }
+    if (b.theme) bump(b.theme.at);
+    return m;
+  }
+
+  function sanitize(b, ceiling, floorTo) {
+    const out = { v: 1, watch: [], prog: {}, hist: [], tomb: {},
+                  clearedAt: { prog: 0, hist: 0 }, theme: { id: '', at: 0 } };
+    if (!b || typeof b !== 'object') return out;
+    const poster = p => (typeof p === 'string' && RX_IMGPATH.test(p)) ? p : '';
+    const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+
+    (Array.isArray(b.watch) ? b.watch : []).slice(0, WATCH_MAX).forEach(w => {
+      if (!w || typeof w !== 'object') return;
+      const type = (w.type === 'tv' || w.type === 'movie') ? w.type : null;
+      const id = parseInt(w.id, 10);
+      if (!type || !(id > 0)) return;
+      out.watch.push({ id: id, type: type, title: str(w.title, 200),
+                       poster_path: poster(w.poster_path),
+                       vote_average: (+w.vote_average || 0), date: str(w.date, 10),
+                       at: clampAt(w.at, ceiling, floorTo) });
+    });
+
+    const p = (b.prog && typeof b.prog === 'object' && !Array.isArray(b.prog)) ? b.prog : {};
+    let n = 0;
+    for (const k in p) {
+      if (++n > PROG_MAX + 1000) break;
+      if (!RX_PROGKEY.test(k)) continue;
+      const v = p[k];
+      if (!v || typeof v !== 'object') continue;
+      out.prog[k] = /^tv:\d+$/.test(k)
+        ? { s: Math.max(1, parseInt(v.s, 10) || 1), e: Math.max(1, parseInt(v.e, 10) || 1),
+            at: clampAt(v.at, ceiling, floorTo) }
+        : { t: Math.max(0, Math.round(+v.t) || 0), d: Math.max(0, Math.round(+v.d) || 0),
+            pct: Math.max(0, Math.min(1, +v.pct || 0)), at: clampAt(v.at, ceiling, floorTo),
+            src: v.src === 'provider' ? 'provider' : 'elapsed' };
+    }
+
+    (Array.isArray(b.hist) ? b.hist : []).slice(0, HIST_MAX).forEach(r => {
+      if (!r || typeof r !== 'object' || !RX_PROGKEY.test(String(r.k))) return;
+      const type = (r.type === 'tv' || r.type === 'movie') ? r.type : null;
+      const id = parseInt(r.id, 10);
+      if (!type || !(id > 0)) return;
+      out.hist.push({ k: String(r.k), id: id, type: type, title: str(r.title, 200),
+                      poster_path: poster(r.poster_path),
+                      s: r.s == null ? null : (parseInt(r.s, 10) || null),
+                      e: r.e == null ? null : (parseInt(r.e, 10) || null),
+                      pct: Math.max(0, Math.min(1, +r.pct || 0)),
+                      at: clampAt(r.at, ceiling, floorTo) });
+    });
+
+    const t = (b.tomb && typeof b.tomb === 'object' && !Array.isArray(b.tomb)) ? b.tomb : {};
+    let m = 0;
+    for (const k in t) {
+      if (++m > TOMB_MAX + 500) break;
+      if (!RX_TOMBKEY.test(k)) continue;
+      const at = clampAt(t[k], ceiling, floorTo);
+      if (at > 0) out.tomb[k] = at;
+    }
+
+    const c = (b.clearedAt && typeof b.clearedAt === 'object') ? b.clearedAt : {};
+    out.clearedAt = { prog: clampAt(c.prog, ceiling, floorTo), hist: clampAt(c.hist, ceiling, floorTo) };
+
+    // Theme by id against the known list -- the whitelist that makes this one field
+    // safe to accept from a server when the object it lives in is not.
+    const th = (b.theme && typeof b.theme === 'object') ? b.theme : {};
+    const tid = String(th.id == null ? '' : th.id);
+    out.theme = { id: THEMES.some(x => x.id === tid) ? tid : '', at: clampAt(th.at, ceiling, floorTo) };
+    return out;
+  }
+
+  /**
+   * Which of two progress entries survives.
+   *
+   * `src` outranks recency, and that ordering is load-bearing. progRecord() already
+   * refuses to let a wall-clock guess overwrite a value the player itself reported, so
+   * if the merge preferred newest-`at` the same two viewings would resolve differently
+   * depending on whether they happened on one device or two -- a resume position that
+   * no local action could produce. The merge has to be a function that COULD have been
+   * produced by a sequence of local writes. Secondarily: `src` states measurement
+   * quality, which no clock can forge, while `at` states recency, which a bad clock
+   * wrecks -- so the field trusted most is the one hardest to get wrong.
+   */
+  function pickProg(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    if (a.s !== undefined || b.s !== undefined) {        // series pointer: no src
+      if (a.s === undefined) return b;
+      if (b.s === undefined) return a;
+      if (a.at !== b.at) return a.at > b.at ? a : b;
+      return (a.s * 1000 + a.e) >= (b.s * 1000 + b.e) ? a : b;
+    }
+    const ap = a.src === 'provider', bp = b.src === 'provider';
+    if (ap !== bp) return ap ? a : b;
+    if (a.at !== b.at) return a.at > b.at ? a : b;
+    if (a.pct !== b.pct) return a.pct > b.pct ? a : b;
+    return (a.t | 0) >= (b.t | 0) ? a : b;               // total order, so deterministic
+  }
+  function pickHist(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    if (a.at !== b.at) return a.at > b.at ? a : b;
+    if (a.pct !== b.pct) return a.pct > b.pct ? a : b;
+    return (a.title <= b.title) ? a : b;
+  }
+
+  /** Cap the progress store. Series pointers are exempt -- they are tiny, and dropping
+   *  one silently moves where "Resume" lands. */
+  function capProg(pg) {
+    const eps = Object.keys(pg).filter(k => !/^tv:\d+$/.test(k));
+    if (eps.length <= PROG_MAX) return;
+    eps.sort((a, b) => (pg[b].at - pg[a].at) || (a < b ? -1 : 1));
+    eps.slice(PROG_MAX).forEach(k => { delete pg[k]; });
+  }
+
+  /** A series pointer aiming at an episode that no longer exists would send Resume
+   *  nowhere. Mirrors what progForget already does locally. */
+  function repairPointers(pg) {
+    // Rebuild a pointer that went missing. progForget drops the series pointer when the
+    // device it ran on has no episodes left for that show -- but ANOTHER device may
+    // still hold several, and the tombstone removes the pointer account-wide. Without
+    // this the show silently loses its resume position everywhere while its episode
+    // progress survives, and nothing ever puts it back.
+    const shows = {};
+    Object.keys(pg).forEach(k => {
+      const m2 = /^tv:(\d+):(\d+):(\d+)$/.exec(k);
+      if (m2) shows[m2[1]] = true;
+    });
+    Object.keys(shows).forEach(id => {
+      if (pg['tv:' + id]) return;
+      const pre = 'tv:' + id + ':';
+      const eps = Object.keys(pg).filter(x => x.indexOf(pre) === 0);
+      eps.sort((a, b) => (pg[b].at - pg[a].at) || (a < b ? -1 : 1));
+      const best = /^tv:\d+:(\d+):(\d+)$/.exec(eps[0]);
+      // Inherit the episode's own stamp, never a fresh one -- a new stamp here would
+      // make the merged blob differ from the pulled one on every pass.
+      pg['tv:' + id] = { s: +best[1], e: +best[2], at: pg[eps[0]].at };
+    });
+    Object.keys(pg).forEach(k => {
+      const m = /^tv:(\d+)$/.exec(k);
+      if (!m) return;
+      const pre = 'tv:' + m[1] + ':';
+      const eps = Object.keys(pg).filter(x => x.indexOf(pre) === 0);
+      if (!eps.length) { delete pg[k]; return; }
+      const ptr = pg[k];
+      if (pg[pre + ptr.s + ':' + ptr.e]) return;         // still valid
+      eps.sort((a, b) => (pg[b].at - pg[a].at) || (a < b ? -1 : 1));
+      const best = /^tv:\d+:(\d+):(\d+)$/.exec(eps[0]);
+      // KEEP the original `at`. Restamping to now() would make the merged blob differ
+      // from the pulled blob on every single pass -- the ping-pong failure mode.
+      pg[k] = { s: +best[1], e: +best[2], at: ptr.at };
+    });
+  }
+
+  /**
+   * Merge a pulled blob with local state. Pure.
+   *
+   * Idempotent by construction: every input is sanitized to a fixed point, every
+   * ordering is total, and nothing is restamped with a fresh clock. Running
+   * pull-merge-push twice must produce a byte-identical blob the second time, or two
+   * devices push at each other forever.
+   */
+  function mergeBlob(remoteRaw, syncNow) {
+    const st = syncState();
+    // See blobMaxAt: a device whose clock is behind must not drag the account back.
+    // syncNow is server-corrected before this runs (syncCall learns skew from the
+    // `now` on every response, and syncOnce takes syncNow after the pull), so the
+    // ceiling can be tight. A blob that is nonetheless far ahead of it means the clock
+    // could not be validated at all -- syncOnce refuses to merge in that case rather
+    // than reaching this line.
+    const floorTo = syncNow;
+    const ceiling = syncNow + FUTURE_SLACK;
+    const R = sanitize(remoteRaw, ceiling, floorTo);
+    const L = sanitize({ watch: getWatch(), prog: progAll(), hist: histAll(),
+                         tomb: tombAll(), clearedAt: st.clearedAt,
+                         theme: { id: cfg.theme, at: st.themeAt } }, ceiling, floorTo);
+    const out = { v: 1 };
+
+    /* First contact between THIS device's data and THIS account.
+       The account's clear-history epochs are the account's own past, not this
+       device's. Applying them to rows that were only ever local would delete a
+       guest's entire history at the exact moment they sign in -- everything they
+       watched predates a Clear somebody performed on another device months ago.
+       So on the first merge after adopting an identity, local rows are exempt from
+       the epochs; remote rows still obey them. */
+    const firstAdopt = !st.lastSyncAt && st.boundUid !== st.uid;
+    const localProg = firstAdopt ? Object.keys(L.prog) : [];
+    const localHist = firstAdopt ? L.hist.map(r => r.k) : [];
+    const keptLocal = (arr, k) => firstAdopt && arr.indexOf(k) >= 0;
+
+    // 1. monotone scalars
+    out.clearedAt = { prog: Math.max(L.clearedAt.prog, R.clearedAt.prog),
+                      hist: Math.max(L.clearedAt.hist, R.clearedAt.hist) };
+
+    // 2. theme: newest stamp wins, strict > so local wins a tie
+    out.theme = (R.theme.id && R.theme.at > L.theme.at) ? R.theme : L.theme;
+
+    // 3. tombstones: union by max, then age out and cap
+    const tomb = {};
+    for (const k in L.tomb) tomb[k] = L.tomb[k];
+    for (const k in R.tomb) if (R.tomb[k] > (tomb[k] || 0)) tomb[k] = R.tomb[k];
+    out.tomb = Object.keys(tomb).map(k => [k, tomb[k]])
+      .filter(r => r[1] >= syncNow - TOMB_TTL)
+      .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
+      .slice(0, TOMB_MAX)
+      .reduce((o, r) => { o[r[0]] = r[1]; return o; }, {});
+    // `>=`: a delete wins a same-millisecond tie. A resurrected item is more annoying
+    // than a lost one, and re-adding is one tap.
+    const dead = (k, at) => { const t = out.tomb[k]; return t !== undefined && t >= at; };
+
+    // 4. watchlist
+    const wl = {};
+    for (const e of L.watch) wl[e.type + ':' + e.id] = e;
+    for (const e of R.watch) {
+      const k = e.type + ':' + e.id;
+      if (!wl[k] || e.at > wl[k].at) wl[k] = e;
+    }
+    out.watch = Object.keys(wl).map(k => wl[k])
+      .filter(e => !dead('w:' + e.type + ':' + e.id, e.at))
+      .sort((a, b) => (b.at - a.at) ||
+                      (a.type < b.type ? -1 : a.type > b.type ? 1 : a.id - b.id))
+      .slice(0, WATCH_MAX);
+
+    // 5. progress
+    const pg = {};
+    for (const k in L.prog) pg[k] = L.prog[k];
+    for (const k in R.prog) pg[k] = pickProg(pg[k], R.prog[k]);
+    Object.keys(pg).forEach(k => {
+      const e = pg[k];
+      if (dead('p:' + k, e.at)) { delete pg[k]; return; }
+      if (e.at <= out.clearedAt.prog && !keptLocal(localProg, k)) { delete pg[k]; return; }
+      if (k.indexOf('movie:') === 0 && (syncNow - e.at) > MOVIE_TTL) delete pg[k];
+    });
+    capProg(pg);
+    repairPointers(pg);            // MUST run after capProg
+    out.prog = pg;
+
+    // 6. history
+    const hm = {};
+    for (const r of L.hist) hm[r.k] = r;
+    for (const r of R.hist) hm[r.k] = pickHist(hm[r.k], r);
+    out.hist = Object.keys(hm).map(k => hm[k])
+      .filter(r => !dead('p:' + r.k, r.at) &&
+                   (r.at > out.clearedAt.hist || keptLocal(localHist, r.k)))
+      .sort((a, b) => (b.at - a.at) || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
+      .slice(0, HIST_MAX);
+
+    return out;
+  }
+
+  /** Canonical form: sorted keys and rounded floats. This is the gate that makes push
+   *  ping-pong structurally impossible -- if the merged blob canonicalizes identically
+   *  to the pulled one, there is nothing to push. */
+  function canon(o) {
+    return JSON.stringify(o, function (k, v) {
+      if (k === 'pct' && typeof v === 'number') return Math.round(v * 10000) / 10000;
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const out = {};
+        Object.keys(v).sort().forEach(kk => { out[kk] = v[kk]; });
+        return out;
+      }
+      return v;
+    });
+  }
+
+  /* ---- transport ----------------------------------------------------------
+     One wrapper so the three failure classes that actually bite are prevented in a
+     single place: a request that never returns, a captive portal answering 200 with
+     an HTML login page, and an error body that leaks the upstream URL.
+     ------------------------------------------------------------------------- */
+  async function syncCall(path, body) {
+    const ac = new AbortController();
+    const kill = setTimeout(() => ac.abort(), 8000);
+    const t0 = Date.now();
+    try {
+      const r = await fetch(SYNC_URL + path, {
+        method: 'POST', signal: ac.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const ct = r.headers.get('content-type') || '';
+      // A hotel wifi portal returns 200 with HTML. JSON.parse would then throw from
+      // inside a timer, where nothing catches it.
+      if (ct.indexOf('application/json') < 0) return { err: 'notjson', status: r.status };
+      const d = await r.json();
+      // Every response carries the server clock, errors included, so a device with a
+      // wrong clock is corrected by its FIRST call -- before anything is merged, and
+      // therefore before it can write a single poisoned timestamp.
+      if (d && d.now) learnSkew(d.now, t0, Date.now());
+      if (!r.ok) return { err: d.error || ('http ' + r.status), status: r.status };
+      return { ok: true, d: d };
+    } catch (e) {
+      return { err: e.name === 'AbortError' ? 'timeout' : 'net' };
+    } finally { clearTimeout(kill); }
+  }
+
+  /** All four stores in ONE try. On any failure nothing advances and nothing is
+   *  pushed -- a half-applied merge that then gets uploaded is how you lose data. */
+  function applyMerged(m) {
+    try {
+      localStorage.setItem(WATCH_KEY, JSON.stringify(m.watch));
+      localStorage.setItem(PROG_KEY, JSON.stringify(m.prog));
+      localStorage.setItem(HIST_KEY, JSON.stringify(m.hist));
+      localStorage.setItem(TOMB_KEY, JSON.stringify(m.tomb));
+      return true;
+    } catch (e) {
+      const st = syncState(); st.stall = 'quota'; saveSyncState(st);
+      return false;
+    }
+  }
+
+  let syncBusy = false, syncStale = false, userActed = false;
+  // Monotone counter, bumped by every syncMark/syncFlush. syncOnce records it at the
+  // start of a pass and only clears `dirty` if it has not moved -- otherwise an edit
+  // made while the pass was in flight would be marked as already-synced and stranded.
+  let dirtySeq = 0, retryTimer = null;
+  function scheduleRetry() {
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => { retryTimer = null; syncOnce('retry'); }, 3000);
+  }
+  const bootAt = Date.now();
+  document.addEventListener('keydown', () => { userActed = true; }, { once: true, capture: true });
+  document.addEventListener('click', () => { userActed = true; }, { once: true, capture: true });
+
+  /**
+   * One full cycle: pull, merge, apply, push if anything changed.
+   *
+   * There is no standalone push and no standalone pull, deliberately -- every upload
+   * is therefore preceded by a download in the same pass, which is the cheapest
+   * mitigation available for the lost-update race on a server with no compare-and-swap.
+   */
+  async function syncOnce(reason) {
+    const st0 = syncState();
+    if (!st0.on || !st0.uid || syncBusy) return;
+    // A misconfigured server or a rejected uid will not fix itself by being retried
+    // every twenty seconds; wait for the user to ask.
+    if (st0.stall === 'secrets' || st0.stall === 'notjson' || st0.stall === 'baduid') {
+      if (reason !== 'manual' && reason !== 'boot') return;
+    }
+    syncBusy = true;
+    const seqAtStart = dirtySeq;
+    try {
+      runMigrations();
+      const pulled = await syncCall('/v1/pull', { uid: st0.uid });
+      if (pulled.err) return noteSyncFail(pulled.err, reason);
+      // AFTER the pull, deliberately: that call is what corrected the clock. Frozen
+      // from here on so every comparison in this pass uses one consistent instant.
+      const syncNow = now();
+
+      // If the account is still far ahead of our corrected clock, the correction did
+      // not happen -- an older Worker that does not send `now`, on a device whose clock
+      // is wrong. Merging here would clamp every stamp in the account down to a bad
+      // value and then push it, expiring every tombstone at once (resurrecting every
+      // deletion) and rolling back both clear epochs. Do nothing instead: a sync that
+      // does not happen costs one cycle, a sync computed on a wrong clock costs the
+      // account, and it self-heals the moment the clock is right.
+      // Symmetric, because every TTL-driven deletion below (the tombstone TTL and
+      // MOVIE_TTL) is a one-way destructive decision made entirely from syncNow. A
+      // clock far AHEAD of the account is as dangerous as one behind it -- it just
+      // fails by quietly expiring things instead of by flattening them.
+      const rMax = blobMaxAt(pulled.d.data);
+      if (rMax > syncNow + FUTURE_SLACK) return noteSyncFail('badclock', reason);
+      if (rMax > 0 && syncNow > rMax + FUTURE_SLACK && !st0.lastSyncAt) {
+        return noteSyncFail('badclock', reason);
+      }
+
+      const merged = mergeBlob(pulled.d.data, syncNow);
+      if (!applyMerged(merged)) return;
+
+      const body = canon(merged);
+      if (body !== canon(sanitize(pulled.d.data, syncNow + FUTURE_SLACK, syncNow))) {
+        if (body.length > BODY_MAX) return noteSyncFail('toolarge', reason);
+        const res = await syncCall('/v1/push', { uid: st0.uid, data: merged });
+        if (res.err) return noteSyncFail(res.err, reason);
+        // NB: res.d.at is the stored blob's timestamp, NOT the current server time --
+        // skew comes from res.d.now, which syncCall has already consumed for us.
+      }
+
+      const st = syncState();
+      st.lastSyncAt = syncNow; st.stall = ''; st.lastErr = '';
+      // Re-read, then MAX. A Clear performed while the push was in flight has already
+      // written a newer epoch to this same key; assigning the pre-push snapshot back
+      // would silently undo it and every cleared row would return on the next pull.
+      st.clearedAt = { prog: Math.max(st.clearedAt.prog || 0, merged.clearedAt.prog),
+                       hist: Math.max(st.clearedAt.hist || 0, merged.clearedAt.hist) };
+      // Only clear `dirty` if nothing was marked dirty AFTER this pass began; otherwise
+      // the edit that arrived mid-cycle is stranded with nothing scheduled to push it.
+      if (dirtySeq === seqAtStart) st.dirty = false; else scheduleRetry();
+      // The theme is the only cfg field that travels. Apply it here rather than in
+      // the merge, which is pure.
+      // Not while the picker is open: the user is looking at the swatches, and having
+      // the theme change under them (and their own stamp overwritten) is worse than
+      // being one sync late.
+      if (merged.theme.id && merged.theme.id !== cfg.theme && !$('.modal-back')) {
+        cfg.theme = merged.theme.id; st.themeAt = merged.theme.at; saveConfig();
+      }
+      saveSyncState(st);
+      maybeRerender();
+    } catch (e) {
+      if (reason === 'manual') toast('Sync unavailable \u2014 will retry');
+    } finally { syncBusy = false; }
+  }
+
+  function noteSyncFail(err, reason) {
+    const st = syncState();
+    st.lastErr = err;
+    // A failed pass leaves `dirty` set with nothing scheduled, so an edit made just
+    // before losing signal would sit unsynced until the next unrelated trigger. The
+    // transient classes are worth another go on their own.
+    if (err === 'net' || err === 'timeout' || err === 'slow down' || err === 'badclock' ||
+        (typeof err === 'string' && err.indexOf('http 5') === 0)) {
+      scheduleRetry();
+    }
+    // Only the permanent classes stall. A timeout or a dropped connection is the
+    // normal condition of a phone and must not disable sync until the app restarts.
+    if (err === 'notjson' || err === 'bad uid' || err === 'toolarge' ||
+        (typeof err === 'string' && err.indexOf('missing its') >= 0)) {
+      st.stall = err.indexOf('missing its') >= 0 ? 'secrets'
+               : err === 'bad uid' ? 'baduid'
+               : err === 'toolarge' ? 'toolarge' : 'notjson';
+    }
+    saveSyncState(st);
+    if (reason === 'manual') {
+      toast(err === 'net' || err === 'timeout' ? 'No connection \u2014 will retry'
+            : err === 'badclock' ? "This device's date looks wrong \u2014 fix it and sync again"
+            : 'Sync problem: ' + err);
+    }
+  }
+
+  /**
+   * Re-render only when it cannot steal the user's place.
+   *
+   * route() runs tvFocusFirst() and scrollTo(0, 0). A pull landing while somebody is
+   * three rows into a rail on a TV teleports the focus ring with no way back but
+   * re-navigating, which is indistinguishable from a crash. So: repaint freely during
+   * the first few seconds of boot, and after that just remember that the next natural
+   * navigation should pick the new data up.
+   */
+  function maybeRerender() {
+    // Never while a player is mounted. route() rebuilds the view, which re-creates the
+    // iframe and restarts the film from zero -- and during playback a 'beat' sync runs
+    // every ten minutes, so this would otherwise be near-certain on any long watch.
+    if (watchNow) { syncStale = true; return; }
+    if (!userActed && Date.now() - bootAt < 5000) { route(); return; }
+    syncStale = true;
+  }
+
+  /* ---- when sync runs -----------------------------------------------------
+     PUSH_IDLE exceeds the 15s watchTick on purpose: during playback progRecord fires
+     every 15 seconds, so a shorter trailing edge would never be reached and a 2h film
+     would push ~480 times. PLAYER_BEAT is what actually governs playback, capping the
+     same film at about twelve cycles.
+     ------------------------------------------------------------------------- */
+  const PUSH_IDLE = 20000, PUSH_MAX = 90000, PLAYER_BEAT = 600000;
+  let pushTimer = null, firstDirtyAt = 0, lastBeat = 0;
+
+  /** Something changed. Coalesce; do not push yet. */
+  function syncMark() {
+    if (!syncOn()) return;
+    dirtySeq++;
+    const st = syncState();
+    if (!st.dirty) { st.dirty = true; saveSyncState(st); }
+    if (!firstDirtyAt) firstDirtyAt = Date.now();
+
+    if (watchNow) {
+      // Playing: one heartbeat every ten minutes and nothing else.
+      if (Date.now() - lastBeat > PLAYER_BEAT) { lastBeat = Date.now(); syncOnce('beat'); }
+      return;
+    }
+    if (pushTimer) clearTimeout(pushTimer);
+    // PUSH_MAX stops a steady drip of edits from deferring the write forever.
+    if (Date.now() - firstDirtyAt > PUSH_MAX) { firstDirtyAt = 0; return syncOnce('max'); }
+    pushTimer = setTimeout(() => { firstDirtyAt = 0; syncOnce('idle'); }, PUSH_IDLE);
+  }
+
+  /** A deliberate act (bookmark, delete, clear, theme). Worth a round trip now. */
+  function syncFlush(reason) {
+    if (!syncOn()) return;
+    dirtySeq++;
+    const st = syncState();
+    if (!st.dirty) { st.dirty = true; saveSyncState(st); }
+    if (pushTimer) clearTimeout(pushTimer);
+    // A flush landing mid-cycle would otherwise be swallowed by the syncBusy guard
+    // and never rescheduled.
+    pushTimer = setTimeout(() => {
+      firstDirtyAt = 0;
+      if (syncBusy) return scheduleRetry();
+      syncOnce(reason);
+    }, 1200);
+  }
+
+  function wireSync() {
+    if (syncOn()) syncOnce('boot');
+    // Coming back to the app is the moment another device's changes matter most, and
+    // on Android it is also the only reliable signal before the process is killed.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        if (syncStale && !watchNow) { syncStale = false; route(); }
+        syncOnce('visible');
+      } else if (syncState().dirty) {
+        syncOnce('hidden');
+      }
+    });
+    // pagehide fires on desktop and on web; Android frequently kills the process
+    // without it, which is why 'hidden' above is the one that carries the weight.
+    window.addEventListener('pagehide', () => { if (syncState().dirty) syncOnce('pagehide'); });
+  }
+
+  /* ---- sign-in screens ----------------------------------------------------
+     Google's device flow, not a "Sign in with Google" button, and not by choice:
+     Google returns disallowed_useragent to embedded WebViews, and the phone build and
+     the TV build are the same Capacitor WebView. The device flow needs no redirect URI
+     and no registered origin, so one code path serves all four targets -- and it is
+     the flow people already know from signing in to Netflix or YouTube on a TV.
+     ------------------------------------------------------------------------- */
+  let authAbort = null;
+
+  function authStop() {
+    if (authAbort) { clearTimeout(authAbort.timer); authAbort.dead = true; authAbort = null; }
+  }
+
+  /** Adopt an identity and immediately reconcile with whatever the account already has. */
+  async function adoptUid(uid, kind, name) {
+    const st = syncState();
+    // Whose data is currently in the four stores? If it belongs to a DIFFERENT account,
+    // merging would carry the previous occupant's library and -- worse -- their
+    // tombstones into this one, silently deleting things the new owner had added. On a
+    // shared living-room TV that is one person's deletions quietly editing another
+    // person's watchlist. A genuine guest upgrade (boundUid empty) still merges, which
+    // is the whole point of signing in after using the app.
+    if (st.boundUid && st.boundUid !== uid) {
+      try {
+        localStorage.removeItem(WATCH_KEY); localStorage.removeItem(PROG_KEY);
+        localStorage.removeItem(HIST_KEY); localStorage.removeItem(TOMB_KEY);
+      } catch (e) {}
+      st.clearedAt = { prog: 0, hist: 0 };
+      st.themeAt = 0;
+    }
+    st.uid = uid; st.on = true; st.kind = kind || 'anon'; st.name = name || '';
+    st.lastSyncAt = 0; st.stall = ''; st.lastErr = '';
+    // Bound HERE, not after a successful sync. If the first sync fails -- no network
+    // in the seconds after signing in on a TV is the ordinary case -- a later sign-in
+    // by a different person would still see the previous occupant's boundUid as empty
+    // and merge their library instead of replacing it.
+    st.boundUid = uid;
+    saveSyncState(st);
+    // For a guest upgrading, the merge is a union and cannot remove anything this
+    // device had -- mergeBlob's firstAdopt branch exempts local rows from the
+    // account's clear epochs precisely so that stays true.
+    await syncOnce('manual');
+    splashClose();
+    route();
+  }
+
+  async function googleSignIn(mount) {
+    authStop();
+    const me = authAbort = { dead: false, timer: null };
+    const set = (html) => { if (!me.dead && mount.isConnected) mount.innerHTML = html; if (IS_TV) tvInvalidate(); };
+
+    set('<div class="au-wait"><span class="ub-spin"></span> Contacting Google…</div>');
+    const r = await syncCall('/v1/auth/google/start', {});
+    if (me.dead) return;
+    if (r.err) {
+      return set('<div class="au-err"><p>' + esc(
+        r.err === 'net' || r.err === 'timeout'
+          ? 'No connection. Check the network and try again.'
+          : r.err === 'google_unavailable'
+            ? 'Google turned the request down. Try again in a minute.'
+            : r.err === 'slow down'
+              ? 'Too many attempts. Wait a minute and try again.'
+              : (typeof r.err === 'string' && r.err.indexOf('missing its') >= 0)
+                ? 'Sign-in is not set up on the server yet.'
+                : 'Could not start sign-in (' + r.err + ').') +
+        '</p><button class="btn" data-au="retry">Try again</button></div>');
+    }
+    const d = r.d;
+    let qr = '';
+    try {
+      const q = window.qrcode(0, 'M'); q.addData(d.qr_url); q.make();
+      // Generated LARGE with a tight quiet zone, then rendered pixelated. At the old
+      // (5, 8) the image was 181px and the layout drew it at 132 -- a fractional
+      // downscale that smears a 1-bit pattern into a pale grey square which will not
+      // scan and, against a white card, simply reads as blank.
+      qr = '<img class="au-qr" alt="" width="264" height="264" src="' +
+           q.createDataURL(8, 4) + '">';
+    } catch (e) { qr = ''; }
+
+    const host = esc(String(d.verification_url || '').replace(/^https?:\/\//, ''));
+    set(
+      '<div class="au-flow">' +
+        (qr ? '<div class="au-qrwrap">' + qr +
+              '<span class="au-qrcap">Scan with your phone</span></div>' : '') +
+        '<ol class="au-steps">' +
+          '<li><span class="au-n">1</span><span class="au-sb">' +
+            '<span class="au-lead">Open this on your phone</span>' +
+            '<span class="au-url">' + host + '</span></span></li>' +
+          '<li><span class="au-n">2</span><span class="au-sb">' +
+            '<span class="au-lead">Enter this code</span>' +
+            '<span class="au-code">' + esc(d.user_code) + '</span></span></li>' +
+        '</ol>' +
+        '<div class="au-foot">' +
+          '<span class="au-live"><i></i>Waiting for you to approve\u2026</span>' +
+          '<button class="btn sm ghost" data-au="cancel">Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+
+    // Poll at the interval Google asked for. The server raises it on slow_down.
+    let wait = (d.interval || 5) * 1000;
+    const tick = async () => {
+      if (me.dead) return;
+      const p = await syncCall('/v1/auth/google/poll', { session: d.session });
+      if (me.dead) return;
+      if (p.err) { me.timer = setTimeout(tick, wait); return; }   // transient: keep waiting
+      const st = p.d.status;
+      if (st === 'pending') {
+        if (p.d.interval) wait = p.d.interval * 1000;
+        me.timer = setTimeout(tick, wait);
+        return;
+      }
+      if (st === 'ok') {
+        authStop();
+        toast('Signed in as ' + (p.d.name || 'you'));
+        return adoptUid(p.d.uid, 'google', p.d.name);
+      }
+      authStop();
+      set('<div class="au-err"><p>' +
+        (st === 'denied' ? 'Sign-in was declined on the phone.'
+         : st === 'expired' ? 'That code expired. Codes last a few minutes.'
+         : 'Google could not complete sign-in.') +
+        '</p><button class="btn" data-au="retry">Start again</button>' +
+        // On the first-run splash the two original buttons are hidden while the flow
+        // runs, so without this a failed sign-in leaves "Try again" as the ONLY thing
+        // on screen -- no way to continue as a guest, on a device where the failure
+        // may well be that there is no network.
+        (mount.closest('#splash') ? '<button class="btn ghost" data-au="guest">Continue as guest</button>' : '') +
+        '</div>');
+    };
+    me.timer = setTimeout(tick, wait);
+  }
+
+  /** Pairing: for anyone who would rather not attach a Google account. The TV shows a
+   *  code, a signed-in phone claims it, and the TV adopts that identity. */
+  async function pairShow(mount) {
+    authStop();
+    const me = authAbort = { dead: false, timer: null };
+    const set = (h) => { if (!me.dead && mount.isConnected) mount.innerHTML = h; if (IS_TV) tvInvalidate(); };
+    set('<div class="au-wait"><span class="ub-spin"></span> Getting a code…</div>');
+    const r = await syncCall('/v1/pair/start', {});
+    if (me.dead) return;
+    if (r.err) return set('<div class="au-err"><p>Could not get a code. Try again.</p>' +
+                          '<button class="btn" data-au="retry-pair">Try again</button></div>');
+    set('<div class="au-flow">' +
+        '<ol class="au-steps">' +
+          '<li><span class="au-n">1</span><span class="au-sb">' +
+            '<span class="au-lead">On a device that is already signed in, open</span>' +
+            '<span class="au-url">Account \u2192 Connect a device</span></span></li>' +
+          '<li><span class="au-n">2</span><span class="au-sb">' +
+            '<span class="au-lead">Enter this code</span>' +
+            '<span class="au-code">' + esc(r.d.code) + '</span></span></li>' +
+        '</ol>' +
+        '<div class="au-foot">' +
+          '<span class="au-live"><i></i>Works once, expires in a few minutes\u2026</span>' +
+          '<button class="btn sm ghost" data-au="cancel">Cancel</button>' +
+        '</div></div>');
+    const tick = async () => {
+      if (me.dead) return;
+      // The watcher token, not the code, is what authorises collecting the result.
+      // The code is on a television screen; anyone who can read it could otherwise
+      // poll faster than the TV, take the uid the phone just attached, and burn the
+      // single-use code -- leaving the real TV showing "expired".
+      const p = await syncCall('/v1/pair/poll', { code: r.d.code, watcher: r.d.watcher });
+      if (me.dead) return;
+      if (p.ok && p.d.uid) { authStop(); toast('Device connected'); return adoptUid(p.d.uid, 'paired', ''); }
+      if (p.err === 'expired') {
+        authStop();
+        return set('<div class="au-err"><p>That code expired before it was used.</p>' +
+                   '<button class="btn" data-au="retry-pair">New code</button></div>');
+      }
+      me.timer = setTimeout(tick, 1500);
+    };
+    me.timer = setTimeout(tick, 1500);
+  }
+
+  /** The other half of pairing, run on the device that already has an identity. */
+  function pairClaim(mount) {
+    authStop();
+    mount.innerHTML =
+      '<div class="au-flow au-narrow">' +
+        '<span class="au-sb">' +
+          '<span class="au-lead">Enter the code shown on the other device</span>' +
+          '<input class="au-input" id="pair-in" maxlength="6" autocapitalize="characters" ' +
+                 'autocomplete="off" spellcheck="false" placeholder="ABC123" aria-label="Pairing code">' +
+        '</span>' +
+        '<div class="au-foot">' +
+          '<span class="au-hint" id="pair-msg"></span>' +
+          '<button class="btn primary sm" data-au="claim">Connect</button>' +
+        '</div>' +
+      '</div>';
+    const inp = mount.querySelector('#pair-in');
+    // The alphabet excludes I, O, 0 and 1 precisely because these get read off a TV
+    // across a room, so accept the confusable characters rather than rejecting them.
+    if (inp) inp.oninput = () => {
+      inp.value = inp.value.toUpperCase().replace(/\s+/g, '')
+        .replace(/0/g, 'O').replace(/1/g, 'I')
+        .replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    };
+    if (IS_TV) tvInvalidate();
+  }
+
+  function syncView() {
+    const st = syncState();
+    const on = !!(st.on && st.uid);
+    const who = st.kind === 'google' ? (st.name ? esc(st.name) : 'your Google account')
+              : st.kind === 'paired' ? 'a connected device' : 'this device';
+    const when = st.lastSyncAt ? relTime(st.lastSyncAt) : 'not yet';
+
+    view().innerHTML = (
+      '<div class="sync-page">' +
+        '<h1 class="page-title">' + ICON.sync + ' Sync</h1>' +
+        (on
+          ? '<div class="sync-on">' +
+              '<p class="sync-lead">Your watchlist, history and where you left off are saved to ' +
+              'your account and follow you to every device.</p>' +
+              '<div class="sync-facts">' +
+                '<div><span>Signed in with</span><b>' + who + '</b></div>' +
+                '<div><span>Last synced</span><b>' + esc(when) + '</b></div>' +
+                (st.stall ? '<div class="bad"><span>Problem</span><b>' + esc(st.stall) + '</b></div>' : '') +
+              '</div>' +
+              '<div class="sync-actions">' +
+                '<button class="btn" data-au="now">' + ICON.sync + ' Sync now</button>' +
+                '<button class="btn" data-au="pairclaim">' + ICON.devices + ' Connect a device</button>' +
+                '<button class="btn danger" data-au="signout">' + ICON.logout + ' Sign out</button>' +
+              '</div>' +
+              '<div class="au-mount"></div>' +
+            '</div>'
+          : '<div class="sync-off">' +
+              '<p class="sync-lead">Sign in and your watchlist, history and resume points ' +
+              'follow you to your phone, your TV and your desktop. Without it everything ' +
+              'stays on this device only.</p>' +
+              '<div class="sync-actions">' +
+                '<button class="btn primary lg" data-au="google">' + ICON.user + ' Sign in with Google</button>' +
+                '<button class="btn" data-au="pairshow">' + ICON.devices + ' Use a code from another device</button>' +
+              '</div>' +
+              '<div class="au-mount"></div>' +
+              '<p class="sync-fine">There is no password. Signing in with Google only reads your ' +
+              'name and email address to recognise you — Reeldeck never posts anything, and never ' +
+              'keeps a Google login token.</p>' +
+            '</div>') +
+      '</div>'
+    );
+
+    wireAu($('.sync-page'));
+    // false: the view is already in the DOM by this line, so waiting for a render
+    // that has happened only leaves the ring absent for the poll interval.
+    if (IS_TV) tvFocusFirst(false, false);
+  }
+
+  /**
+   * The sign-in controls, wired for whichever container is showing them.
+   *
+   * Both the #/sync page and the first-run splash mount the same flow. Binding the
+   * handler to .sync-page alone left every button inside the splash inert -- it
+   * rendered perfectly and did nothing, which is exactly the failure a render-only
+   * test cannot see.
+   */
+  function wireAu(root) {
+    if (!root) return;
+    root.onclick = async (e) => {
+      const b = e.target.closest('[data-au]'); if (!b) return;
+      const what = b.dataset.au;
+      // Scoped to THIS container: while the splash is open there can be two mounts in
+      // the document, and a document-wide lookup would drive the wrong one.
+      const mount = root.querySelector('.au-mount');
+      if (what === 'google') return googleSignIn(mount);
+      if (what === 'retry') return googleSignIn(mount);
+      if (what === 'pairshow' || what === 'retry-pair') return pairShow(mount);
+      if (what === 'pairclaim') return pairClaim(mount);
+      if (what === 'guest') { const st2 = syncState(); st2.splash = 1; saveSyncState(st2); return splashClose(); }
+      if (what === 'cancel') {
+        authStop();
+        mount.innerHTML = '';
+        const acts = root.querySelector('.splash-actions');
+        if (acts) acts.style.display = '';      // splash: give the two buttons back
+        const fine2 = root.querySelector('.splash-fine');
+        if (fine2) fine2.style.display = '';
+        if (IS_TV) { tvInvalidate(); tvFocusFirst(false, false); }
+        return;
+      }
+      if (what === 'now') { toast('Syncing…'); await syncOnce('manual'); return route(); }
+      if (what === 'claim') {
+        const inp = $('#pair-in'), msg = $('#pair-msg');
+        const code = (inp && inp.value || '').trim();
+        if (code.length !== 6) { if (msg) msg.textContent = 'That code is six characters.'; return; }
+        const r = await syncCall('/v1/pair/claim', { code: code, uid: syncState().uid });
+        if (msg) {
+          msg.textContent = r.ok ? 'Connected. The other device will pick it up in a moment.'
+            : r.status === 410 ? 'That code has expired — get a new one on the other device.'
+            : r.status === 409 ? 'That code has already been used.'
+            : 'That code was not recognised.';
+        }
+        return;
+      }
+      if (what === 'signout') {
+        if (!confirm('Sign out on this device?\n\nWhat you have watched stays on this device. ' +
+                     'It also stays in your account, and signing in again brings it back.')) return;
+        authStop();
+        const s2 = syncState();
+        s2.on = false; s2.uid = ''; s2.kind = ''; s2.name = ''; s2.lastSyncAt = 0;
+        saveSyncState(s2);
+        toast('Signed out');
+        return route();
+      }
+    };
+  }
+
+  /* ---- first-run splash ---------------------------------------------------
+     Shown ONCE. A sign-in wall on every launch would be exactly wrong here: the app
+     has always worked without an account, and on a TV the first thing a new user
+     would meet is a QR code standing between them and anything to watch.
+     ------------------------------------------------------------------------- */
+  function splashSeen() { const st = syncState(); return !!st.splash || !!(st.on && st.uid); }
+
+  /** Take the overlay down and give the app back. Called from adoptUid, so a sign-in
+   *  that STARTED on the splash also finishes there -- otherwise the overlay stays
+   *  over a working app until the next reload. */
+  function splashClose() {
+    const sp = document.getElementById('splash');
+    if (!sp) return;
+    authStop();
+    sp.remove();
+    document.body.classList.remove('splash-on');
+    if (IS_TV) { tvInvalidate(); tvFocusFirst(false, false); }
+  }
+  function maybeSplash() {
+    if (splashSeen()) return;
+    const back = document.createElement('div');
+    back.className = 'splash-back';
+    back.id = 'splash';
+    back.setAttribute('role', 'dialog');
+    back.setAttribute('aria-modal', 'true');
+    back.setAttribute('aria-labelledby', 'splash-h');
+    back.innerHTML =
+      '<div class="splash">' +
+        // The app's own mark, masked so it takes the current theme's colour like the
+        // one in the header does -- not a generic gradient tile.
+        '<div class="splash-brand">' +
+          '<span class="brand-mark" aria-hidden="true"></span>' +
+          '<span class="splash-word">' + esc(cfg.brand || 'Reeldeck') + '</span>' +
+        '</div>' +
+        '<h2 id="splash-h">Watch everywhere</h2>' +
+        '<p>Sign in and your watchlist, history and resume points follow you to your ' +
+        'phone, your TV and your desktop.</p>' +
+        '<div class="splash-actions">' +
+          '<button class="btn primary lg" id="sp-in">' + ICON.user + ' Sign in with Google</button>' +
+          '<button class="btn ghost" id="sp-guest">Continue as guest</button>' +
+        '</div>' +
+        '<p class="splash-fine">You can sign in later from the account menu.</p>' +
+        '<div class="au-mount splash-mount"></div>' +
+      '</div>';
+    document.body.appendChild(back);
+    // Hides #view and the header behind the opaque overlay. Visually a no-op, but it
+    // also makes them unfocusable -- without it route()'s pending focus grab lands on
+    // Home the moment its content arrives and the D-pad ring disappears behind the
+    // splash with no way back.
+    document.body.classList.add('splash-on');
+    const done = () => { const st = syncState(); st.splash = 1; saveSyncState(st); };
+    back.querySelector('#sp-guest').onclick = () => { done(); splashClose(); };
+    back.querySelector('#sp-in').onclick = () => {
+      done();
+      back.querySelector('.splash-actions').style.display = 'none';
+      // "You can sign in later" is orientation for someone deciding. Once they have
+      // decided it is just a stranded line above the thing they are now doing.
+      const fine = back.querySelector('.splash-fine');
+      if (fine) fine.style.display = 'none';
+      googleSignIn(back.querySelector('.au-mount'));
+    };
+    // The same controls the #/sync page uses -- Cancel and Try again live in here too.
+    wireAu(back);
+    if (IS_TV) { tvInvalidate(); tvFocusEl(back.querySelector('#sp-in')); }
+  }
+
   const TRACK_SEED = {
     'VidSrcMe': 1, 'VidSrc RU': 1, 'VidSrc SU': 1, 'Vsrc': 1,   // vidsrc/docs PLAYER_EVENT
     'VidKing': 1,                                                // its own VideoPlayer bundle
@@ -798,7 +1952,7 @@
   /* ------------------------------------------------------------
      Card + rail + grid builders
      ------------------------------------------------------------ */
-  function cardHTML(item, forcedType) {
+  function cardHTML(item, forcedType, mixed) {
     const type = forcedType || item.media_type || (item.first_air_date || item.name && !item.title ? 'tv' : 'movie');
     itemCache[ck(type, item.id)] = item;
     const title = item.title || item.name || 'Untitled';
@@ -812,18 +1966,18 @@
         <img loading="lazy" decoding="async" src="${img(item.poster_path, 'w342')}" alt="${esc(title)}"
              onerror="this.src='${PLACEHOLDER}'">
         ${rating ? `<span class="rate">${ICON.star} ${rating}</span>` : ''}
-        <span class="typebadge">${type === 'tv' ? 'TV' : 'Movie'}</span>
+        ${(forcedType && !mixed) ? '' : `<span class="typebadge">${type === 'tv' ? 'TV' : 'Movie'}</span>`}
         <button class="wl ${on ? 'on' : ''}" data-wl="${item.id}" data-type="${type}"${IS_TV ? ' tabindex="-1" aria-hidden="true"' : ''} aria-pressed="${on}" title="${on ? 'Remove from' : 'Add to'} watchlist" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">
           ${on ? ICON.bookmarkFill : ICON.bookmark}
         </button>
         <div class="card-hover">
           <button class="ch-play" data-nav="${watchHref(type, item.id)}" tabindex="-1" aria-hidden="true">${ICON.play}</button>
-          <div class="ch-cap"><div class="ch-title">${esc(title)}</div><div class="ch-meta">${y || ''}${rating ? ' \u00b7 \u2605 ' + rating : ''}</div></div>
+          <div class="ch-cap"><div class="ch-title">${esc(title)}</div>
+            <div class="ch-meta">${y || ''}${rating ? ' \u00b7 \u2605 ' + rating : ''}<span class="ch-rt" data-rt="${type}:${item.id}"></span></div></div>
         </div>
         ${(() => { const p = Math.round(cardProgress(type, item.id) * 100);
           return p > 1 ? `<span class="card-prog" role="img" aria-label="${p} percent watched"><i style="width:${p}%"></i></span>` : ''; })()}
       </div>
-      <div class="cap"><div class="t">${esc(title)}</div><div class="y">${y || '—'}</div></div>
     </div>`;
   }
 
@@ -855,55 +2009,23 @@
     </section>`;
   }
 
-  /** Everything started and not finished, deep-linked to the exact episode. */
-  function continueRailHTML() {
-    let rows = progResumable();
-    if (!rows.length) return '';
-    if (IS_TV) rows = rows.slice(0, 14);
-    const tiles = rows.slice(0, 20).map(r => {
-      const href = r.type === 'tv'
-        ? ('#/watch/tv/' + r.id + '?s=' + (r.s || 1) + '&e=' + (r.e || 1))
-        : ('#/watch/movie/' + r.id);
-      const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' \u00b7 E' + (r.e || 1)) : 'Film';
-      const pct = Math.round(Math.min(1, r.pr.pct) * 100);
-      const at = (r.pr.src === 'provider' && r.pr.t > 0) ? fmtClock(r.pr.t) : (pct + '%');
-      return `<div class="card" data-nav="${href}" tabindex="0" role="button"
-                   aria-label="Resume ${esc(r.title || 'title')}, ${sub}, ${pct} percent watched">
-        <div class="poster">
-          <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
-          <span class="card-prog"><i style="width:${pct}%"></i></span>
-        </div>
-        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} \u00b7 ${at}</div></div>
-        <button class="cw-x" data-unwatch="${esc(r.k)}" tabindex="${IS_TV ? '0' : '-1'}"
-                aria-label="Remove ${esc(r.title || 'this title')} from Continue watching">${ICON.x}</button>
-      </div>`;
-    }).join('');
-    return `<section class="rail">
-      <div class="rail-head"><h2>Continue watching</h2></div>
-      <div class="rail-wrap">
-        <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
-        <div class="track">${tiles}</div>
-        <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll right">${ICON.chevR}</button>
-      </div>
-    </section>`;
-  }
-
   /**
-   * Recently watched, as a rail. Continue watching answers "finish this"; this
-   * answers "take me back to that", which includes things already finished -- a
-   * series you are rewatching, an episode you want to re-open. Anything already
-   * shown in Continue watching is excluded so the two rails never duplicate.
+   * Everything recently watched, newest first, deep-linked to the exact episode.
+   *
+   * One rail, not two. "Continue watching" and "Recently watched" were the same list
+   * split by whether something happened to be finished -- a distinction the viewer
+   * had to work out by looking at two rails holding the same posters. Unfinished
+   * entries resume where they stopped; finished ones simply start again.
    */
   function recentRailHTML() {
-    const resumable = new Set(progResumable().map(r => r.k));
-    let rows = histAll().filter(r => !resumable.has(r.k));
+    let rows = histAll();
     if (!rows.length) return '';
     if (IS_TV) rows = rows.slice(0, 14);
     const tiles = rows.slice(0, 20).map(r => {
       const href = r.type === 'tv'
         ? ('#/watch/tv/' + r.id + '?s=' + (r.s || 1) + '&e=' + (r.e || 1))
         : ('#/watch/movie/' + r.id);
-      const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' \u00b7 E' + (r.e || 1)) : 'Film';
+      const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' · E' + (r.e || 1)) : 'Film';
       const pr = progGet(r.type, r.id, r.s, r.e);
       const pct = pr ? Math.round(Math.min(1, pr.pct || 0) * 100) : 0;
       return `<div class="card" data-nav="${href}" tabindex="0" role="button"
@@ -912,7 +2034,9 @@
           <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
           ${pct > 1 ? `<span class="card-prog"><i style="width:${pct}%"></i></span>` : ''}
         </div>
-        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} \u00b7 ${relTime(r.at)}</div></div>
+        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} · ${relTime(r.at)}</div></div>
+        <button class="cw-x" data-unwatch="${esc(r.k)}" tabindex="${IS_TV ? '0' : '-1'}"
+                aria-label="Remove ${esc(r.title || 'this title')} from Recently watched">${ICON.x}</button>
       </div>`;
     }).join('');
     return `<section class="rail">
@@ -1156,8 +2280,11 @@
       heroItems.forEach((h, i) => { h._logo = logos[i]; itemCache[ck(h.media_type, h.id)] = h; });
       let html = buildBillboard(heroItems);
       html += '<div class="rows">';
-      html += continueRailHTML();      // above Top 10: it is why most people opened the app
-      html += recentRailHTML();        // and the things already finished, to go back to
+      // ONE rail, not two. "Continue watching" and "Recently watched" were the same
+      // list split by whether something happened to be finished, which is a
+      // distinction the viewer has to work out by looking. Recently watched covers
+      // both: unfinished entries resume where they stopped, finished ones start over.
+      html += recentRailHTML();
       html += rankRailHTML('Top 10 today', trendItems);
       html += railHTML('Popular movies', popM.results, '#/movies', 'movie');
       html += railHTML('Popular shows', popT.results, '#/tv', 'tv');
@@ -1199,6 +2326,10 @@
     // Build the <select>s by marking the selected option while generating them. The old
     // blind String.replace could not match a year outside 1950…yNow+1, so an
     // out-of-range ?yfrom= showed "Any" and was then deleted by the next filter change.
+    // Open the panel when something is already filtering, so a narrowed list never
+    // looks like the whole catalogue with results mysteriously missing.
+    const activeFilters = [params.sort && params.sort !== 'popularity.desc', params.yfrom, params.yto,
+                           params.rating, params.lang, selGenres.length].filter(Boolean).length;
     const yearOptsFor = (v) => {
       let out = `<option value=""${v ? '' : ' selected'}>Any</option>`;
       for (let y = yNow + 1; y >= 1950; y--) out += `<option value="${y}"${String(v) === String(y) ? ' selected' : ''}>${y}</option>`;
@@ -1212,6 +2343,11 @@
         <div style="font-size:20px;font-weight:800">“${esc(q)}”</div>
       </div>
       <button class="btn sm" data-nav="#/${isTV ? 'tv' : 'movies'}">Clear search</button></div>` : `
+      <details class="filters"${activeFilters ? ' open' : ''}>
+        <summary tabindex="0">
+          <span>Filters</span>
+          ${activeFilters ? `<span class="fl-n">${activeFilters} active</span>` : '<span class="fl-n">Sort, year, rating, language, genre</span>'}
+        </summary>
       <div class="toolbar">
         <div class="field"><label for="f-sort">Sort</label><select id="f-sort">${sortSel}</select></div>
         <div class="field"><label for="f-yfrom">From year</label><select id="f-yfrom">${yearOptsFor(params.yfrom)}</select></div>
@@ -1225,7 +2361,8 @@
             ${gl.map(g => `<button class="chip ${selGenres.includes(String(g.id)) ? 'on' : ''}" data-genre="${g.id}" aria-pressed="${selGenres.includes(String(g.id))}">${esc(g.name)}</button>`).join('')}
           </div>
         </div>
-      </div>`;
+      </div>
+      </details>`;
 
     view().innerHTML = `<h1 class="page-title">${q ? 'Search' : (isTV ? 'TV Shows' : 'Movies')}</h1>${toolbar}<div id="results">${skeletonGrid(18)}</div>`;
 
@@ -1249,6 +2386,18 @@
         const c = e.target.closest('.chip');
         if (c) { c.classList.toggle('on'); c.setAttribute('aria-pressed', String(c.classList.contains('on'))); upd(); }
       };
+      // A native disclosure changes what is on screen WITHOUT any DOM mutation the
+      // row model observes, so without this the D-pad keeps navigating the layout the
+      // panel had before it moved. Exactly the bug already fixed for the player's
+      // server picker (#srv) -- same shape, new place.
+      const fEl = $('.filters');
+      if (fEl) fEl.addEventListener('toggle', () => {
+        if (!IS_TV) return;
+        tvInvalidate();
+        // Land the ring on the first revealed control rather than leaving it on the
+        // summary with a panel of new options the user has to go hunting for.
+        if (fEl.open) { const first = fEl.querySelector('select, button, .chip'); if (first) tvFocusEl(first); }
+      });
     }
 
     // Build request
@@ -1301,7 +2450,9 @@
   // On TV this page carries its own search field (the header has none) — a big,
   // unmissable target that opens the platform keyboard when you press OK.
   function tvSearchBar(q) {
-    if (!IS_TV) return '';
+    // Every platform now, not just TV. The header traded its inline field for an
+    // icon, so this is the only search input in the app -- and giving it a whole
+    // page means it can be the size it deserves instead of competing with the nav.
     return `<div class="tv-search">
       <span class="ico">${ICON.search}</span>
       <input id="tv-search-input" type="search" value="${esc(q)}" autocomplete="off"
@@ -1312,6 +2463,9 @@
   function wireTvSearch() {
     const inp = $('#tv-search-input'), btn = $('#tv-search-go');
     if (!inp) return;
+    // Land ready to type. Not on TV: focusing an input there opens the platform's
+    // full-screen keyboard uninvited, over a page nobody has looked at yet.
+    if (!IS_TV) { try { inp.focus(); inp.select(); } catch (e) {} }
     const submit = () => { const v = inp.value.trim(); if (v) go('#/search?q=' + encodeURIComponent(v)); };
     // The D-pad centre arrives as an Enter keydown, and on Android that is also the
     // gesture that raises the soft keyboard for a focused input — programmatic focus()
@@ -1450,10 +2604,14 @@
         const seasons = (d.seasons || []).filter(s => s.season_number >= 1);
         html += `<div class="section" id="seasons">
           <h3>Episodes</h3>
+          <div class="rail-wrap season-wrap">
+          <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll seasons left">${ICON.back}</button>
+          <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll seasons right">${ICON.chevR}</button>
           <div class="season-pills" id="season-pills" role="group" aria-label="Choose a season">
             ${seasons.map(x => `<button class="spill" aria-pressed="false" data-season="${x.season_number}">
                 <span class="sp-n">Season ${x.season_number}</span>${x.episode_count ? `<span class="sp-c">${x.episode_count} eps</span>` : ''}
               </button>`).join('')}
+          </div>
           </div>
           <div class="ep-list" id="ep-list"></div>
         </div>`;
@@ -1563,9 +2721,36 @@
             <p class="overview" style="margin-top:12px">${esc((p.biography || '').slice(0, 600) || 'No biography.')}${p.biography && p.biography.length > 600 ? '…' : ''}</p>
           </div>
         </div>
-        <div class="section"><h3>Known for</h3><div class="grid">${known.map(c => cardHTML(c, c.media_type)).join('')}</div></div>`;
+        <div class="section"><h3>Known for</h3><div class="grid">${known.map(c => cardHTML(c, c.media_type, true)).join('')}</div></div>`;
       window.scrollTo(0, 0);
     } catch (e) { errorState(e); }
+  }
+
+  /**
+   * One episode strip, reused by the first render and by every season swap. `playing`
+   * is the episode number to mark as current, or -1 when the strip is showing a
+   * season other than the one on screen -- nothing is "now playing" over there.
+   */
+  function epTiles(id, seasonNum, episodes, playing) {
+    return (episodes || []).map(ep => {
+      const pr = progGet('tv', id, seasonNum, ep.episode_number);
+      const done = progDone(pr);
+      const cur = ep.episode_number === playing;
+      const pct = (pr && pr.pct > 0.01) ? Math.round(Math.min(1, pr.pct) * 100) : 0;
+      return `<button class="epx${cur ? ' on' : ''}${done ? ' watched' : ''}"
+              data-nav="#/watch/tv/${id}?s=${seasonNum}&e=${ep.episode_number}"
+              aria-current="${cur}"
+              aria-label="${cur ? 'Now playing: ' : ''}Season ${seasonNum} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}${done ? ', watched' : ''}">
+        <span class="epx-thumb">
+          <img loading="lazy" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+          ${pct ? `<span class="ep-fill" style="width:${pct}%"></span>` : ''}
+          ${done ? `<span class="ep-tick">${ICON.check}</span>` : ''}
+          ${cur ? `<span class="epx-now">${ICON.play}</span>` : ''}
+        </span>
+        <span class="epx-n">E${ep.episode_number}</span>
+        <span class="epx-t">${esc(ep.name || '')}</span>
+      </button>`;
+    }).join('');
   }
 
   /* ---------- Player ---------- */
@@ -1684,33 +2869,35 @@
     // Change episode without leaving the player. Same idea as the server room right
     // below it: the thing you most often want next is one press away, and on a remote
     // it is a single D-pad row rather than a trip back to the show page.
+    // A season rail beside the episodes. "All seasons" used to be a link OFF this
+    // page -- you lost the player to go and pick, then came back. Switching season
+    // here swaps the strip in place, so reaching any episode of any season is two
+    // presses without the video ever going away.
+    const allSeasons = (d && Array.isArray(d.seasons)) ? d.seasons.filter(x => x.season_number >= 1) : [];
+    // A dropdown, not the pill rail the detail page uses. Twenty-three pills is a
+    // thing you scroll THROUGH to find season 19, which is the opposite of choosing;
+    // and this page's subject is the video, so the season control should take one
+    // line and stop asking for attention. On a remote a <select> is also the better
+    // control here -- OK opens the platform's own picker, which the D-pad drives
+    // natively, instead of adding another horizontal row to walk.
+    const seasonRail = (isTV && allSeasons.length > 1) ? `
+      <label class="pl-season">
+        <span class="sr-only">Season</span>
+        <select id="pl-season-sel" aria-label="Choose a season">
+          ${allSeasons.map(x => `<option value="${x.season_number}"${x.season_number === season ? ' selected' : ''}>Season ${x.season_number}${x.episode_count ? ' \u00b7 ' + x.episode_count + ' episodes' : ''}</option>`).join('')}
+        </select>
+      </label>` : '';
+
+    const episodeSeason = season;   // the season actually playing, vs the one on show
     const epStrip = (isTV && seasonEps.length) ? `
       <div class="rail-head" style="margin:26px 0 12px">
-        <h2 style="font-size:16px">Episodes <span class="muted" style="font-weight:600;font-size:13px">\u00b7 Season ${season}</span></h2>
-        <button class="btn sm ghost" data-nav="#/tv/${id}">All seasons</button>
+        <h2 style="font-size:16px">Episodes</h2>
       </div>
+      ${seasonRail}
       <div class="rail-wrap">
         <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll episodes left">${ICON.back}</button>
         <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll episodes right">${ICON.chevR}</button>
-      <div class="ep-strip" id="ep-strip">${seasonEps.map(ep => {
-        const pr = progGet('tv', id, season, ep.episode_number);
-        const done = progDone(pr);
-        const cur = ep.episode_number === episode;
-        const pct = (pr && pr.pct > 0.01) ? Math.round(Math.min(1, pr.pct) * 100) : 0;
-        return `<button class="epx${cur ? ' on' : ''}${done ? ' watched' : ''}"
-                data-nav="#/watch/tv/${id}?s=${season}&e=${ep.episode_number}"
-                aria-current="${cur}"
-                aria-label="${cur ? 'Now playing: ' : ''}Episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}${done ? ', watched' : ''}">
-          <span class="epx-thumb">
-            <img loading="lazy" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
-            ${pct ? `<span class="ep-fill" style="width:${pct}%"></span>` : ''}
-            ${done ? `<span class="ep-tick">${ICON.check}</span>` : ''}
-            ${cur ? `<span class="epx-now">${ICON.play}</span>` : ''}
-          </span>
-          <span class="epx-n">E${ep.episode_number}</span>
-          <span class="epx-t">${esc(ep.name || '')}</span>
-        </button>`;
-      }).join('')}</div>
+      <div class="ep-strip" id="ep-strip">${epTiles(id, season, seasonEps, season === episodeSeason ? episode : -1)}</div>
       </div>` : '';
 
     const roomTiles = sources.map((s, i) => `
@@ -1749,6 +2936,10 @@
         <div class="source-bar">
           <span class="lbl">${src ? 'Playing on <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
+          <span class="sb-modes">
+            <button class="btn sm ghost" id="movie-mode" title="Fill this window">Movie mode</button>
+            <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.tv} TV mode</button>
+          </span>
         </div>
         ${epStrip}
         ${sources.length ? `
@@ -1762,16 +2953,11 @@
               <button class="btn sm ghost" id="toggle-sandbox" aria-pressed="${!!cfg.blockPlayerAds}"
                       title="Restrict what the embedded player is allowed to do (may break some mirrors)">
                 ${cfg.blockPlayerAds ? 'Player locked down' : 'Lock down player'}</button>
-              <button class="btn sm ghost" id="movie-mode" title="Fill this window">Movie mode</button>
-              <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.tv} TV mode</button>
             </div>
             <div class="server-room">${roomTiles}</div>
             <p class="muted mirror-note"><span class="mbadge static">${ICON.check} Verified</span>
-              reports its exact playback position, so resume points are accurate to the second.
-              Every other mirror is tracked by time on screen instead — progress still saves, but it
-              drifts if you pause, skip or leave it running. A mirror earns the badge automatically the
-              first time it reports a real position. Switch mirrors if one stutters or a title will not
-              load — no single mirror has everything.</p>
+              servers remember exactly where you stopped. The others still save your place,
+              roughly. Switch servers if one stutters — no single one has everything.</p>
           </div>
         </details>
         ` : ''}
@@ -1838,6 +3024,30 @@
     const fr = $('#player-iframe');
     if (fr) { fr.setAttribute('tabindex', '-1'); fr.addEventListener('error', () => toast('This mirror failed — try the next server')); }
     // Land the strip on the episode you are actually watching, not on E1.
+    // Switching season swaps the strip WITHOUT navigating: the player keeps playing
+    // while you look. Sequence-guarded, because a slow season could otherwise land
+    // after a later one and leave the pills disagreeing with the tiles.
+    let seasonSeq = 0;
+    const plSel = $('#pl-season-sel');
+    if (plSel) plSel.onchange = async () => {
+      const n = parseInt(plSel.value, 10);
+      const mine = ++seasonSeq, myRoute = routeSeq;
+      const box = $('#ep-strip'); if (!box) return;
+      const key = 'season:' + id + ':' + n;
+      let sd = itemCache[key];
+      if (!sd) {
+        box.style.opacity = '.5';
+        try { sd = await tmdb('/tv/' + id + '/season/' + n); itemCache[key] = sd; }
+        catch (err) { sd = null; }
+      }
+      if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
+      box.style.opacity = '';
+      box.innerHTML = sd ? epTiles(id, n, sd.episodes, n === season ? episode : -1)
+                         : '<div class="center-note">Could not load that season.</div>';
+      box.scrollLeft = 0;
+      if (IS_TV) { tvInvalidate(); const f = box.querySelector('.epx'); if (f) tvFocusEl(f); }
+    };
+
     const strip = $('#ep-strip');
     if (strip) {
       const on = strip.querySelector('.epx.on');
@@ -2215,7 +3425,7 @@
     const list = getWatch();
     let html = `<h1 class="page-title">Watchlist${list.length ? ` <span class="muted" style="font-size:16px">(${list.length})</span>` : ''}</h1>`;
     html += list.length
-      ? `<div class="grid">${list.map(i => cardHTML(i, i.type)).join('')}</div>`
+      ? `<div class="grid">${list.map(i => cardHTML(i, i.type, true)).join('')}</div>`
       : `<div class="center-note">Nothing saved yet \u2014 use the bookmark on any title to keep it here.
           <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div>
         </div>`;
@@ -2226,7 +3436,7 @@
     // progress bars behind with no history to explain them reads as a bug.
     if (hc) hc.onclick = () => {
       if (confirm('Clear your watch history and all resume positions?')) {
-        histClear(); progClear(); route(); toast('History cleared');
+        histClear(); progClear(); route(); toast('History cleared'); syncFlush('clear');
       }
     };
   }
@@ -2260,8 +3470,11 @@
     const short   = manual || cached;            // best short link we already have
     const primary = short || longUrl;            // address we tell people to type
 
+    const isDefault = manual === (DEFAULTS.apkShortUrl || '');
     const autoLine = manual
-      ? 'Using your custom link. <button class="linkish" id="ga-reset">Switch back to the auto link</button>'
+      ? (isDefault
+          ? 'Permanent Reeldeck link — always points at the newest release.'
+          : 'Using your custom link. <button class="linkish" id="ga-reset">Switch back to the auto link</button>')
       : (cached ? 'Auto-shortened via TinyURL — same short link for everyone.' : 'Shortening the link…');
 
     view().innerHTML = `<h1 class="page-title">Get Reeldeck on your devices</h1>
@@ -2324,6 +3537,129 @@
     };
     const sv = $('#ga-save'); if (sv) sv.onclick = () => { cfg.apkShortUrl = $('#ga-short').value.trim(); saveConfig(); toast('Saved'); getAppView(); };
     const rs = $('#ga-reset'); if (rs) rs.onclick = () => { cfg.apkShortUrl = ''; saveConfig(); toast('Using the auto short link'); getAppView(); };
+  }
+
+  /* ---------- Account menu + browse drawer ----------------------------------
+     The header carries three things now: search, watchlist, account. Everything that
+     used to sit in it -- settings, updates, install -- lives under the account
+     button, because that is where people look for it and because it leaves the bar
+     with room to breathe. Browsing by genre moved to a drawer, which also let the
+     Movies/TV filter bar stop being a wall of controls. */
+  function closeAcct() {
+    const m = $('#acct-menu'); if (m) m.remove();
+    const b = $('#acct-btn'); if (b) b.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('keydown', closeAcct._esc || (() => {}));
+  }
+  function wireAccountMenu() {
+    const btn = $('#acct-btn'); if (!btn) return;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      if ($('#acct-menu')) return closeAcct();
+      const m = document.createElement('div');
+      m.className = 'acct-menu'; m.id = 'acct-menu'; m.setAttribute('role', 'menu');
+      const sst = syncState();
+      const signedIn = !!(sst.on && sst.uid);
+      const label = signedIn ? (sst.name || 'Signed in') : 'Signed out';
+      const sub2 = signedIn
+        ? (sst.stall ? 'Sync needs attention'
+                     : 'Synced ' + (sst.lastSyncAt ? relTime(sst.lastSyncAt) : 'soon'))
+        : 'Watching on this device';
+      const initial = (signedIn && sst.name ? sst.name : (cfg.brand || 'R')).charAt(0).toUpperCase();
+      m.innerHTML = `
+        <div class="am-who"><span class="acct-av">${esc(initial)}</span>
+          <span><b>${esc(label)}</b><small>${esc(sub2)}</small></span></div>
+        <button class="am-item" data-am="sync" role="menuitem">${signedIn ? ICON.sync + ' Sync &amp; devices' : ICON.user + ' Sign in'}</button>
+        <button class="am-item" data-am="settings" role="menuitem">${ICON.gear} Settings</button>
+        <button class="am-item" data-am="update" role="menuitem">${ICON.download} Check for updates</button>
+        <button class="am-item" data-am="getapp" role="menuitem">${ICON.tv} Install on TV</button>
+        <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>`;
+      document.body.appendChild(m);
+      const r = btn.getBoundingClientRect();
+      m.style.top = Math.round(r.bottom + 8) + 'px';
+      m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+      btn.setAttribute('aria-expanded', 'true');
+      m.onclick = (e2) => {
+        const it = e2.target.closest('[data-am]'); if (!it) return;
+        const what = it.dataset.am; closeAcct();
+        if (what === 'sync') go('#/sync');
+        else if (what === 'settings') openSettings();
+        else if (what === 'update') checkForUpdate(true);
+        else if (what === 'getapp') go('#/get-app');
+        else if (what === 'watchlist') go('#/watchlist');
+      };
+      closeAcct._esc = (e3) => { if (e3.key === 'Escape') closeAcct(); };
+      document.addEventListener('keydown', closeAcct._esc);
+      if (IS_TV) { tvInvalidate(); const f = m.querySelector('.am-item'); if (f) tvFocusEl(f); }
+    };
+    document.addEventListener('click', (e) => {
+      if ($('#acct-menu') && !e.target.closest('#acct-menu') && !e.target.closest('#acct-btn')) closeAcct();
+    });
+  }
+
+  function closeDrawer() {
+    const d = $('#drawer'), b = $('#drawer-back');
+    // REMOVE it, do not just slide it away. translateX(-100%) moves it off screen but
+    // leaves every link in it focusable, so after opening the drawer once the D-pad
+    // could walk into 23 invisible targets on every subsequent screen.
+    if (d) {
+      d.classList.remove('open');
+      const gone = () => { if (d.parentNode && !d.classList.contains('open')) d.remove(); };
+      // After the 260ms slide-out, or immediately where transitions do not run.
+      d.addEventListener('transitionend', gone, { once: true });
+      setTimeout(gone, 320);
+    }
+    if (b) b.remove();
+    const o = $('#nav-open'); if (o) o.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('drawer-on');
+    if (IS_TV) tvInvalidate();
+  }
+  async function openDrawer() {
+    let d = $('#drawer');
+    if (!d) {
+      d = document.createElement('aside');
+      d.id = 'drawer'; d.className = 'drawer'; d.setAttribute('aria-label', 'Browse');
+      d.innerHTML = `
+        <div class="dw-head">
+          <button class="icon-btn" id="drawer-close" aria-label="Close menu">${ICON.x}</button>
+          <span class="dw-brand">${esc(cfg.brand)}</span>
+        </div>
+        <nav class="dw-nav" aria-label="Sections">
+          <a href="#/" data-nav="#/">Home</a>
+          <a href="#/movies" data-nav="#/movies">Movies</a>
+          <a href="#/tv" data-nav="#/tv">TV Shows</a>
+          <a href="#/watchlist" data-nav="#/watchlist">Watchlist</a>
+        </nav>
+        <hr class="dw-sep">
+        <div class="dw-kicker">Genres</div>
+        <div class="dw-genres" id="dw-genres"><span class="muted">Loading…</span></div>`;
+      document.body.appendChild(d);
+      d.querySelector('#drawer-close').onclick = closeDrawer;
+      d.addEventListener('click', (e) => { if (e.target.closest('[data-nav]')) closeDrawer(); });
+    }
+    const back = document.createElement('div');
+    back.id = 'drawer-back'; back.className = 'drawer-back';
+    back.onclick = closeDrawer;
+    document.body.appendChild(back);
+    document.body.classList.add('drawer-on');
+    requestAnimationFrame(() => d.classList.add('open'));
+    const o = $('#nav-open'); if (o) o.setAttribute('aria-expanded', 'true');
+
+    // Genres are fetched once and cached by genres(); the drawer just renders them.
+    // Movie ids, because TMDB numbers movie and TV genres differently and one list
+    // has to win -- the section links above are how you get to shows.
+    const box = $('#dw-genres');
+    if (box && !box.dataset.filled) {
+      try {
+        const gl = await genres('movie');
+        box.innerHTML = gl.map(g => `<a href="#/movies?genres=${g.id}" data-nav="#/movies?genres=${g.id}">${esc(g.name)}</a>`).join('');
+        box.dataset.filled = '1';
+      } catch (e) { box.innerHTML = '<span class="muted">Could not load genres.</span>'; }
+    }
+    if (IS_TV) { tvInvalidate(); const f = d.querySelector('a, button'); if (f) tvFocusEl(f); }
+  }
+  function wireDrawer() {
+    const o = $('#nav-open'); if (!o) return;
+    o.onclick = () => ($('#drawer') && $('#drawer').classList.contains('open')) ? closeDrawer() : openDrawer();
   }
 
   /* ---------- Error state ---------- */
@@ -2403,11 +3739,15 @@
       back.querySelectorAll('.theme-card').forEach(x => x.classList.remove('on'));
       card.classList.add('on');
       saveConfig();  // applyTheme runs -> live switch
+      // The theme is the ONE field of cfg that syncs, so it needs its own stamp --
+      // cfg itself is never sent, for the reasons above syncState().
+      const st = syncState(); st.themeAt = now(); saveSyncState(st);
+      syncFlush('theme');
     };
     renderUpdBox();
     const ga = $('#set-getapp', back);
     if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
-    $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); closeModal(back); route(); toast('Settings reset'); } };
+    $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); const rst = syncState(); rst.themeAt = now(); saveSyncState(rst); syncFlush('reset'); closeModal(back); route(); toast('Settings reset'); } };
   }
 
   // Closing a modal must also drop pointer mode — openTrailer hands the remote to the
@@ -2504,6 +3844,7 @@
     setTimeout(syncScrollbarWidth, 350);
     nativeSetPlayer(false);      // every view starts with no player; watchView re-arms it
     const { parts, params } = parseHash();
+    authStop();                  // abandon any sign-in / pairing poll from the last view
     closeSuggest();
     clearHero();                 // stop billboard rotation when leaving Home
     // Nothing from the previous screen may outlive it. An open modal would otherwise
@@ -2511,6 +3852,11 @@
     // cinema/player classes would leave `overflow: hidden` and their document
     // listeners on every subsequent page with no way back but a reload.
     document.querySelectorAll('.modal-back').forEach(closeModal);
+    // The drawer and the account menu are overlays too. Left mounted across a
+    // navigation, the drawer keeps body.drawer-on (overflow: hidden) and its scrim
+    // over the new page.
+    closeDrawer();
+    closeAcct();
     if (document.body.classList.contains('cinema-on') || document.body.classList.contains('player-focused')) exitCinema();
     document.body.classList.toggle('home', !parts.length);
     window.scrollTo(0, 0);
@@ -2539,6 +3885,7 @@
       case 'watch': return watchView(parts[1], parts[2], params);
       case 'watchlist': return watchlistView();
       case 'get-app': return getAppView();
+      case 'sync': return syncView();
       default: return homeView();
     }
   }
@@ -2549,6 +3896,7 @@
   function buildHeader() {
     const hdr = $('header.top');
     hdr.innerHTML = `
+      <button class="icon-btn nav-burger" id="nav-open" aria-label="Browse menu" aria-expanded="false" aria-controls="drawer">${ICON.menu}</button>
       <a class="brand" href="#/" data-nav="#/" aria-label="${esc(cfg.brand)} — home">
         <span class="brand-mark" aria-hidden="true"></span><span class="txt">${esc(cfg.brand)}</span>
       </a>
@@ -2556,38 +3904,20 @@
         <a href="#/" data-nav="#/" data-section="home">Home</a>
         <a href="#/movies" data-nav="#/movies" data-section="movies">Movies</a>
         <a href="#/tv" data-nav="#/tv" data-section="tv">TV Shows</a>
-        <a href="#/watchlist" data-nav="#/watchlist" data-section="watchlist">Watchlist</a>
       </nav>
-      ${IS_TV
-        // A TV never types in the header: the platform keyboard is a full-screen
-        // overlay, and an inline field forces brand + nav + field + icons into a
-        // header that does not fit at the ~853 CSS px a 720p set reports. So the
-        // header offers a target and the search PAGE owns the input.
-        ? `<button class="icon-btn" id="search-btn" data-nav="#/search" data-section="search" title="Search" aria-label="Search">${ICON.search}</button>`
-        : `<div class="search-wrap">
-        <span class="ico">${ICON.search}</span>
-        <input id="search-input" type="search" placeholder="Search movies, shows, people…" autocomplete="off" aria-label="Search movies, shows and people">
-        <button class="clear" id="search-clear" title="Clear" aria-label="Clear search" style="display:none">${ICON.x}</button>
-        <div class="suggest" id="suggest" style="display:none"></div>
-      </div>`}
-      <button class="icon-btn" id="update-btn" title="Check for updates" aria-label="Check for updates">${ICON.download}</button>
-      <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">${ICON.gear}</button>`;
+      <span class="hdr-gap"></span>
+      <button class="icon-btn" id="search-btn" data-nav="#/search" data-section="search" title="Search" aria-label="Search">${ICON.search}</button>
+      <a class="icon-btn" href="#/watchlist" data-nav="#/watchlist" data-section="watchlist" title="Watchlist" aria-label="Watchlist">${ICON.bookmark}</a>
+      <button class="acct-btn" id="acct-btn" aria-haspopup="true" aria-expanded="false" title="Account" aria-label="Account and settings">
+        <span class="acct-av" aria-hidden="true">${esc((cfg.brand || 'R').charAt(0).toUpperCase())}</span>
+      </button>`;
 
-    const inp = $('#search-input');
-    const clear = $('#search-clear');
-    if (inp && clear) {
-      inp.addEventListener('input', () => {
-        clear.style.display = inp.value ? 'block' : 'none';
-        liveSuggest(inp.value.trim());
-      });
-      inp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { closeSuggest(); if (inp.value.trim()) go('#/search?q=' + encodeURIComponent(inp.value.trim())); }
-        if (e.key === 'Escape') closeSuggest();
-      });
-      clear.addEventListener('click', () => { inp.value = ''; clear.style.display = 'none'; closeSuggest(); inp.focus(); });
-    }
-    $('#settings-btn').addEventListener('click', openSettings);
-    $('#update-btn').addEventListener('click', () => checkForUpdate(true));
+    // Search moved out of the header and onto its own page, for every platform.
+    // An always-open field competing with the nav is what made the bar feel like a
+    // toolbar; an icon that goes somewhere is the same affordance for less room, and
+    // the search PAGE can give the field the space it actually wants.
+    wireAccountMenu();
+    wireDrawer();
 
     // Mobile bottom tab bar (hidden on desktop via CSS)
     if (!$('.bottom-nav')) {
@@ -2697,7 +4027,7 @@
       // The last one out takes the rail with it, rather than leaving a bare heading.
       if (rail && !rail.querySelector('.card')) rail.remove();
       if (IS_TV) { tvInvalidate(); tvFocusFirst(); }
-      toast('Removed from Continue watching');
+      toast('Removed from Recently watched');
       return;
     }
     const nav = e.target.closest('[data-nav]');
@@ -2755,6 +4085,8 @@
   });
   buildHeader();
   route();
+  wireSync();
+  maybeSplash();
 
   // PWA: register service worker so the app is installable ("Add to Home Screen").
   // No-ops on file:// (SW not allowed there) — serve over http/https or the desktop app.
@@ -3017,6 +4349,24 @@
   // Invalidate the cached geometry. Cheap enough to call liberally.
   function tvInvalidate() { tvDomGen++; tvRowCache = null; }
 
+  /**
+   * What the D-pad is allowed to reach right now.
+   *
+   * Anything that covers the page has to be in this list or the ring walks straight
+   * out of it onto the dimmed content behind, which on a remote is indistinguishable
+   * from the app having lost focus entirely. Ordered by stacking: the splash sits
+   * over everything, then the drawer, then the account menu, then modals.
+   */
+  function tvScope() {
+    const sp = document.getElementById('splash');
+    if (sp) return sp;
+    const dw = document.getElementById('drawer');
+    if (dw && dw.classList.contains('open')) return dw;
+    const am = document.getElementById('acct-menu');
+    if (am) return am;
+    return document.querySelector('.modal-back') || document;
+  }
+
   function tvRowModel(scope) {
     if (tvRowCache && tvRowCache.gen === tvDomGen && tvRowCache.scope === scope) return tvRowCache.rows;
     // Rows are measured in DOCUMENT space (rect + scrollY) so their order never
@@ -3204,7 +4554,7 @@
 
   function tvRestoreFocus() {
     if (!IS_TV) return false;
-    const rows = tvRowModel(document.querySelector('.modal-back') || document);
+    const rows = tvRowModel(tvScope());
     if (!rows.length) return false;
     const at = tvNearest(rows, tvLastPos);
     tvFocusEl(at ? rows[at.ri].items[at.ci].el : rows[0].items[0].el);
@@ -3281,6 +4631,22 @@
     tvGiveUp = setTimeout(stop, 15000);
   }
 
+  // Type "/" anywhere to jump to search. Registered here, at module scope, NOT inside
+  // the IS_TV block below -- that block has silently swallowed a listener twice in this
+  // file, and a shortcut for a physical keyboard is meaningless on the one platform it
+  // would have worked on.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    const tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+    if (document.querySelector('.modal-back') || document.getElementById('splash')) return;
+    e.preventDefault();
+    go('#/search');
+    // The field is rendered by the view, so grab it once that has happened.
+    setTimeout(() => { const i = document.querySelector('#q, .tv-search input, input[type="search"]'); if (i) i.focus(); }, 260);
+  });
+
   function tvSpatialNav(e) {
     const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[e.key];
     if (!dir) return;
@@ -3307,7 +4673,7 @@
     e.preventDefault(); // TV owns focus — never let it escape into the cross-origin player iframe
     tvEnsureFocusable();
 
-    const rows = tvRowModel(document.querySelector('.modal-back') || document);
+    const rows = tvRowModel(tvScope());
     // Nothing focusable on screen (a skeleton, an error state). The press has already
     // been swallowed by preventDefault, so spend it re-entering rather than leaving
     // the remote looking dead with no key that helps.
@@ -3360,6 +4726,19 @@
     try { inp.focus(); inp.select(); } catch (e2) {}
   });
 
+  // Runtime is filled in for the card being LOOKED at, on whichever device.
+  // Registered OUTSIDE the IS_TV block below: a listener placed inside it only ever
+  // registers on TV, where a mouseover cannot happen at all. Second time this exact
+  // anchor has swallowed one.
+  document.addEventListener('mouseover', (e) => {
+    const c = e.target.closest && e.target.closest('.card');
+    if (c) runtimeSoon(c);
+  }, { passive: true });
+  document.addEventListener('focusin', (e) => {
+    const c = e.target.closest && e.target.closest('.card');
+    if (c) runtimeSoon(c);
+  });
+
   if (IS_TV) {
     document.body.classList.add('tv');
     document.addEventListener('keydown', tvSpatialNav);
@@ -3387,6 +4766,14 @@
   if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
     const App = window.Capacitor.Plugins.App;
     App.addListener('backButton', () => {
+      // Overlays first, innermost outwards. Without these the universal Android
+      // dismiss gesture either quits the app (at navDepth 0) or navigates the page
+      // underneath while the overlay and its scrim stay mounted on top.
+      const sp = document.getElementById('splash');
+      if (sp) { const g = sp.querySelector('#sp-guest'); if (g) g.click(); return; }
+      const dw = document.getElementById('drawer');
+      if (dw && dw.classList.contains('open')) { closeDrawer(); return; }
+      if (document.getElementById('acct-menu')) { closeAcct(); return; }
       const modal = document.querySelector('.modal-back');
       if (modal) { closeModal(modal); return; }
       // In the player (pointer up, and/or full-screen): first Back returns to our UI
