@@ -152,10 +152,22 @@ them could point the player somewhere else, redirect your searches, or change th
 address the "Install on TV" page tells you to type. The theme is whitelisted as a
 single value, by id.
 
-### How signing in works
+### Three ways in, the same on every device
 
-It is the same flow a TV uses for Netflix or YouTube: the app shows a QR code and a
-short code, you approve it on your phone, and the app signs itself in.
+| | what it costs you |
+|---|---|
+| **Continue with Google** | a tap on the phone/desktop; a QR scan on the TV |
+| **Email and password** | two fields, and no reset if you forget it — see below |
+| **Use a code from another device** | six characters, typed on the easier device |
+
+All three appear on the first-run screen and under Account → Sync, on the phone, the
+TV, the desktop and the web. They are ordered by how little you have to type, which on
+a remote is the difference between five seconds and a minute.
+
+**Google sign-in** is the same flow a TV uses for Netflix or YouTube: the app shows a
+QR code and a short code, you approve it on your phone, and the app signs itself in. On
+a phone or a desktop the app just opens your browser with the code already filled in —
+you are not asked to find a second device you are already holding.
 
 That is not a stylistic choice. Google returns `disallowed_useragent` to OAuth attempts
 from embedded WebViews, and both the phone build and the TV build are the same
@@ -163,8 +175,18 @@ Capacitor WebView — so a conventional "Sign in with Google" button cannot work
 The OAuth **device flow** needs no redirect URI and no registered JavaScript origin, so
 one code path serves all four targets, with no Google SDK loaded into the app.
 
-There is no password and no email to type, which is the point: a TV remote is a
-terrible keyboard.
+**Email and password** works too, and the password never leaves your device: the app
+runs 210,000 rounds of PBKDF2 locally and sends only the derived key, which the server
+then hashes again with a secret before storing. That is not decoration — a Cloudflare
+Worker gets about 10ms of CPU per request, nowhere near enough to do a respectable
+password hash server-side, so the work has to happen on the device regardless.
+
+**There is no password reset.** Sending mail from a Worker needs a paid provider, and a
+half-built reset is worse than an honest absence. The recovery path is better than an
+emailed link anyway: sign in on a device that still works and use **Connect a device**
+to bring the other one back. Signing in with Google using an address you also
+registered with a password gives a *separate* account — linking them would mean
+guessing which history wins, and guessing wrong loses somebody's library.
 
 ### What is stored, and where
 

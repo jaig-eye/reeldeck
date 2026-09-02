@@ -28,12 +28,17 @@
 
    THE IDENTITY MODEL, stated plainly so it is not mistaken for more than it is:
    a "user" is an opaque id the app holds. That id IS the credential — whoever
-   holds it can read and write that account's data. There are no passwords, which
-   is deliberate: it means a TV never has to type one. An id arrives one of two
-   ways, and downstream nothing can tell them apart, which is correct because
-   they must be treated identically:
+   holds it can read and write that account's data. An id arrives three ways, and
+   downstream nothing can tell them apart, which is correct because they must be
+   treated identically:
      - anonymous : the app generates 192 random bits locally
      - Google    : HMAC(pepper, "reeldeck:uid:v1:google:<sub>:0")
+     - password  : HMAC(pepper, "reeldeck:uid:v1:email:<email>:0")
+
+   The Google and password namespaces are separate on purpose. Signing in with
+   Google using an address you also registered by password gives a DIFFERENT
+   account, and the UI says so — silently linking them would mean guessing which
+   history is authoritative, and guessing wrong loses somebody's library.
 
    WHY THE HMAC IS KEYED AND NOT A PLAIN HASH. Google's discovery document
    reports subject_types_supported: ["public"], meaning the sub is byte-for-byte
@@ -46,11 +51,17 @@
    Endpoints (all POST, all JSON):
      /v1/pull              { uid }             -> { data, at }
      /v1/push              { uid, data }       -> { ok, at }
-     /v1/pair/start        { }                 -> { code, expires }   (the TV)
+     /v1/pair/start        { }                 -> { code, watcher, expires }  (the TV)
      /v1/pair/claim        { code, uid }       -> { ok }              (the phone)
-     /v1/pair/poll         { code }            -> { uid } | { pending }
+     /v1/pair/poll         { code, watcher }   -> { uid } | { pending }
      /v1/auth/google/start { }                 -> { session, user_code, qr_url, ... }
      /v1/auth/google/poll  { session }         -> { status, uid?, name?, picture? }
+     /v1/auth/pw/signup    { email, dk }       -> { uid } | 409 exists
+     /v1/auth/pw/login     { email, dk }       -> { uid } | 401 bad login
+
+   `dk` is PBKDF2(password, "reeldeck:pw:v1:"+email, 210000, SHA-256) computed on the
+   DEVICE. The password itself never leaves it, and the server never has to spend the
+   CPU a Worker does not have.
    ========================================================================== */
 
 const CORS = {
@@ -151,6 +162,36 @@ async function pepperKey(env) {
   return _pepperKey;
 }
 
+const RX_EMAIL = /^[^\s@]{1,64}@[^\s@.]{1,63}(\.[^\s@.]{1,63}){1,4}$/;
+/** The derived key the client computes. 32 bytes, base64url, so 43 characters. */
+const isDk = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/.test(v);
+const normEmail = (v) => String(v || '').trim().toLowerCase();
+
+async function sha256b64(str) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return b64url(d);
+}
+
+/** Length-independent comparison. Both sides are fixed-length base64url here, but
+ *  writing it this way means it stays correct if that ever changes. */
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** What actually gets stored. The client already spent 210k PBKDF2 iterations getting
+ *  to dk, so one keyed hash here is enough: without the pepper a dump is inert, and
+ *  with it an attacker still faces the full PBKDF2 cost per guess. */
+async function pwHash(env, dk) {
+  const mac = await crypto.subtle.sign(
+    'HMAC', await pepperKey(env), new TextEncoder().encode('reeldeck:pw:v1:' + dk)
+  );
+  return b64url(mac);
+}
+
 async function deriveUid(env, sub) {
   // The trailing ":0" is a per-user epoch, baked in NOW as a literal so that
   // adding a real "sign out everywhere" later is a matter of bumping a number
@@ -160,6 +201,17 @@ async function deriveUid(env, sub) {
     'HMAC', await pepperKey(env), new TextEncoder().encode(msg)
   );
   return b64url(mac);      // 43 chars of [A-Za-z0-9_-]; passes isUid unchanged
+}
+
+/** The same construction as the Google one, in its own namespace so the two can never
+ *  collide -- signing in with Google using the address you also registered by password
+ *  is a DIFFERENT account, and saying so plainly in the UI is better than pretending
+ *  to link them and getting the merge wrong. */
+async function deriveEmailUid(env, email) {
+  const mac = await crypto.subtle.sign(
+    'HMAC', await pepperKey(env), new TextEncoder().encode('reeldeck:uid:v1:email:' + email + ':0')
+  );
+  return b64url(mac);
 }
 
 export default {
@@ -252,6 +304,66 @@ export default {
         // a screen is worth nothing afterwards.
         await redis(env, 'DEL', 'p:' + body.code);
         return json({ uid: rec2.state });
+      }
+
+      // ---- email + password ------------------------------------------------
+      // No reset flow, deliberately and visibly: sending mail from a Worker needs a
+      // paid provider, and a half-built reset is worse than none. The recovery path is
+      // the pairing flow -- sign in on a device that still works and connect this one,
+      // which is stronger than an emailed link anyway. The UI says so.
+      if (path === '/v1/auth/pw/signup' || path === '/v1/auth/pw/login') {
+        // Named for what is actually missing. Password sign-in needs only the pepper,
+        // not the Google client, and saying "Google secrets" sends whoever is
+        // configuring this to the wrong dashboard.
+        if (!env.UID_PEPPER) return json({ error: 'Worker is missing UID_PEPPER' }, 500);
+        // Hard limit: this is the brute-forceable surface, and it is a Redis write.
+        if (!throttle(request, 'start', 5)) return json({ error: 'slow down' }, 429);
+
+        const email = normEmail(body.email);
+        if (!RX_EMAIL.test(email) || email.length > 190) return json({ error: 'bad email' }, 400);
+        if (!isDk(body.dk)) return json({ error: 'bad request' }, 400);
+
+        const key = 'pw:' + (await sha256b64('reeldeck:acct:v1:' + email));
+        const stored = await redis(env, 'GET', key);
+        const hash = await pwHash(env, body.dk);
+
+        if (path === '/v1/auth/pw/signup') {
+          if (stored) return json({ error: 'exists' }, 409);
+          // NO EXPIRY, deliberately. The account id is a pure function of the address,
+          // so if this record ever lapses while the account is still in use, anyone who
+          // knows the address can "sign up" again and be handed the existing id -- a
+          // full takeover on a fixed schedule. /v1/push refreshes the DATA key on every
+          // sync, so an active account would have kept its history and quietly lost the
+          // only thing protecting it. The record is about sixty bytes; its expiry buys
+          // nothing and costs the account.
+          await redis(env, 'SET', key, JSON.stringify({ h: hash, at: Date.now() }));
+          return json({ uid: await deriveEmailUid(env, email) });
+        }
+
+        // PER-ACCOUNT lockout, not just per-IP. The client-side KDF means the salt
+        // is the email, so an attacker targeting one known address can pay the 210k
+        // iterations ONCE offline for a whole dictionary and then spend only network
+        // per guess -- and the per-IP throttle is per-isolate and trivially bypassed
+        // from several addresses. This counter is the only thing that actually costs
+        // a distributed guesser anything.
+        const fkey = 'fail:' + key.slice(3);
+        const fails = parseInt(await redis(env, 'GET', fkey), 10) || 0;
+        if (fails >= 10) return json({ error: 'locked' }, 429);
+
+        // Compare against a dummy when the account does not exist, so the response
+        // does not tell an attacker which addresses are registered.
+        let rec = null;
+        try { rec = stored ? JSON.parse(stored) : null; } catch (e) { rec = null; }
+        const ok = timingSafeEqual(hash, (rec && rec.h) || 'x'.repeat(hash.length));
+        if (!stored || !ok) {
+          // INCR then EXPIRE: a sliding 15-minute window that costs one round trip and
+          // only on failure, so the happy path pays nothing.
+          const n = await redis(env, 'INCR', fkey);
+          if (n === 1) await redis(env, 'EXPIRE', fkey, 900);
+          return json({ error: 'bad login' }, 401);
+        }
+        if (fails) await redis(env, 'DEL', fkey);     // a real sign-in clears the count
+        return json({ uid: await deriveEmailUid(env, email) });
       }
 
       // ---- Google sign-in, OAuth 2.0 device flow ---------------------------
