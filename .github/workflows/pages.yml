@@ -1,0 +1,101 @@
+name: Publish web app
+
+# Hosts the app at https://<owner>.github.io/<repo>/ so it can be INSTALLED on an
+# iPhone or iPad. That is the only route Apple offers here: iOS cannot install an APK,
+# there is no App Store build, and "Add to Home Screen" needs a URL to install FROM.
+# Until this existed an iPhone had no path at all -- tinyurl.com/reeldeck serves an
+# Android package, which Safari downloads and can then do nothing with.
+#
+# It also gives Android and desktop users a try-before-you-install link, and serves the
+# app over HTTPS, which is what makes crypto.subtle available -- so password sign-in
+# works here and cannot work over a plain-http LAN address.
+
+on:
+  push:
+    branches: [main]
+    # Only when something the site actually serves has changed. The Android, Electron
+    # and worker sources are not part of the web build.
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'styles.css'
+      - 'sw.js'
+      - 'manifest.webmanifest'
+      - 'assets/**'
+      - 'scripts/build-web.js'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy midway; queue instead. A half-applied Pages deploy would
+# serve a mixed set of assets.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The same script the APK build uses, so what is hosted is byte-identical to
+      # what is bundled: index.html, app.js, styles.css, sw.js, the manifest, assets.
+      # Note it copies an explicit allowlist -- electron/, scripts/ and worker/ are
+      # NOT published, which matters because worker/ is server code.
+      - name: Build the web bundle
+        run: node scripts/build-web.js
+
+      # A PWA served from a project page lives under /<repo>/. Everything in this app
+      # is already relative -- manifest start_url and scope are "./", the service
+      # worker precaches "./" paths, and sw.js is registered by relative path -- so no
+      # rewriting is needed. This step only proves that stays true.
+      - name: Check nothing depends on being served from the domain root
+        run: |
+          if grep -rnE '(src|href)="/[^/]' www/index.html; then
+            echo "::error::Root-absolute path in index.html would 404 under /<repo>/"
+            exit 1
+          fi
+          node -e "
+            // read+parse, NOT require: node resolves .webmanifest as JavaScript and
+            // throws on the first ':' in the object, which would fail every deploy.
+            const m = JSON.parse(require('fs').readFileSync('www/manifest.webmanifest', 'utf8'));
+            for (const k of ['start_url','scope']) {
+              if (!String(m[k]).startsWith('./')) {
+                console.error('::error::manifest.' + k + ' must be relative, got ' + m[k]);
+                process.exit(1);
+              }
+            }
+            console.log('manifest start_url/scope are relative — OK');
+          "
+
+      # Jekyll would otherwise ignore files and folders beginning with an underscore.
+      - name: Disable Jekyll processing
+        run: touch www/.nojekyll
+
+      # enablement: true turns Pages on for the repo the first time this runs, so
+      # there is nothing to click in Settings.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Where it landed
+        run: echo "Published to ${{ steps.deploy.outputs.page_url }}"

@@ -2178,3 +2178,17 @@ body.tv .au-choices { max-width: 520px; }
 body.tv .au-field > span { font-size: clamp(14px, 2vh, 18px); }
 body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12px, 1.8vh, 18px) 16px; }
 
+/* The iOS panel on the install page. Deliberately loud: it is correcting the advice
+   directly above it, which offers an Android package an iPhone cannot use. */
+.ga-ios {
+  margin-top: 20px; padding: 18px 20px; border-radius: 16px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+}
+.ga-ios h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 10px; font-size: 16px; }
+.ga-ios h3 svg { width: 18px; height: 18px; color: var(--accent); }
+.ga-ios p { margin: 0 0 10px; font-size: 14px; line-height: 1.6; }
+.ga-ios ol { margin: 0 0 10px; padding-left: 20px; }
+.ga-ios li { font-size: 14px; line-height: 1.75; }
+.ga-ios b { color: var(--text); font-weight: 700; }
+
