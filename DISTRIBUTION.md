@@ -177,6 +177,10 @@ different keys and none could update the one before it:
 | v1.0.11 | `CN=Android Debug` | `1C:F1:F8:2E…` |
 | v1.0.12 | `CN=Android Debug` | `F8:20:8D:CF…` |
 | **v1.0.14** | **`CN=Robert, OU=Reeldeck`** | **`4D:E1:A3:F1…`** |
+| **v1.0.15** | **`CN=Robert, OU=Reeldeck`** | **`4D:E1:A3:F1…`** |
+
+Two consecutive releases now carry the same fingerprint, which is the proof this
+document asked for: the key is stable and updates install over the app in place.
 
 `android/app/build.gradle` now defines `signingConfigs.shared` and applies it to **both**
 build types. Both matters: the shipped APK is a *debug* build, so signing only `release`
