@@ -244,6 +244,14 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
+  // iPadOS 13+ reports itself as a Mac, so the touch-points test is the only reliable
+  // way to tell an iPad from a desktop Safari.
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+                 (/Mac/.test(navigator.userAgent || '') && navigator.maxTouchPoints > 1);
+  // Already launched from the home screen: Safari sets standalone, and the display-mode
+  // query covers everything else.
+  const IS_STANDALONE = !!(window.navigator.standalone) ||
+                        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
   const APP_VERSION = '1.0.16';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
@@ -3731,6 +3739,24 @@
         <div class="ga-card">
           <h3>Phone &amp; Windows</h3>
           <p class="muted"><b>Android phone:</b> open the address above (or scan the QR) and install the APK — same file as the TV. <b>Windows:</b> get the installer from the <button class="linkish" data-openext="https://github.com/jaig-eye/reeldeck/releases/latest">Releases page</button>.</p>
+          ${IS_IOS && !IS_STANDALONE ? `
+          <div class="ga-ios">
+            <h3>${ICON.download} On this iPhone or iPad</h3>
+            <p>The download above is an <b>Android</b> package — iOS cannot install it, and there
+               is no App Store version. Install this page instead; it behaves the same, with its
+               own icon and no browser bars.</p>
+            <ol>
+              <li>Make sure you are in <b>Safari</b> — no other iOS browser can install a web app.</li>
+              <li>Tap the <b>Share</b> button (the square with an arrow).</li>
+              <li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+            </ol>
+            <p class="muted">Two honest differences: ads are not blocked the way they are in the
+               Android app, and video will not start until you tap the player once — iOS insists.</p>
+          </div>` : ''}
+          ${IS_IOS && IS_STANDALONE ? `
+          <div class="ga-ios"><h3>${ICON.check} Installed</h3>
+            <p>You are running the installed app. Sign in under <b>Account</b> to carry your
+               watchlist and history across to your other devices.</p></div>` : ''}
         </div>
       </div>`;
 
