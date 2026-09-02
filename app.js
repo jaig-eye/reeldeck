@@ -244,7 +244,7 @@
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
-  const APP_VERSION = '1.0.15';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.16';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -426,7 +426,8 @@
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>',
     logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 12H4m0 0l4-4m-4 4l4 4M14 4h5a1 1 0 011 1v14a1 1 0 01-1 1h-5"/></svg>',
     devices: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="14" height="10" rx="1"/><rect x="17" y="9" width="5" height="11" rx="1"/><path d="M6 18h6"/></svg>',
-    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/></svg>'
+    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/></svg>',
+    mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/></svg>'
   };
 
   /* ------------------------------------------------------------
@@ -1376,8 +1377,184 @@
      ------------------------------------------------------------------------- */
   let authAbort = null;
 
+  /**
+   * Turn a password into the value the server actually sees.
+   *
+   * The password itself never leaves the device. PBKDF2 runs HERE for two reasons: a
+   * Cloudflare Worker on the free plan gets about 10ms of CPU per request, which is
+   * nowhere near enough for an iteration count worth having; and doing it this way a
+   * database dump yields only keyed hashes of an already-expensive derivation.
+   *
+   * The salt is the normalised email rather than a random per-user value, because the
+   * server must be able to verify a login without first telling the client whether the
+   * account exists -- and a per-user random salt would require exactly that round trip.
+   * The cost is that two people with the same password and the same address would get
+   * the same dk, which is not a scenario that exists.
+   */
+  const PBKDF2_ITERS = 210000;
+  async function deriveDk(email, password) {
+    const enc = new TextEncoder();
+    const base = await crypto.subtle.importKey(
+      'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt: enc.encode('reeldeck:pw:v1:' + email),
+        iterations: PBKDF2_ITERS, hash: 'SHA-256' },
+      base, 256
+    );
+    return btoa(String.fromCharCode.apply(null, new Uint8Array(bits)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  const normEmail = (v) => String(v || '').trim().toLowerCase();
+  const RX_EMAIL_C = /^[^\s@]{1,64}@[^\s@.]{1,63}(\.[^\s@.]{1,63}){1,4}$/;
+
+  /**
+   * The email/password panel. One form, two buttons -- signing in and creating an
+   * account differ by one endpoint, and making the user pick a mode first is a step
+   * that exists only to serve the implementation.
+   */
+  function pwPanel(mount) {
+    authStop();
+    // crypto.subtle exists only in a secure context. localhost and 127.0.0.1 count, so
+    // the packaged app and the desktop build are fine -- but the PWA served over plain
+    // http to another machine on the LAN is not, and there this path is impossible.
+    // Say which, rather than blaming the device.
+    if (!window.isSecureContext || !(window.crypto && crypto.subtle)) {
+      mount.innerHTML =
+        '<div class="au-err"><p>Passwords need a secure connection, and this page was ' +
+        'opened over plain <b>http</b>. Use the installed app, or open the site over ' +
+        '<b>https</b> \u2014 or sign in with Google or a device code instead.</p>' +
+        '<button class="btn" data-au="cancel">Back</button></div>';
+      if (IS_TV) tvInvalidate();
+      return;
+    }
+    mount.innerHTML =
+      // A real <form>: password managers look for one, and without it most will not
+      // offer to save what was just typed.
+      '<form class="au-flow au-narrow" id="pw-form" autocomplete="on">' +
+        '<div class="au-form">' +
+          '<label class="au-field"><span>Email</span>' +
+            '<input class="au-input wide" id="pw-email" name="email" type="email" ' +
+                   'inputmode="email" autocomplete="username" spellcheck="false" ' +
+                   'placeholder="you@example.com"></label>' +
+          '<label class="au-field"><span>Password</span>' +
+            '<input class="au-input wide" id="pw-pass" name="password" type="password" ' +
+                   'autocomplete="current-password" placeholder="At least 8 characters"></label>' +
+          '<p class="au-hint" id="pw-msg" role="status" aria-live="polite"></p>' +
+        '</div>' +
+        '<div class="au-foot">' +
+          '<span class="au-btns">' +
+            '<button class="btn primary sm" type="submit" data-au="pw-login">Sign in</button>' +
+            '<button class="btn sm" type="button" data-au="pw-signup">Create account</button>' +
+          '</span>' +
+          '<button class="btn sm ghost" type="button" data-au="cancel">Back</button>' +
+        '</div>' +
+        '<p class="au-fine">There is no password reset \u2014 nothing here can email you. ' +
+          'If you forget it, sign in on a device that still works and use ' +
+          '<b>Connect a device</b> to bring this one back.</p>' +
+      '</form>';
+
+    const form = mount.querySelector('#pw-form');
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); pwSubmit(mount, 'login'); });
+
+    mount.querySelectorAll('.au-input').forEach(el => {
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter') return;
+        // LET THE PLATFORM HAVE IT while the field is empty. The D-pad centre arrives
+        // as an Enter keydown, and on Android that is the only gesture that raises the
+        // soft keyboard for a focused input -- programmatic focus() does not. Taking
+        // the key unconditionally made both fields impossible to type into on a TV and
+        // told the user their empty email was malformed. Same guard as the search box.
+        if (!el.value.trim()) return;
+        ev.preventDefault();
+        // From the email field, move on rather than submitting a half-filled form.
+        const pass = mount.querySelector('#pw-pass');
+        if (el.id === 'pw-email' && pass && !pass.value) { pass.focus(); return; }
+        pwSubmit(mount, 'login');
+      });
+    });
+
+    const e = mount.querySelector('#pw-email');
+    if (e && !IS_TV) e.focus();                    // never raise a keyboard uninvited on TV
+    if (IS_TV) { tvInvalidate(); if (e) tvFocusEl(e); }   // ...but do give the ring a home
+  }
+
+  /** Shared by both buttons; `mode` picks the endpoint. */
+  let pwBusy = false, pwGen = 0;
+  async function pwSubmit(mount, mode) {
+    // One at a time. PBKDF2 plus two round trips is seconds on a TV box, the buttons
+    // stay live throughout, and a second tap spends another of the five-per-minute
+    // tokens the whole sign-in screen shares -- locking the user out of Google and
+    // pairing too, for a mistake the UI invited.
+    if (pwBusy) return;
+    const msg = mount.querySelector('#pw-msg');
+    const email = normEmail((mount.querySelector('#pw-email') || {}).value);
+    const pass = (mount.querySelector('#pw-pass') || {}).value || '';
+    const say = (t) => { if (msg) msg.textContent = t; };
+    if (!RX_EMAIL_C.test(email)) return say('That does not look like an email address.');
+    if (pass.length < 8) return say('Passwords need at least 8 characters.');
+
+    pwBusy = true;
+    const btns = mount.querySelectorAll('[data-au^="pw-"]');
+    btns.forEach(b => { b.disabled = true; });
+    const done = () => { pwBusy = false; btns.forEach(b => { b.disabled = false; }); };
+    // The screen can change under a derivation that takes seconds. If it has, throw the
+    // result away rather than signing someone in on a page they already left -- which
+    // would run adoptUid and, on a different identity, clear the local stores.
+    const gen = ++pwGen;
+    const stale = () => gen !== pwGen || !mount.isConnected;
+
+    say(mode === 'signup' ? 'Creating your account\u2026' : 'Checking\u2026');
+    let dk;
+    try { dk = await deriveDk(email, pass); }
+    catch (err) { done(); return say('Could not run the encryption step on this device.'); }
+    if (stale()) { done(); return; }
+
+    const r = await syncCall('/v1/auth/pw/' + (mode === 'signup' ? 'signup' : 'login'),
+                             { email: email, dk: dk });
+    if (stale()) { done(); return; }
+    done();
+    if (r.err) {
+      return say(
+        r.status === 409 ? 'That address already has an account \u2014 use Sign in.'
+        : r.status === 401 ? 'That email and password do not match an account.'
+        : r.status === 404 ? 'Password sign-in is not enabled on the server yet — use Google or a device code.'
+        : r.status === 429 && r.err === 'locked'
+            ? 'Too many failed attempts on this account. Try again in 15 minutes.'
+        : (typeof r.err === 'string' && r.err.indexOf('UID_PEPPER') >= 0)
+            ? 'Password sign-in is not finished being set up on the server.'
+        : r.err === 'net' || r.err === 'timeout' ? 'No connection. Try again.'
+        : r.err === 'slow down' ? 'Too many attempts. Wait a minute.'
+        : 'Could not sign in (' + r.err + ').');
+    }
+    toast(mode === 'signup' ? 'Account created' : 'Signed in');
+    return adoptUid(r.d.uid, 'email', email.split('@')[0]);
+  }
+
+  /**
+   * The ways in, identical on every device.
+   *
+   * They were not before: the splash offered Google and guest, the sync page offered
+   * Google and pairing, and nothing offered a password. Someone who did not want a
+   * Google account had no way of knowing the app supported them.
+   */
+  function authChoicesHTML(withGuest) {
+    return '<div class="au-choices">' +
+      '<button class="btn primary lg" data-au="google">' + ICON.user + ' Continue with Google</button>' +
+      '<button class="btn lg" data-au="pw">' + ICON.mail + ' Email and password</button>' +
+      '<button class="btn lg" data-au="pairshow">' + ICON.devices + ' Use a code from another device</button>' +
+      (withGuest ? '<button class="btn ghost" id="sp-guest">Continue as guest</button>' : '') +
+      '</div>';
+  }
+
   function authStop() {
-    if (authAbort) { clearTimeout(authAbort.timer); authAbort.dead = true; authAbort = null; }
+    pwGen++;                 // abandons any password derivation still in flight
+    if (!authAbort) return;
+    clearTimeout(authAbort.timer);
+    if (authAbort.offVis) authAbort.offVis();
+    authAbort.dead = true;
+    authAbort = null;
   }
 
   /** Adopt an identity and immediately reconcile with whatever the account already has. */
@@ -1447,27 +1624,64 @@
     } catch (e) { qr = ''; }
 
     const host = esc(String(d.verification_url || '').replace(/^https?:\/\//, ''));
-    set(
-      '<div class="au-flow">' +
-        (qr ? '<div class="au-qrwrap">' + qr +
-              '<span class="au-qrcap">Scan with your phone</span></div>' : '') +
-        '<ol class="au-steps">' +
-          '<li><span class="au-n">1</span><span class="au-sb">' +
-            '<span class="au-lead">Open this on your phone</span>' +
-            '<span class="au-url">' + host + '</span></span></li>' +
-          '<li><span class="au-n">2</span><span class="au-sb">' +
-            '<span class="au-lead">Enter this code</span>' +
-            '<span class="au-code">' + esc(d.user_code) + '</span></span></li>' +
-        '</ol>' +
-        '<div class="au-foot">' +
-          '<span class="au-live"><i></i>Waiting for you to approve\u2026</span>' +
-          '<button class="btn sm ghost" data-au="cancel">Cancel</button>' +
-        '</div>' +
-      '</div>'
-    );
+
+    if (IS_TV) {
+      // A television genuinely needs a second device: there is no browser worth using
+      // and no keyboard worth typing on. The QR and the code ARE the instruction.
+      set(
+        '<div class="au-flow">' +
+          (qr ? '<div class="au-qrwrap">' + qr +
+                '<span class="au-qrcap">Scan with your phone</span></div>' : '') +
+          '<ol class="au-steps">' +
+            '<li><span class="au-n">1</span><span class="au-sb">' +
+              '<span class="au-lead">Open this on your phone</span>' +
+              '<span class="au-url">' + host + '</span></span></li>' +
+            '<li><span class="au-n">2</span><span class="au-sb">' +
+              '<span class="au-lead">Enter this code</span>' +
+              '<span class="au-code">' + esc(d.user_code) + '</span></span></li>' +
+          '</ol>' +
+          '<div class="au-foot">' +
+            '<span class="au-live"><i></i>Waiting for you to approve\u2026</span>' +
+            '<button class="btn sm ghost" data-au="cancel">Cancel</button>' +
+          '</div>' +
+        '</div>'
+      );
+    } else {
+      // Phone, desktop, web: the browser is in your hand. Telling someone holding a
+      // phone to "open this on your phone" is the bug this branch exists to fix.
+      set(
+        '<div class="au-flow au-narrow">' +
+          '<span class="au-sb">' +
+            '<span class="au-lead">Approve the sign-in in the browser window that just opened, ' +
+              'then come back here.</span>' +
+          '</span>' +
+          '<div class="au-fallback">' +
+            '<span class="au-lead">Nothing opened? Go to <b>' + host + '</b> and enter</span>' +
+            '<span class="au-code">' + esc(d.user_code) + '</span>' +
+          '</div>' +
+          '<div class="au-foot">' +
+            '<span class="au-live"><i></i>Waiting for you to approve\u2026</span>' +
+            '<span class="au-btns">' +
+              '<button class="btn sm" data-au="reopen">Open again</button>' +
+              '<button class="btn sm ghost" data-au="cancel">Cancel</button>' +
+            '</span>' +
+          '</div>' +
+        '</div>'
+      );
+      // Remembered so "Open again" works without spending another device code.
+      me.url = d.qr_url;
+      openExternal(d.qr_url);
+    }
 
     // Poll at the interval Google asked for. The server raises it on slow_down.
     let wait = (d.interval || 5) * 1000;
+    // Coming back from the browser is the exact moment the answer is ready, and it is
+    // also the moment a backgrounded WebView's timers have been throttled or frozen --
+    // so waiting for the next tick can leave someone staring at "Waiting for you to
+    // approve" seconds after they approved.
+    const onVis = () => { if (document.visibilityState === 'visible' && !me.dead) tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    me.offVis = () => document.removeEventListener('visibilitychange', onVis);
     const tick = async () => {
       if (me.dead) return;
       const p = await syncCall('/v1/auth/google/poll', { session: d.session });
@@ -1573,6 +1787,7 @@
     const st = syncState();
     const on = !!(st.on && st.uid);
     const who = st.kind === 'google' ? (st.name ? esc(st.name) : 'your Google account')
+              : st.kind === 'email' ? (st.name ? esc(st.name) + "'s account" : 'your email account')
               : st.kind === 'paired' ? 'a connected device' : 'this device';
     const when = st.lastSyncAt ? relTime(st.lastSyncAt) : 'not yet';
 
@@ -1599,14 +1814,12 @@
               '<p class="sync-lead">Sign in and your watchlist, history and resume points ' +
               'follow you to your phone, your TV and your desktop. Without it everything ' +
               'stays on this device only.</p>' +
-              '<div class="sync-actions">' +
-                '<button class="btn primary lg" data-au="google">' + ICON.user + ' Sign in with Google</button>' +
-                '<button class="btn" data-au="pairshow">' + ICON.devices + ' Use a code from another device</button>' +
-              '</div>' +
+              authChoicesHTML(false) +
               '<div class="au-mount"></div>' +
-              '<p class="sync-fine">There is no password. Signing in with Google only reads your ' +
-              'name and email address to recognise you — Reeldeck never posts anything, and never ' +
-              'keeps a Google login token.</p>' +
+              '<p class="sync-fine">Signing in with Google only reads your name and email ' +
+              'address to recognise you — Reeldeck never posts anything and never keeps a ' +
+              'Google login token. A Google account and an email/password account are ' +
+              'separate, even with the same address.</p>' +
             '</div>') +
       '</div>'
     );
@@ -1634,18 +1847,35 @@
       // the document, and a document-wide lookup would drive the wrong one.
       const mount = root.querySelector('.au-mount');
       if (what === 'google') return googleSignIn(mount);
+      if (what === 'pw') return pwPanel(mount);
+      if (what === 'pw-login') return pwSubmit(mount, 'login');
+      if (what === 'pw-signup') return pwSubmit(mount, 'signup');
       if (what === 'retry') return googleSignIn(mount);
       if (what === 'pairshow' || what === 'retry-pair') return pairShow(mount);
       if (what === 'pairclaim') return pairClaim(mount);
       if (what === 'guest') { const st2 = syncState(); st2.splash = 1; saveSyncState(st2); return splashClose(); }
+      if (what === 'reopen') {
+        // Reuses the SAME device code -- asking Google for another one would spend
+        // quota and invalidate the code already on screen.
+        if (authAbort && authAbort.url) openExternal(authAbort.url);
+        return;
+      }
       if (what === 'cancel') {
         authStop();
         mount.innerHTML = '';
         const acts = root.querySelector('.splash-actions');
-        if (acts) acts.style.display = '';      // splash: give the two buttons back
+        if (acts) acts.style.display = '';      // splash: give the choices back
         const fine2 = root.querySelector('.splash-fine');
         if (fine2) fine2.style.display = '';
-        if (IS_TV) { tvInvalidate(); tvFocusFirst(false, false); }
+        if (IS_TV) {
+          tvInvalidate();
+          // Put the ring back on the choices EXPLICITLY. tvFocusFirst hunts inside
+          // #view and falls back to the header nav, and while the splash is open
+          // body.splash-on sets both to display:none -- so it would find nothing at
+          // all and leave the remote with no visible focus and nothing to press.
+          const first = root.querySelector('.au-choices [data-au]');
+          if (first) tvFocusEl(first); else tvFocusFirst(false, false);
+        }
         return;
       }
       if (what === 'now') { toast('Syncing…'); await syncOnce('manual'); return route(); }
@@ -1712,10 +1942,7 @@
         '<h2 id="splash-h">Watch everywhere</h2>' +
         '<p>Sign in and your watchlist, history and resume points follow you to your ' +
         'phone, your TV and your desktop.</p>' +
-        '<div class="splash-actions">' +
-          '<button class="btn primary lg" id="sp-in">' + ICON.user + ' Sign in with Google</button>' +
-          '<button class="btn ghost" id="sp-guest">Continue as guest</button>' +
-        '</div>' +
+        '<div class="splash-actions">' + authChoicesHTML(true) + '</div>' +
         '<p class="splash-fine">You can sign in later from the account menu.</p>' +
         '<div class="au-mount splash-mount"></div>' +
       '</div>';
@@ -1727,18 +1954,22 @@
     document.body.classList.add('splash-on');
     const done = () => { const st = syncState(); st.splash = 1; saveSyncState(st); };
     back.querySelector('#sp-guest').onclick = () => { done(); splashClose(); };
-    back.querySelector('#sp-in').onclick = () => {
+    // Any of the three real choices hides the chooser and hands over to its flow; the
+    // shared [data-au] handler below does the rest.
+    back.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-au]');
+      if (!b || b.id === 'sp-guest') return;
       done();
-      back.querySelector('.splash-actions').style.display = 'none';
+      const acts = back.querySelector('.splash-actions');
+      if (acts) acts.style.display = 'none';
       // "You can sign in later" is orientation for someone deciding. Once they have
       // decided it is just a stranded line above the thing they are now doing.
       const fine = back.querySelector('.splash-fine');
       if (fine) fine.style.display = 'none';
-      googleSignIn(back.querySelector('.au-mount'));
-    };
+    }, true);      // capture, so it runs BEFORE wireAu starts the flow
     // The same controls the #/sync page uses -- Cancel and Try again live in here too.
     wireAu(back);
-    if (IS_TV) { tvInvalidate(); tvFocusEl(back.querySelector('#sp-in')); }
+    if (IS_TV) { tvInvalidate(); tvFocusEl(back.querySelector('[data-au="google"]')); }
   }
 
   const TRACK_SEED = {

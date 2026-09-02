@@ -2140,3 +2140,41 @@ body.tv [data-au="pairclaim"] { display: none; }
    from a sofa as well as hittable with a thumb. */
 body.tv .acct-btn { width: clamp(40px, 5.2vh, 56px); height: clamp(40px, 5.2vh, 56px); }
 body.tv .acct-av { font-size: clamp(14px, 1.9vh, 20px); }
+
+/* The phone/desktop sign-in panel: the browser has already opened, so the code is a
+   fallback rather than the instruction, and it is sized down accordingly. */
+.au-fallback {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 14px 16px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.au-fallback .au-code { font-size: clamp(19px, 5vw, 24px); }
+.au-fallback b { color: var(--text); font-weight: 700; }
+.au-btns { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---- the three ways in ----------------------------------------------------
+   One column, same order, every device. The ranking is by how little the person has
+   to type: Google needs a tap, a pairing code needs six characters, a password needs
+   two fields -- which on a remote is the difference between five seconds and a minute.
+   -------------------------------------------------------------------------- */
+.au-choices { display: flex; flex-direction: column; gap: 10px; }
+.au-choices .btn { justify-content: center; }
+.sync-off .au-choices, .sync-on .au-choices { margin-top: 22px; max-width: 420px; }
+.splash-actions .au-choices { max-width: 340px; margin: 0 auto; }
+
+.au-form { display: flex; flex-direction: column; gap: 14px; }
+.au-field { display: flex; flex-direction: column; gap: 6px; }
+.au-field > span { font-size: 13px; color: var(--muted); font-weight: 600; }
+/* The pairing code input is deliberately wide-tracked and monospace; an email is not a
+   code, so it gets ordinary text metrics and the full width. */
+.au-input.wide {
+  max-width: none; font-family: inherit; font-size: 16px;   /* 16px: iOS zooms below it */
+  letter-spacing: normal; text-transform: none;
+}
+.au-fine { font-size: 12px; line-height: 1.55; color: var(--muted-2); margin: 4px 0 0; }
+.au-fine b { color: var(--muted); font-weight: 700; }
+
+body.tv .au-choices { max-width: 520px; }
+body.tv .au-field > span { font-size: clamp(14px, 2vh, 18px); }
+body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12px, 1.8vh, 18px) 16px; }
+

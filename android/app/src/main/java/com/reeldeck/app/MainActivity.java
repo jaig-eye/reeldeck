@@ -105,6 +105,9 @@ public class MainActivity extends BridgeActivity {
     /**
      * The app's OWN outbound links, which must reach the system browser.
      *
+     * Four hosts: the Releases page, the TMDB attribution the API terms require, and
+     * the two Google endpoints the sign-in flow hands to the browser.
+     *
      * Returning true for every off-origin main-frame load also swallowed the two links
      * the app itself offers: the Releases page, and the TMDB attribution in the footer
      * that TMDB's API terms require to work. WebView retargets window.open(_blank) and
@@ -120,7 +123,14 @@ public class MainActivity extends BridgeActivity {
         if (host == null) return false;
         host = host.toLowerCase(Locale.ROOT);
         return host.equals("github.com") || host.endsWith(".github.com")
-                || host.equals("themoviedb.org") || host.endsWith(".themoviedb.org");
+                || host.equals("themoviedb.org") || host.endsWith(".themoviedb.org")
+                // Google sign-in. The app opens https://www.google.com/device?user_code=...
+                // in the system browser; without these two hosts that navigation is
+                // swallowed here and the Sign in button appears to do nothing at all.
+                // EXACT hosts, not a .google.com suffix: the suffix would also admit
+                // every Google-hosted redirector and ad domain, and a mirror redirect
+                // only has to reach one of those to escape this check.
+                || host.equals("www.google.com") || host.equals("accounts.google.com");
     }
 
     /**
