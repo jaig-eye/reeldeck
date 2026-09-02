@@ -144,6 +144,70 @@ Which message appears depends on the Mac:
 3. Drag the Reeldeck app from Finder into the Terminal window (fills in its path).
 4. Press **Return**, then open the app normally. (If "permission denied", prefix with `sudo `.)
 
+### Which Mac file to download
+
+ → **About This Mac**. "Apple M1/M2/M3/M4…" → take the **arm64** dmg. "Intel" → take
+the **x64** one. The wrong one either refuses to launch or runs slowly under Rosetta.
+
+### Auto-update does not work on macOS
+
+Squirrel.Mac refuses to apply an update to an app without a valid code signature, and
+these builds are unsigned. Rather than detect a release, promise an install and then
+fail — every six hours, for ever — the desktop updater is switched off on macOS: it
+reports that a newer version exists and asks you to download it. Windows auto-update is
+unaffected. Sign the build and this restriction goes away on its own.
+
+---
+
+## iPhone and iPad — install the web app, free
+
+There is no App Store build and there does not need to be. The app installs from Safari:
+
+1. Open the site in **Safari**. It has to be Safari — other iOS browsers cannot install
+   web apps.
+2. **Share** → **Add to Home Screen** → **Add**.
+
+It gets its own icon and opens without browser chrome, like any other app. The watchlist
+and history live in the device's local storage, which an installed home-screen web app
+keeps; and if you are signed in, all of it is on the sync server as well.
+
+**Honest differences from the Android app**, so nobody is surprised:
+
+- **No ad blocking.** The Android build blocks pop-unders in native code and the desktop
+  build uses a blocklist. Safari has neither, so mirror ads behave as they do in any
+  browser tab.
+- **Autoplay will not fire.** iOS requires a tap inside the player before video starts,
+  whatever the provider's autoplay setting says.
+- **TV mode does less on an iPhone.** iOS does not permit fullscreen on arbitrary
+  elements, so the layout fills the screen but the system does not go fullscreen.
+  Nothing breaks; the button simply does less than it does elsewhere. It works properly
+  on iPad.
+- Some mirrors will jump straight into iOS's own fullscreen video player when playback
+  starts. That is usually an improvement.
+
+---
+
+## Apple TV — not possible, and what to do instead
+
+**There is no way to run this on an Apple TV.** Not difficult — impossible. tvOS ships
+no web view of any kind, so there is nothing for a web app to run inside, and no browser
+has ever existed for the platform. A native rewrite would not rescue it either: this app
+deliberately embeds player *pages* rather than video URLs, and tvOS has no way to render
+a page. Apps sold as "browsers for Apple TV" are iPhone apps that mirror their own
+screen, which is something you can already do for free.
+
+Two substitutes, better one first:
+
+1. **A cheap Google TV or Chromecast dongle in the other HDMI port.** It runs the APK
+   this repo already builds — native ad blocking, D-pad navigation, real TV resolution,
+   no phone involved. Cheaper than an Apple developer account and better than anything
+   Apple would have permitted.
+2. **AirPlay screen mirroring** from the iPhone web app: Control Centre → **Screen
+   Mirroring** → the Apple TV, then open a title and press **TV mode**. It mirrors and
+   re-encodes the phone's screen, so expect some latency, set Auto-Lock to Never because
+   the phone must stay awake for the whole film, hold it landscape to avoid black bars,
+   and be aware that notifications and calls appear on the television.
+
 ---
 
 ## Removing the warnings entirely (optional, costs money)
