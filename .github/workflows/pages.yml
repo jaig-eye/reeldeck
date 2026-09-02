@@ -84,11 +84,14 @@ jobs:
       - name: Disable Jekyll processing
         run: touch www/.nojekyll
 
-      # enablement: true turns Pages on for the repo the first time this runs, so
-      # there is nothing to click in Settings.
+      # NO enablement: true. Creating a Pages site is an admin-scoped API call and the
+      # workflow's built-in GITHUB_TOKEN cannot make it -- it fails with
+      # "Resource not accessible by integration", which is what happened the first time
+      # this ran. Pages has to be switched on once, by hand:
+      #     Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+      # After that this step just reads the existing configuration and every later
+      # deploy is automatic.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
