@@ -64,6 +64,8 @@
         }
       ],
       "category": "public.app-category.entertainment",
+    "//identity": "Ad-hoc ('-'). Without ANY signature an arm64 binary is refused outright by macOS with an unbypassable 'is damaged' error; an ad-hoc signature gives it a valid cdhash, which should demote that to the recoverable 'Apple could not verify' dialog that has an Open Anyway button. It does NOT satisfy Gatekeeper and is not notarization. Must NOT be paired with hardenedRuntime.",
+    "identity": "-",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "win": {

@@ -8,6 +8,7 @@ const { app, BrowserWindow, shell, Menu, session, ipcMain } = require('electron'
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const http = require('http');
+const { pathToFileURL } = require('url');
 const fs = require('fs');
 
 const ROOT = path.join(__dirname, '..'); // the moviestream folder (index.html, app.js, styles.css)
@@ -31,8 +32,18 @@ const MIME = {
 // Falls back to the next port only if one is already taken.
 const PREFERRED_PORTS = Array.from({ length: 30 }, (_, i) => 43110 + i);
 
+// Memoised. On macOS, closing the window does NOT quit the app (window-all-closed
+// deliberately skips app.quit() on darwin, which is the platform convention), so
+// clicking the dock icon later fires 'activate' -> createWindow() -> startServer().
+// Without this cache that second call finds 43110 still bound, falls through to 43111,
+// and the app reopens on a DIFFERENT ORIGIN -- at which point localStorage is empty and
+// the watchlist, history, resume points and the signed-in account have all apparently
+// vanished. The comment above about a fixed port preserving localStorage is exactly
+// what that path defeats.
+let serverPromise = null;
 function startServer() {
-  return new Promise((resolve, reject) => {
+  if (serverPromise) return serverPromise;
+  serverPromise = new Promise((resolve, reject) => {
     // A throw out of a request listener is an UNCAUGHT exception: Node does not turn
     // it into a 500, and Electron's default handler pops a MODAL error box that
     // freezes the window until it is dismissed. Both inputs below are attacker
@@ -71,6 +82,10 @@ function startServer() {
     server.on('listening', () => resolve(PREFERRED_PORTS[idx]));
     server.listen(PREFERRED_PORTS[idx], '127.0.0.1');
   });
+  // A failed bind must not be cached: the fallback is file://, and retrying on the
+  // next activate is better than pinning the app to a rejected promise forever.
+  serverPromise.catch(() => { serverPromise = null; });
+  return serverPromise;
 }
 
 // Network-layer ad blocking (EasyList/uBlock filters via Ghostery's engine).
@@ -130,6 +145,18 @@ function setupUpdater() {
     }
     return;
   }
+  // Squirrel.Mac refuses to apply an update to an app without a valid code signature,
+  // and these builds are unsigned. Left alone the updater still DETECTS the release,
+  // fires update-available, then fails the handoff and fires error -- an
+  // available-then-failed pair every six hours, for ever, that the user can do nothing
+  // about. Reuse the same honest state the portable build uses: there is a new
+  // version, go and download it. Delete this the day the build is signed.
+  if (process.platform === 'darwin') {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('reeldeck:update', { state: 'portable' });
+    }
+    return;
+  }
   try {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -154,7 +181,14 @@ async function createWindow() {
     url = `http://127.0.0.1:${port}/`;
   } catch (e) {
     // Fallback: load straight from disk if the loopback server can't bind.
-    url = 'file://' + path.join(ROOT, 'index.html');
+    // pathToFileURL, not string concatenation. The drive letter and spaces both
+    // survive concatenation (the URL parser normalises them), but '#' and '?' do not:
+    // an install under a path containing either -- a Windows username may contain '#'
+    // -- has everything after it swallowed as a fragment or query, so the one route
+    // that exists to rescue a failed bind loads the wrong file. Measured, not assumed:
+    //   concat  file:///C:/Users/bob/reel#deck\index.html   <- truncated at '#'
+    //   proper  file:///C:/Users/bob/reel%23deck/index.html
+    url = pathToFileURL(path.join(ROOT, 'index.html')).href;
   }
 
   win = new BrowserWindow({
@@ -191,7 +225,19 @@ async function createWindow() {
     if (e.isMainFrame && e.url && !e.url.startsWith(url)) e.preventDefault();
   });
 
-  Menu.setApplicationMenu(null);
+  // On Windows and Linux the menu bar is pure chrome and removing it is right. On
+  // macOS the menu bar is where the standard key equivalents actually LIVE -- with no
+  // menu there is no Edit menu, and therefore no Cmd+C, Cmd+V, Cmd+X, Cmd+A, and no
+  // Cmd+Q to quit. Give macOS the minimum that restores them.
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { role: 'appMenu' },      // About / Hide / Quit  -> Cmd+Q, Cmd+H
+      { role: 'editMenu' },     // Cut / Copy / Paste / Select All -> Cmd+X/C/V/A
+      { role: 'windowMenu' },   // Minimise / Zoom / Close -> Cmd+M, Cmd+W
+    ]));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
   win.loadURL(url);
 }
 
