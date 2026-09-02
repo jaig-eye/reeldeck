@@ -353,6 +353,12 @@ body::before {
 @media (hover: hover) {
   .card:hover .poster .card-hover { opacity: 1; pointer-events: auto; }
 }
+/* Touch has no hover at all, so without this the title, year and runtime were simply
+   unreachable on a phone. Press-and-hold reveals them; a tap still navigates, so this
+   costs nothing. Kept outside the (hover: hover) block on purpose. */
+@media (hover: none) {
+  .card:not(.rank-item):active .poster .card-hover { opacity: 1; }
+}
 .ch-play { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(.6); width: 52px; height: 52px; border-radius: 50%;
   background: var(--accent); color: var(--accent-ink); border: 0; display: grid; place-items: center; cursor: pointer; transition: .2s; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
 @media (hover: hover) { .card:hover .poster .ch-play { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
@@ -466,15 +472,22 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 }
 @media (hover: hover) { .card:hover .poster { transform: translateY(-4px); box-shadow: 0 14px 34px rgba(0,0,0,.5); } }
 .card .poster img { width: 100%; height: 100%; object-fit: cover; }
+/* With the caption gone these are the only chrome on a card, so they read as heavy
+   very quickly. Dark glass, a hairline, and the accent kept for the star alone. */
 .card .poster .rate {
-  position: absolute; top: 8px; left: 8px; background: rgba(11,13,18,.82);
-  color: var(--accent-on-dark); font-weight: 800; font-size: 12px; padding: 3px 8px; border-radius: 8px;
-  display: flex; align-items: center; gap: 4px; backdrop-filter: blur(4px);
+  position: absolute; top: 8px; left: 8px;
+  background: rgba(11,13,18,.72); border: 1px solid rgba(255,255,255,.14);
+  color: #fff; font-weight: 700; font-size: 11.5px; padding: 3px 8px; border-radius: 8px;
+  display: flex; align-items: center; gap: 4px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
+.card .poster .rate svg { color: var(--accent-on-dark); }
 .card .poster .typebadge {
-  position: absolute; top: 8px; right: 8px; background: rgba(124,92,255,.9);
-  color: #fff; font-weight: 700; font-size: 10px; letter-spacing: .5px; text-transform: uppercase;
-  padding: 3px 7px; border-radius: 7px;
+  position: absolute; top: 8px; right: 8px;
+  background: rgba(11,13,18,.72); border: 1px solid rgba(255,255,255,.14);
+  color: rgba(255,255,255,.86); font-weight: 700; font-size: 10px; letter-spacing: .5px;
+  text-transform: uppercase; padding: 3px 7px; border-radius: 8px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .card .poster .wl {
   position: absolute; bottom: 8px; right: 8px; width: 34px; height: 34px; border-radius: 50%;
@@ -1250,14 +1263,23 @@ body.tv .card:focus .poster, body.tv .card.tv-focus .poster {
 }
 /* the focused poster grows downward by height x 0.05 plus its ring, so the caption
    needs that much clearance or the selection covers its own title */
-body.tv .card .cap { padding: clamp(16px, 3vh, 26px) 3px 0; }
+/* The focused poster grows by height x 0.05 plus its ring. With no caption below to
+   eat into, the rail's own padding is what has to absorb it -- body.tv .rail .track
+   already pads generously for exactly this. */
+body.tv .card .cap { padding: clamp(10px, 1.6vh, 16px) 3px 0; }
 body.tv .card .cap .t { font-size: clamp(13px, 2.5vh, 15.5px); }
 body.tv .card .cap .y { font-size: clamp(12px, 2.2vh, 14px); }
-body.tv .card:focus .cap .t, body.tv .card.tv-focus .cap .t { color: var(--text); font-weight: 800; }
-body.tv .card:focus .cap .y, body.tv .card.tv-focus .cap .y { color: var(--accent); }
 /* On TV the poster overlay only covers the art we just scaled up, and the title is
    already spelled out underneath the card. */
-body.tv .card .poster .card-hover { display: none; }
+/* On TV the caption under the poster used to carry the title, so this overlay was
+   switched off. The caption is gone now -- posters say their own names -- so the
+   overlay becomes how the FOCUSED card names itself, and only the focused one. */
+body.tv .card .poster .card-hover { display: flex; opacity: 0; pointer-events: none; }
+/* .rank-item excluded: a Top 10 tile's overlay holds only a play button and no
+   caption, so revealing it on focus paints an empty black gradient over the artwork.
+   Those tiles already show focus by lighting their numeral. */
+body.tv .card:not(.rank-item):focus .poster .card-hover,
+body.tv .card:not(.rank-item).tv-focus .poster .card-hover { opacity: 1; }
 /* Row-mates step back so the selection is the only bright thing on the row. Only the
    ARTWORK dims — dimming the whole card took the captions to 3.7:1 and the years to
    2.3:1, i.e. unreadable, while they are still meant to be scannable. */
@@ -1813,3 +1835,308 @@ body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
 
 /* The now-playing line is a sentence, not a toolbar. */
 .source-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+
+/* The two view modes belong in the open: they are how you make the player bigger,
+   which is a per-sitting decision, not a setting you configure once. */
+.sb-modes { display: inline-flex; gap: 10px; margin-left: auto; }
+@media (max-width: 640px) { .sb-modes { margin-left: 0; } }
+/* The season rail on the player page carries no heading of its own -- the strip
+   below it is the subject, and this is just which slice of it you are looking at. */
+#pl-seasons { margin: 0 0 12px; }
+
+/* The player page's season control: one line, quiet, native. */
+.pl-season { display: inline-block; margin: 0 0 12px; }
+.pl-season select {
+  height: 38px; padding: 0 12px; border-radius: 10px;
+  background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
+  font: inherit; font-weight: 700; font-size: 14px; cursor: pointer;
+}
+.pl-season select:hover { border-color: var(--accent-2); }
+body.tv .pl-season select { height: clamp(38px, 6vh, 54px); font-size: clamp(14px, 2.2vh, 19px); padding: 0 18px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Arrows on the detail page's season rail -- it is the same kind of horizontal row
+   as every other rail, and long shows push season 19 well off screen. The rail-wrap
+   edge fade would clip the pills' focus ring, so it is disabled just here. */
+.season-wrap { position: relative; }
+body:not(.tv) .season-wrap { -webkit-mask-image: none; mask-image: none; }
+.season-wrap .rail-arrow { top: 40%; }
+
+/* ============================================================================
+   NAVIGATION — a bar of three icons, and a drawer that owns browsing
+   ----------------------------------------------------------------------------
+   The header used to hold brand, four nav links, an always-open search field and
+   two icon buttons, and on Movies/TV a second wall of controls sat underneath it.
+   Now: burger, brand, then search / watchlist / account. Everything occasional
+   moved under the account button; browsing by genre moved into the drawer, which
+   is what let the filter bar collapse to a single line.
+   ========================================================================== */
+.hdr-gap { flex: 1; }
+.nav-burger { flex: none; }
+/* The inline nav is a desktop convenience on top of the drawer, not the only way
+   in -- below 860px the drawer and the bottom bar cover it. */
+@media (max-width: 860px) { header.top nav.main { display: none; } }
+
+.acct-btn {
+  /* 40px, not 34: this is now the only way to Settings, Check for updates, Install on
+     TV and Sign in, and 34 is below every published minimum touch target. */
+  flex: none; width: 40px; height: 40px; border-radius: 50%; padding: 0;
+  border: 1px solid var(--border); background: var(--surface-2); cursor: pointer;
+  display: grid; place-items: center; transition: border-color var(--dur-ui) var(--ease-ui);
+}
+.acct-btn:hover { border-color: var(--accent-2); }
+.acct-av {
+  width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; font-size: 13px; color: var(--accent-ink);
+  background: var(--accent);
+}
+.acct-menu {
+  position: fixed; z-index: 260; min-width: 236px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 24px 60px -16px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.05);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  animation: rd-rise 180ms var(--ease-enter) both;
+}
+.am-who { display: flex; align-items: center; gap: 10px; padding: 8px 10px 12px; }
+.am-who .acct-av { width: 34px; height: 34px; flex: none; }
+.am-who b { display: block; font-size: 14px; }
+.am-who small { color: var(--muted); font-size: 12px; }
+.am-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px; border: 0; border-radius: 10px; background: none; cursor: pointer;
+  color: var(--text); font: inherit; font-weight: 600; font-size: 14px; text-align: left;
+}
+.am-item svg { width: 16px; height: 16px; flex: none; color: var(--muted); }
+.am-item:hover { background: var(--surface-2); }
+@media (prefers-reduced-motion: reduce) { .acct-menu { animation: none; } }
+
+/* ---- Browse drawer --------------------------------------------------------- */
+.drawer-back { position: fixed; inset: 0; z-index: 270; background: rgba(0,0,0,.55); }
+.drawer {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 280;
+  width: min(320px, 86vw); padding: 14px 18px 28px; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--border);
+  transform: translateX(-100%); transition: transform 260ms var(--ease-enter);
+  box-shadow: 24px 0 60px -20px rgba(0,0,0,.8);
+}
+.drawer.open { transform: none; }
+@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
+body.drawer-on { overflow: hidden; }
+.dw-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.dw-brand { font-family: var(--font-display); font-weight: 800; letter-spacing: -.03em; font-size: 20px; }
+.dw-nav { display: flex; flex-direction: column; }
+.dw-nav a {
+  padding: 11px 10px; border-radius: 10px; font-weight: 700; font-size: 17px;
+  color: var(--text); text-decoration: none;
+}
+.dw-nav a:hover { background: var(--surface-2); }
+.dw-sep { border: 0; border-top: 1px solid var(--border); margin: 16px 0 14px; }
+.dw-kicker {
+  font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted-2); padding: 0 10px 8px;
+}
+.dw-genres { display: flex; flex-direction: column; }
+.dw-genres a {
+  padding: 9px 10px; border-radius: 10px; color: var(--muted); text-decoration: none;
+  font-weight: 600; font-size: 15px;
+}
+.dw-genres a:hover { background: var(--surface-2); color: var(--text); }
+body.tv .drawer { width: min(420px, 40vw); padding: 22px 24px 40px; }
+body.tv .dw-nav a { font-size: clamp(18px, 2.8vh, 24px); padding: clamp(10px, 1.8vh, 16px) 12px; }
+body.tv .dw-genres a { font-size: clamp(15px, 2.3vh, 20px); }
+
+/* ---- Filters, collapsed ---------------------------------------------------- */
+.filters { border: 1px solid var(--border); border-radius: 14px; background: var(--bg-2); margin-bottom: 18px; }
+.filters > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 12px;
+  padding: 13px 16px; border-radius: 14px; font-weight: 700;
+}
+.filters > summary::-webkit-details-marker { display: none; }
+.filters > summary::after {
+  content: ''; margin-left: auto; width: 8px; height: 8px; flex: none; align-self: center;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px); transition: transform var(--dur-ui) var(--ease-ui);
+}
+.filters[open] > summary::after { transform: rotate(-135deg) translateY(2px); }
+@media (hover: hover) { .filters > summary:hover { background: var(--surface); } }
+.fl-n { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.filters .toolbar { border: 0; background: none; margin: 0; padding: 0 16px 16px; }
+body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: clamp(15px, 2.3vh, 19px); }
+
+/* The search page owns the field now, so give it room on every platform. */
+.tv-search { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+
+/* The runtime appended to the hover caption once it has been fetched. */
+.ch-rt { white-space: nowrap; }
+
+/* ============================================================================
+   SYNC / SIGN-IN
+   ----------------------------------------------------------------------------
+   The device-flow panel is the first thing a new user meets, and the thing they
+   look back at from across a room while holding a phone. So the CODE is the
+   loudest element on it, the steps are numbered rather than narrated, and the QR
+   is generated large and rendered pixelated — a fractional downscale of a 1-bit
+   pattern smears into a pale square that neither scans nor reads as a QR at all.
+   ========================================================================== */
+.sync-page { max-width: 780px; }
+.sync-lead { color: var(--muted); font-size: 15.5px; line-height: 1.65; max-width: 58ch; }
+.sync-fine { color: var(--muted-2); font-size: 12.5px; line-height: 1.65; max-width: 58ch; margin-top: 24px; }
+
+.sync-facts { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border);
+  border-radius: 14px; overflow: hidden; margin: 22px 0; }
+.sync-facts > div { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 16px; padding: 14px 16px; background: var(--bg-2); }
+.sync-facts span { color: var(--muted); font-size: 13.5px; }
+.sync-facts b { font-weight: 700; font-size: 14px; }
+.sync-facts .bad b { color: var(--danger, #ff6b6b); }
+
+.sync-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0 0; }
+.btn.danger { color: var(--danger, #ff6b6b);
+  border-color: color-mix(in srgb, var(--danger, #ff6b6b) 40%, transparent); }
+.btn.ghost { background: none; border-color: transparent; color: var(--muted); }
+@media (hover: hover) { .btn.ghost:hover { color: var(--text); background: var(--surface-2); } }
+
+/* ---- the device-flow panel ------------------------------------------------ */
+.au-mount:empty { display: none; }
+.au-flow {
+  display: grid; gap: 22px 28px; align-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin-top: 24px; padding: 24px;
+  border: 1px solid var(--border); border-radius: 18px; background: var(--bg-2);
+}
+.au-flow.au-narrow { grid-template-columns: minmax(0, 1fr); }
+
+.au-qrwrap { grid-row: span 2; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.au-qr {
+  width: 176px; height: 176px; display: block; border-radius: 12px;
+  background: #fff; padding: 10px;
+  /* Keep the modules square-edged at any size. Smooth interpolation on a 1-bit
+     pattern is what made this render as an empty white card. */
+  image-rendering: pixelated;
+}
+.au-qrcap { font-size: 11.5px; color: var(--muted-2); letter-spacing: .04em; }
+
+.au-steps { grid-column: 2; list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 20px; }
+.au-steps li { display: flex; gap: 14px; align-items: flex-start; }
+.au-n {
+  flex: none; width: 24px; height: 24px; margin-top: 2px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px; font-weight: 800;
+  color: var(--accent-ink, #06121a); background: var(--accent);
+}
+.au-sb { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.au-lead { color: var(--muted); font-size: 13.5px; line-height: 1.4; }
+.au-url {
+  font-family: var(--font-display); font-size: clamp(17px, 2.4vw, 21px);
+  font-weight: 800; letter-spacing: -.02em; color: var(--text); word-break: break-word;
+}
+/* Variable width on purpose: the codes Google issues are not a fixed length — 11 and
+   12 characters have both been observed — so nothing here may assume a fixed box. */
+.au-code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 700; letter-spacing: .06em; line-height: 1.15; color: var(--accent);
+  /* NEVER wrap. break-all split HTZQ-KVLM into "HTZQ-KVL" and "M", which is unreadable
+     at a glance and actively misleading on a code somebody is copying by eye. The size
+     tracks width as well as height so it shrinks to fit instead of breaking. */
+  white-space: nowrap;
+  font-size: clamp(20px, min(6.2vw, 34px), 34px);
+}
+
+.au-foot {
+  grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+  padding-top: 18px; border-top: 1px solid var(--border);
+}
+.au-live { display: inline-flex; align-items: center; gap: 9px;
+  color: var(--muted-2); font-size: 13px; }
+.au-live i {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none;
+  animation: au-pulse 1.6s ease-in-out infinite;
+}
+@keyframes au-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .au-live i { animation: none; opacity: .8; } }
+
+.au-wait, .au-err { margin-top: 22px; padding: 20px 22px; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--bg-2); color: var(--muted); font-size: 14.5px; }
+.au-err p { margin: 0 0 14px; color: var(--text); }
+.au-hint { color: var(--muted-2); font-size: 13px; line-height: 1.5; }
+.au-input {
+  width: 100%; max-width: 260px; display: block;
+  padding: 13px 16px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text);
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 22px;
+  letter-spacing: .22em; text-transform: uppercase;
+}
+.au-input:focus { outline: none; border-color: var(--accent); }
+
+/* Narrow: stack, and centre the QR so it does not sit orphaned in a corner. */
+@media (max-width: 560px) {
+  .au-flow { grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px; }
+  .au-qrwrap { grid-row: auto; }
+  .au-steps { grid-column: 1; }
+  .au-qr { width: 156px; height: 156px; }
+}
+
+/* ---- first-run splash ----------------------------------------------------- */
+.splash-back {
+  position: fixed; inset: 0; z-index: 400; overflow-y: auto;
+  display: grid; place-items: center; padding: 28px 20px; background: var(--bg);
+  /* Reaches past the fold and fades over a long tail. At 85%/68% the stop landed
+     around two-thirds down a phone screen and read as a horizontal seam. */
+  background-image: radial-gradient(150% 105% at 50% -18%,
+    color-mix(in srgb, var(--accent) 15%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 5%, transparent) 45%, transparent 82%);
+}
+.splash { width: min(620px, 100%); text-align: center; margin: auto 0; }
+.splash-brand { display: inline-flex; align-items: center; gap: 11px; margin-bottom: 26px; }
+.splash-brand .brand-mark { width: 34px; height: 34px; }
+.splash-word { font-family: var(--font-display); font-weight: 800;
+  letter-spacing: -.03em; font-size: 23px; }
+.splash h2 { font-family: var(--font-display); font-size: clamp(28px, 5.2vw, 40px);
+  font-weight: 800; letter-spacing: -.03em; line-height: 1.1; margin: 0 0 14px; }
+.splash > p { color: var(--muted); font-size: 15.5px; line-height: 1.65;
+  margin: 0 auto 28px; max-width: 42ch; }
+.splash-actions { display: flex; flex-direction: column; gap: 10px;
+  max-width: 330px; margin: 0 auto; }
+.splash-actions .btn { justify-content: center; }
+.splash-fine { font-size: 12.5px !important; color: var(--muted-2) !important;
+  margin: 18px auto 0 !important; }
+.splash-mount:not(:empty) { margin-top: 10px; text-align: left; }
+.splash-mount .au-flow { margin-top: 0; }
+
+/* The splash is opaque and full-screen, so hiding what sits behind it changes nothing
+   visually — but display:none also makes those elements unfocusable, which is what
+   stops the pending D-pad focus grab in route() from putting the ring on Home, behind
+   the overlay, with no way back to it. */
+body.splash-on #view, body.splash-on header.top { display: none; }
+
+@media (max-height: 760px) {
+  .splash-brand { margin-bottom: 16px; }
+  .splash h2 { font-size: clamp(23px, 4.4vw, 30px); margin-bottom: 9px; }
+  .splash > p { margin-bottom: 18px; font-size: 14px; }
+  .splash-mount .au-qr { width: 150px; height: 150px; }
+}
+
+/* ---- TV ------------------------------------------------------------------- */
+body.tv .au-qr { width: clamp(200px, 26vh, 280px); height: clamp(200px, 26vh, 280px); }
+body.tv .au-code { font-size: clamp(26px, min(5.6vh, 3.6vw), 52px); }
+body.tv .au-url { font-size: clamp(21px, 3.2vh, 30px); }
+body.tv .au-n { width: clamp(26px, 3.4vh, 34px); height: clamp(26px, 3.4vh, 34px);
+  font-size: clamp(13px, 1.9vh, 17px); }
+body.tv .au-lead { font-size: clamp(14px, 2vh, 19px); }
+body.tv .splash h2 { font-size: clamp(32px, 5.6vh, 50px); }
+body.tv .splash > p { font-size: clamp(16px, 2.3vh, 22px); }
+body.tv .splash-actions { max-width: 460px; }
+body.tv .splash-brand .brand-mark { width: clamp(38px, 5vh, 52px); height: clamp(38px, 5vh, 52px); }
+body.tv .splash-word { font-size: clamp(24px, 3.4vh, 34px); }
+/* No text entry on a remote, so the claim side of pairing never appears there — the
+   TV is always the device that SHOWS a code, never the one that types one. */
+body.tv [data-au="pairclaim"] { display: none; }
+
+/* The account button carries the whole overflow menu now, so it has to be findable
+   from a sofa as well as hittable with a thumb. */
+body.tv .acct-btn { width: clamp(40px, 5.2vh, 56px); height: clamp(40px, 5.2vh, 56px); }
+body.tv .acct-av { font-size: clamp(14px, 1.9vh, 20px); }
