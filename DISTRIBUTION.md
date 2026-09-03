@@ -149,19 +149,34 @@ Which message appears depends on the Mac:
  → **About This Mac**. "Apple M1/M2/M3/M4…" → take the **arm64** dmg. "Intel" → take
 the **x64** one. The wrong one either refuses to launch or runs slowly under Rosetta.
 
-### Why the build carries an ad-hoc signature
+### Why the build is ad-hoc signed, and why it is done in a hook
 
-`build.mac.identity` is `"-"`, an ad-hoc signature. It does not satisfy Gatekeeper and
-it is not notarization, but it does give the arm64 binary a valid cdhash — and without
-*any* signature an arm64 binary is refused outright with an unbypassable "is damaged"
-error, whereas one with a cdhash gets the recoverable "Apple could not verify" dialog
-that has an **Open Anyway** button. It must not be paired with `hardenedRuntime`.
+On Apple Silicon, macOS refuses to launch a native binary carrying **no** signature at
+all: you get *"Reeldeck is damaged and can't be opened"*, which has no override — there
+is no **Open Anyway** entry for it in Privacy & Security, and the only way past it is a
+Terminal command. An **ad-hoc** signature (a cdhash with no certificate behind it) does
+not satisfy Gatekeeper and is not notarization, but it is enough to demote that hard
+block to the ordinary *"Apple could not verify…"* dialog, which two clicks will clear.
 
-Do not try to explain this in `package.json` itself. electron-builder validates its
-config against a schema with `additionalProperties: false`, so a `"//identity"` key
-added as a comment fails the build — on **both** Windows and macOS, because the whole
-config is validated regardless of the platform being built. That mistake cost the
-v1.0.17 desktop installers.
+That is done by `scripts/mac-adhoc-sign.js`, wired in as `build.afterPack`.
+
+**`build.mac.identity: "-"` does not do this**, despite looking like it should.
+electron-builder treats `identity` as a qualifier passed to `findIdentity()` — a
+certificate *name* to look up in the keychain (see
+`app-builder-lib/out/macPackager.js`). A clean CI runner has no keychain identities, so
+`"-"` matched nothing, signing was skipped, and the app shipped unsigned. That was
+confirmed by downloading the produced zip and finding no `_CodeSignature` anywhere in
+its 258 entries — not by reading the config and assuming.
+
+**Two traps recorded, both paid for:**
+
+- Do not put explanatory keys in `package.json`. electron-builder validates the build
+  config against a schema with `additionalProperties: false`, so a `"//identity"` key
+  added as a comment fails the build — on **Windows as well as macOS**, because the
+  whole config is validated regardless of which platform is being built. That cost the
+  v1.0.17 desktop installers.
+- Verify a signature by inspecting the shipped artifact, not the config that was meant
+  to produce it.
 
 ### Auto-update does not work on macOS
 

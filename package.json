@@ -1,7 +1,7 @@
 {
   "name": "reeldeck",
   "productName": "Reeldeck",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "A clean, ad-free movie & TV browser (TMDB) — desktop build for per-app VPN routing.",
   "author": {
     "name": "jaig-eye",
@@ -32,6 +32,7 @@
     "sharp": "^0.35.4"
   },
   "build": {
+    "afterPack": "scripts/mac-adhoc-sign.js",
     "appId": "com.reeldeck.app",
     "productName": "Reeldeck",
     "files": [
@@ -64,7 +65,6 @@
         }
       ],
       "category": "public.app-category.entertainment",
-    "identity": "-",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "win": {
