@@ -54,6 +54,9 @@
      scrollbar width at each edge and gave the whole document a horizontal scrollbar on
      every desktop/PWA view. --sbw is measured once at boot (and on resize) in app.js. */
   --sbw: 0px;
+  /* The top inset, exposed as a custom property so script can read it -- env() is not
+     available to getComputedStyle on an arbitrary element. */
+  --sat: env(safe-area-inset-top, 0px);
   --bleed-w: calc(100vw - var(--sbw));
   --bleed-ml: calc(-50vw + 50% + (var(--sbw) / 2));
   --radius: 14px;
@@ -676,7 +679,7 @@ footer.site a { display: inline-block; padding: 8px 4px; margin: -8px -4px; }
 .pager .pg { color: var(--muted); font-weight: 600; }
 
 /* Toast */
-.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 200; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+.toast { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 200; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 
 /* Update banner (desktop auto-update) */
@@ -1933,7 +1936,15 @@ body:not(.tv) .season-wrap { -webkit-mask-image: none; mask-image: none; }
 .drawer-back { position: fixed; inset: 0; z-index: 270; background: rgba(0,0,0,.55); }
 .drawer {
   position: fixed; top: 0; left: 0; bottom: 0; z-index: 280;
-  width: min(320px, 86vw); padding: 14px 18px 28px; overflow-y: auto;
+  width: min(320px, 86vw); overflow-y: auto;
+  /* The drawer runs edge to edge, so its own padding is the only thing between the
+     brand row and the Dynamic Island. The left inset matters in landscape, where the
+     notch is on the leading edge and would otherwise sit over the genre list. The
+     bottom inset keeps the last genre clear of the home indicator. */
+  padding: calc(14px + env(safe-area-inset-top, 0px))
+           18px
+           calc(28px + env(safe-area-inset-bottom, 0px))
+           calc(18px + env(safe-area-inset-left, 0px));
   background: var(--surface); border-right: 1px solid var(--border);
   transform: translateX(-100%); transition: transform 260ms var(--ease-enter);
   box-shadow: 24px 0 60px -20px rgba(0,0,0,.8);
@@ -2099,7 +2110,12 @@ body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: 
 /* ---- first-run splash ----------------------------------------------------- */
 .splash-back {
   position: fixed; inset: 0; z-index: 400; overflow-y: auto;
-  display: grid; place-items: center; padding: 28px 20px; background: var(--bg);
+  display: grid; place-items: center; background: var(--bg);
+  /* Full-screen and scrollable, so it owns its own insets. */
+  padding: calc(28px + env(safe-area-inset-top, 0px))
+           calc(20px + env(safe-area-inset-right, 0px))
+           calc(28px + env(safe-area-inset-bottom, 0px))
+           calc(20px + env(safe-area-inset-left, 0px));
   /* Reaches past the fold and fades over a long tail. At 85%/68% the stop landed
      around two-thirds down a phone screen and read as a horizontal seam. */
   background-image: radial-gradient(150% 105% at 50% -18%,
