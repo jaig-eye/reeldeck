@@ -2274,12 +2274,15 @@
    * short enough that it is never covering the last scene. It hides again if the
    * viewer seeks backwards, so scrubbing does not leave it stuck on screen.
    */
-  const NEXT_UP_WINDOW = 150;
+  const NEXT_UP_WINDOW = 180;          // three minutes of head start
   function nextUpCheck(t, dur) {
     if (!watchNow || !watchNow.nextHref) return;
     // Ignore nonsense durations: a mirror reporting a 90-second "duration" while it
-    // loads would otherwise fire this immediately.
-    if (!(dur > 300)) return;
+    // loads would otherwise fire this immediately. The floor is derived from the
+    // window rather than fixed, so the prompt can never cover more than the last third
+    // of a runtime -- at a fixed 300s, a three-minute window would have put it over
+    // most of a five-minute video.
+    if (!(dur > NEXT_UP_WINDOW * 3)) return;
     const left = dur - t;
     if (left > NEXT_UP_WINDOW || left < 1) return nextUpHide();
     nextUpShow();
@@ -2295,6 +2298,33 @@
     document.body.appendChild(el);
     el.querySelector('#nu-go').onclick = () => { const h = watchNow && watchNow.nextHref; nextUpHide(); if (h) go(h); };
     el.querySelector('#nu-x').onclick = () => { nextUpDismissed = true; nextUpHide(); };
+
+    /* It lives for three minutes in the bottom-right corner -- which is where subtitles
+       and credits go -- so it rests at low opacity and comes up to full on any sign of
+       life: a tap, the mouse, a key, the remote. It arrives awake so nobody misses it
+       appearing, then settles. It never fades while it is hovered, while it holds the
+       D-pad ring, or while the pointer is over it, and it stays fully hit-testable
+       throughout, so someone who has noticed it can reach straight for it. */
+    el.classList.add('awake');
+    const sleep = () => {
+      if (!el.isConnected) return;
+      if (el.contains(document.activeElement)) return;        // never dim under the ring
+      if (el.matches(':hover')) return;
+      el.classList.remove('awake');
+    };
+    const wake = () => {
+      if (!el.isConnected) return;
+      el.classList.add('awake');
+      clearTimeout(nextUpTimer);
+      nextUpTimer = setTimeout(sleep, 3200);
+    };
+    nextUpTimer = setTimeout(sleep, 3200);
+    nextUpWake = wake;
+    // Capture, and passive where it can be: these must fire even when the tap lands on
+    // the player overlay rather than on the prompt.
+    ['pointerdown', 'touchstart', 'mousemove', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, wake, { passive: true, capture: true }));
+    el.addEventListener('focusin', wake);
     // Deliberately does NOT take the ring. Two reasons:
     //  - Pointer mode is the DEFAULT during TV playback (#player-enter's handler is
     //    cursorOn), and while it is on, Enter goes to cursorTap() -- a blind tap at
@@ -2307,8 +2337,15 @@
     // target at z-index 320.
     if (IS_TV) tvInvalidate();
   }
+  let nextUpTimer = null, nextUpWake = null;
   function nextUpHide() {
     const el = document.getElementById('next-up');
+    clearTimeout(nextUpTimer);
+    if (nextUpWake) {
+      ['pointerdown', 'touchstart', 'mousemove', 'keydown'].forEach(ev =>
+        document.removeEventListener(ev, nextUpWake, { capture: true }));
+      nextUpWake = null;
+    }
     if (!el) return;
     const hadFocus = el.contains(document.activeElement);
     el.remove();
