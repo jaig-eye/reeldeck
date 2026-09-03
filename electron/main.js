@@ -76,7 +76,12 @@ function startServer() {
     });
     let idx = 0;
     server.on('error', (e) => {
-      if (e.code === 'EADDRINUSE' && idx < PREFERRED_PORTS.length - 1) { idx++; server.listen(PREFERRED_PORTS[idx], '127.0.0.1'); }
+      // ANY bind failure advances the ladder, not just EADDRINUSE. EACCES is the one
+      // that actually bites: a reserved port range or a security product blocks the
+      // bind, the ladder gave up on the first one, and the app silently dropped to
+      // file:// -- a DIFFERENT ORIGIN, where localStorage is empty and the watchlist,
+      // history and signed-in account all appear to have vanished.
+      if (idx < PREFERRED_PORTS.length - 1) { idx++; server.listen(PREFERRED_PORTS[idx], '127.0.0.1'); }
       else reject(e);
     });
     server.on('listening', () => resolve(PREFERRED_PORTS[idx]));
@@ -147,6 +152,12 @@ function tellRenderer(payload) {
   else wc.send('reeldeck:update', payload);
 }
 
+// Whether setupUpdater actually wired the autoUpdater. The two early returns below
+// (portable, macOS) leave it with NO listeners and default settings, while the
+// 'Check for updates' menu item and its IPC handler are registered unconditionally --
+// so pressing it called checkForUpdates() into a void and the UI sat on "Checking for
+// updates…" for ever, with no event able to clear it.
+let updaterLive = false;
 function setupUpdater() {
   if (!app.isPackaged) return;
   // electron-builder sets this only for the PORTABLE build. Its update feed points at
@@ -167,6 +178,7 @@ function setupUpdater() {
     tellRenderer({ state: 'portable' });
     return;
   }
+  updaterLive = true;
   try {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -260,7 +272,13 @@ ipcMain.handle('reeldeck:open-external', (e, target) => {
 // Renderer asks to apply a downloaded update now.
 ipcMain.handle('reeldeck:install-update', () => { try { autoUpdater.quitAndInstall(); } catch (e) {} });
 // Renderer asks to check for updates now (Settings button).
-ipcMain.handle('reeldeck:check-update', () => { try { autoUpdater.checkForUpdates(); } catch (e) {} });
+ipcMain.handle('reeldeck:check-update', () => {
+  // On a build where the updater was never wired, answer the way that build already
+  // answers at startup -- there may be a new version, go and download it -- instead of
+  // starting a check that can never report anything.
+  if (!updaterLive) { tellRenderer({ state: 'portable' }); return; }
+  try { autoUpdater.checkForUpdates(); } catch (e) {}
+});
 
 // Single instance: focus the existing window instead of launching a second copy
 // (also avoids cache/port contention).
