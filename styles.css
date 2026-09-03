@@ -1809,7 +1809,30 @@ body.tv .card-prog { height: 5px; }
   box-shadow: 0 24px 60px -16px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.05);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   animation: rd-rise 320ms var(--ease-enter) both;
+  /* Resting state: present, but not competing with the picture. It sits in the
+     bottom-right for three minutes, which is where subtitles and end credits live, so
+     full opacity that whole time would be an imposition. .22 is low enough to read as
+     background and high enough that the accent keyword still registers peripherally --
+     and pointer-events stay on, so anyone who has noticed it can go straight for it
+     without waking it first. */
+  /* Opacity alone was not enough: at .22 the accent-filled Play button still pulled
+     the eye harder than the rest of the panel, so the thing read as half-present rather
+     than as background. Desaturating while it rests takes the colour out of the fight
+     and lets the shape carry it. */
+  opacity: .16;
+  filter: saturate(.35);
+  transition: opacity .4s var(--ease-ui, ease), filter .4s var(--ease-ui, ease);
 }
+/* Any sign of life brings it up: a tap, the mouse, a key, the remote. */
+.next-up.awake,
+.next-up:hover,
+.next-up:focus-within { opacity: 1; filter: none; }
+/* Someone who has asked not to see motion still gets the change, just instantly. */
+@media (prefers-reduced-motion: reduce) { .next-up { transition: none; } }
+/* Across a room, .22 of a small panel is invisible -- a television needs a floor. */
+body.tv .next-up { opacity: .32; filter: saturate(.5); }
+body.tv .next-up.awake,
+body.tv .next-up:focus-within { opacity: 1; filter: none; }
 .next-up .nu-k {
   font-size: 10.5px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
   color: var(--accent); white-space: nowrap;
