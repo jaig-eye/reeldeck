@@ -164,16 +164,24 @@ All three appear on the first-run screen and under Account → Sync, on the phon
 TV, the desktop and the web. They are ordered by how little you have to type, which on
 a remote is the difference between five seconds and a minute.
 
-**Google sign-in** is the same flow a TV uses for Netflix or YouTube: the app shows a
-QR code and a short code, you approve it on your phone, and the app signs itself in. On
-a phone or a desktop the app just opens your browser with the code already filled in —
-you are not asked to find a second device you are already holding.
+**Google sign-in** is the ordinary thing everywhere except the television: the system
+browser opens Google's own consent screen, you pick an account, and you land back in the
+app. No code to read, nothing to type. On a modern phone that consent screen is also
+where Face ID or your fingerprint comes in — that is Google's, not something this app
+implements or could.
 
-That is not a stylistic choice. Google returns `disallowed_useragent` to OAuth attempts
-from embedded WebViews, and both the phone build and the TV build are the same
-Capacitor WebView — so a conventional "Sign in with Google" button cannot work there.
-The OAuth **device flow** needs no redirect URI and no registered JavaScript origin, so
-one code path serves all four targets, with no Google SDK loaded into the app.
+**On a television it is the device flow instead** — a QR code and a short code you
+approve from your phone, the same way Netflix and YouTube do it. That is the one place a
+second device is genuinely the better answer, because the alternative is entering an
+email address with a D-pad.
+
+Neither flow ever runs inside the app's own web view, and that part is not optional:
+Google returns `disallowed_useragent` to OAuth attempts from an embedded WebView, and
+the phone and TV builds are both Capacitor WebViews. The system browser is what Google's
+own guidance prescribes. The redirect is brokered by the Worker rather than run by the
+app, which is why there is no registered JavaScript origin, no Android package and
+SHA-1, and no iOS bundle id to maintain — the app opens one ordinary https URL, and the
+Worker is the only party that ever talks to Google.
 
 **Email and password** works too, and the password never leaves your device: the app
 runs 210,000 rounds of PBKDF2 locally and sends only the derived key, which the server
