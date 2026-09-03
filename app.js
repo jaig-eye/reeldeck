@@ -1400,7 +1400,11 @@
     // on Android it is also the only reliable signal before the process is killed.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        if (syncStale && !watchNow) { syncStale = false; route(); }
+        // NO route() here. Coming back to the app is not a navigation: route() scrolls
+        // to the top, rebuilds the view and re-establishes focus, so a signed-in phone
+        // lost its place in a rail every single time it was foregrounded -- which on a
+        // phone is constantly. syncStale stays set and the next REAL navigation picks
+        // the merged data up, which is what the flag was for.
         syncOnce('visible');
       } else if (syncState().dirty) {
         syncOnce('hidden');
@@ -1758,7 +1762,16 @@
   async function googleDeviceSignIn(mount) {
     authStop();
     const me = authAbort = { dead: false, timer: null };
-    const set = (html) => { if (!me.dead && mount.isConnected) mount.innerHTML = html; if (IS_TV) tvInvalidate(); };
+    // tvInvalidate alone rebuilds the row model but places nothing, so on the splash --
+    // where the chooser that held the ring has just been hidden -- the remote was left
+    // with no focus at all until the user guessed to press a direction.
+    const set = (html) => {
+      if (!me.dead && mount.isConnected) mount.innerHTML = html;
+      if (!IS_TV) return;
+      tvInvalidate();
+      const f = mount.querySelector('button');
+      if (f) tvFocusEl(f);
+    };
 
     set('<div class="au-wait"><span class="ub-spin"></span> Contacting Google…</div>');
     const r = await syncCall('/v1/auth/google/start', {});
@@ -1893,7 +1906,13 @@
   async function pairShow(mount) {
     authStop();
     const me = authAbort = { dead: false, timer: null };
-    const set = (h) => { if (!me.dead && mount.isConnected) mount.innerHTML = h; if (IS_TV) tvInvalidate(); };
+    const set = (h) => {
+      if (!me.dead && mount.isConnected) mount.innerHTML = h;
+      if (!IS_TV) return;
+      tvInvalidate();
+      const f = mount.querySelector('button');
+      if (f) tvFocusEl(f);
+    };
     set('<div class="au-wait"><span class="ub-spin"></span> Getting a code…</div>');
     const r = await syncCall('/v1/pair/start', {});
     if (me.dead) return;
@@ -3057,13 +3076,12 @@
                   ${(pr && pr.pct > 0.01) ? `<span class="ep-fill" style="width:${Math.round(Math.min(1, pr.pct) * 100)}%"></span>` : ''}
                   ${done ? `<span class="ep-tick" aria-hidden="true">${ICON.check}</span>` : ''}
                 </div>
-                <div style="min-width:0">
-                  <div class="en">S${n} \u00b7 E${ep.episode_number}${ep.runtime ? ' \u00b7 ' + ep.runtime + 'm' : ''}</div>
+                <div class="ep-body">
+                  <div class="en">S${n} · E${ep.episode_number}${ep.runtime ? ' · ' + ep.runtime + 'm' : ''}</div>
                   <div class="et">${esc(ep.name || 'Episode ' + ep.episode_number)}</div>
                   <div class="eo">${esc(ep.overview || '')}</div>
                   ${progBar(pr)}
                 </div>
-                <button class="btn primary sm play" tabindex="-1" aria-hidden="true">${ICON.play} ${part ? 'Resume' : done ? 'Again' : 'Play'}</button>
               </div>`;
             }).join('') || '<div class="center-note">No episode data.</div>';
             // The row model caches; replacing every episode under it would otherwise
@@ -4177,7 +4195,15 @@
   function modalCursorReset() { if (document.body.classList.contains('cursor-on')) cursorOff(); }
 
   function modalMount(back) {
-    back._opener = document.activeElement;
+    // NOT <body>. The account menu removes the focused item before opening Settings,
+    // so activeElement has already fallen back to <body> by the time we get here -- and
+    // body satisfies every test in closeModal below, so it took tvFocusEl(body): a
+    // focus() that does nothing, a ring that vanishes, and a scroll-into-view computed
+    // against an element whose height is the whole document, which glided Home about
+    // 1700px to its middle. Storing null instead routes closeModal to tvRestoreFocus.
+    const opener0 = document.activeElement;
+    back._opener = (opener0 && opener0 !== document.body && opener0 !== document.documentElement)
+      ? opener0 : null;
     const heading = back.querySelector('.mh h3');
     if (heading) { heading.id = heading.id || ('mh-' + (++modalSeq)); }
     const dlg = back.querySelector('.modal');
@@ -4443,12 +4469,23 @@
     const uw = e.target.closest('[data-unwatch]');
     if (uw) {
       e.preventDefault(); e.stopPropagation();
+      // Remember where the ring was BEFORE the tile goes, so it can land on a
+      // neighbour rather than being sent back to the top of the page.
+      const goneCard = uw.closest('.card');
+      const nextCard = goneCard && (goneCard.nextElementSibling || goneCard.previousElementSibling);
       progForget(uw.dataset.unwatch);
       const card = uw.closest('.card'), rail = uw.closest('.rail');
       if (card) card.remove();
       // The last one out takes the rail with it, rather than leaving a bare heading.
       if (rail && !rail.querySelector('.card')) rail.remove();
-      if (IS_TV) { tvInvalidate(); tvFocusFirst(); }
+      if (IS_TV) {
+        tvInvalidate();
+        // Land on the neighbour, not back at the top. tvFocusFirst() sends the ring to
+        // the billboard and scrolls Home with it, so dismissing three tiles in a row
+        // meant scrolling back down to the rail three times.
+        if (nextCard && document.contains(nextCard)) tvFocusEl(nextCard);
+        else tvRestoreFocus();
+      }
       toast('Removed from Recently watched');
       return;
     }
@@ -4903,6 +4940,9 @@
   // sticky bar just snaps the page home (centring a pinned element fights the scroll
   // and bounces focus straight back off it).
   function tvFocusEl(el) {
+    // body/html are never a focus target: focus() is a no-op on them and the
+    // scroll-into-view maths below uses their rect, which is the whole document.
+    if (!el || el === document.body || el === document.documentElement) return;
     try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
     tvMark(el);
     tvRemember(el);
@@ -5192,7 +5232,25 @@
       // dismiss gesture either quits the app (at navDepth 0) or navigates the page
       // underneath while the overlay and its scrim stay mounted on top.
       const sp = document.getElementById('splash');
-      if (sp) { const g = sp.querySelector('#sp-guest'); if (g) g.click(); return; }
+      if (sp) {
+        // If a sign-in flow is mounted, Back cancels THAT and returns to the choices.
+        // Falling straight through to "Continue as guest" meant the hardware Back
+        // button silently answered a question the user was still in the middle of, and
+        // dismissed the first-run screen for good.
+        const mnt = sp.querySelector('.au-mount');
+        if (mnt && mnt.innerHTML.trim()) {
+          const c = mnt.querySelector('[data-au="cancel"]');
+          if (c) { c.click(); return; }
+          authStop();
+          mnt.innerHTML = '';
+          const acts = sp.querySelector('.splash-actions'); if (acts) acts.style.display = '';
+          const fine = sp.querySelector('.splash-fine'); if (fine) fine.style.display = '';
+          if (IS_TV) { tvInvalidate(); const f = sp.querySelector('.au-choices [data-au]'); if (f) tvFocusEl(f); }
+          return;
+        }
+        const g = sp.querySelector('#sp-guest'); if (g) g.click();
+        return;
+      }
       const dw = document.getElementById('drawer');
       if (dw && dw.classList.contains('open')) { closeDrawer(); return; }
       if (document.getElementById('acct-menu')) { closeAcct(); return; }

@@ -572,7 +572,23 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .ep .en { font-weight: 700; color: var(--accent); font-size: 13px; }
 .ep .et { font-weight: 700; margin: 2px 0 4px; }
 .ep .eo { color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ep .play { margin-left: auto; flex: none; }
+/* The text column has to CLAIM the leftover width. Without flex:1 it sits at
+   flex: 0 1 auto between two flex:none children and shrinks to its minimum -- which on
+   a 375px phone was twelve pixels, so "S1 · E1 · 62m" came out one fragment per line
+   and the row grew to 241px tall. min-width:0 is what allows it to shrink BELOW its
+   longest word instead of forcing the row wider. */
+.ep-body { flex: 1 1 auto; min-width: 0; }
+
+/* Phones: a smaller still, and the summary steps aside. At this width the episode
+   number, the title and a progress bar are what people are scanning for; two clamped
+   lines of synopsis squeezed beside a thumbnail are not readable at any size. */
+@media (max-width: 560px) {
+  .ep { gap: 11px; padding: 10px; align-items: flex-start; }
+  .ep .thumb { width: 116px; }
+  .ep .en { font-size: 12px; }
+  .ep .et { font-size: 14.5px; margin: 3px 0 0; line-height: 1.35; }
+  .ep .eo { display: none; }
+}
 
 /* ---------- Player ---------- */
 .player-shell { max-width: 1200px; margin: 0 auto; }
