@@ -81,6 +81,34 @@ jobs:
           "
 
       # Jekyll would otherwise ignore files and folders beginning with an underscore.
+      # A code change without a version bump is invisible until someone complains.
+      # index.html asks for app.js?v=N and sw.js caches that exact URL first-of-all, so
+      # if the code changes while N does not, Pages serves the new file and every
+      # INSTALLED app keeps serving the old one from its cache -- for ever, because
+      # nothing ever invalidates it. The document itself is network-first, so a bumped N
+      # propagates immediately; an un-bumped one never does.
+      - name: A code change must carry a version bump
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "No previous commit to compare against - skipping."
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- app.js styles.css sw.js || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No app code changed."
+            exit 0
+          fi
+          echo "Changed: $CHANGED"
+          OLDV=$(git show "$BEFORE:index.html" 2>/dev/null | grep -o 'app\.js?v=[0-9]*' | head -1 || true)
+          NEWV=$(grep -o 'app\.js?v=[0-9]*' index.html | head -1)
+          echo "cache-busting query  before=$OLDV  now=$NEWV"
+          if [ "$OLDV" = "$NEWV" ]; then
+            echo "::error::app code changed but the ?v= cache-busting query did not. Installed PWAs would keep serving the old app.js for ever. Bump APP_VERSION, sw.js CACHE, and the ?v= in index.html together."
+            exit 1
+          fi
+          echo "Version moved - installed apps will pick this up."
+
       - name: Disable Jekyll processing
         run: touch www/.nojekyll
 

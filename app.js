@@ -252,7 +252,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.16';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.17';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -752,6 +752,10 @@
    * is stale by construction and on an empty account is 0.
    */
   function now() { return Date.now() + (syncState().skew || 0); }
+  // Set once the server has told us its clock. Session-scoped on purpose: it answers
+  // "has THIS run validated the clock", which is the only question the badclock guard
+  // needs, and it cannot be poisoned by a stale stored value.
+  let skewKnown = false;
   function learnSkew(serverAt, t0, t1) {
     if (!(serverAt > 0)) return;
     // The midpoint estimate assumes the local clock is monotone ACROSS the request. On
@@ -764,6 +768,7 @@
     // pushes that.
     const rtt = t1 - t0;
     if (!(rtt >= 0 && rtt <= 15000)) return;
+    skewKnown = true;                  // the server's clock reached us and was plausible
     const est = serverAt - (t0 + (t1 - t0) / 2);
     const st = syncState();
     // 30s hysteresis. Without it, a couple of hundred milliseconds of network noise
@@ -1053,7 +1058,13 @@
        watched predates a Clear somebody performed on another device months ago.
        So on the first merge after adopting an identity, local rows are exempt from
        the epochs; remote rows still obey them. */
-    const firstAdopt = !st.lastSyncAt && st.boundUid !== st.uid;
+    // An EXPLICIT one-shot flag, not a comparison of uid against boundUid. adoptUid
+    // now sets both to the same value before it calls syncOnce -- a later fix, made for
+    // its own good reasons -- so "boundUid !== uid" was always false and this whole
+    // exemption was dead code. Which means the bug it exists to prevent, a guest's
+    // entire history being deleted the moment they sign in to an account that has ever
+    // had its history cleared, was silently back.
+    const firstAdopt = !!st.adopting;
     const localProg = firstAdopt ? Object.keys(L.prog) : [];
     const localHist = firstAdopt ? L.hist.map(r => r.k) : [];
     const keptLocal = (arr, k) => firstAdopt && arr.indexOf(k) >= 0;
@@ -1183,10 +1194,19 @@
   // Monotone counter, bumped by every syncMark/syncFlush. syncOnce records it at the
   // start of a pass and only clears `dirty` if it has not moved -- otherwise an edit
   // made while the pass was in flight would be marked as already-synced and stranded.
-  let dirtySeq = 0, retryTimer = null;
+  let dirtySeq = 0, retryTimer = null, retryStep = 0;
+  /**
+   * Retry with backoff and a ceiling.
+   *
+   * A flat three seconds meant a permanent failure -- no network on a plane, a Worker
+   * that is down -- became an indefinite three-second loop: constant radio wake-ups on
+   * a phone, and on a metered connection, constant failed requests. Doubling to a cap
+   * keeps a transient blip responsive while making a sustained outage cheap.
+   */
   function scheduleRetry() {
     if (retryTimer) clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => { retryTimer = null; syncOnce('retry'); }, 3000);
+    const delay = Math.min(3000 * Math.pow(2, retryStep++), 300000);   // 3s -> 5min
+    retryTimer = setTimeout(() => { retryTimer = null; syncOnce('retry'); }, delay);
   }
   const bootAt = Date.now();
   document.addEventListener('keydown', () => { userActed = true; }, { once: true, capture: true });
@@ -1209,6 +1229,10 @@
     }
     syncBusy = true;
     const seqAtStart = dirtySeq;
+    // The pull and push take seconds, and the theme picker is live throughout. Without
+    // this the merged (pre-choice) theme is written back at the end, reverting what the
+    // user just picked AND regressing its stamp, so the other device wins next time.
+    const themeAtStart = syncState().themeAt || 0;
     try {
       runMigrations();
       const pulled = await syncCall('/v1/pull', { uid: st0.uid });
@@ -1230,7 +1254,15 @@
       // fails by quietly expiring things instead of by flattening them.
       const rMax = blobMaxAt(pulled.d.data);
       if (rMax > syncNow + FUTURE_SLACK) return noteSyncFail('badclock', reason);
-      if (rMax > 0 && syncNow > rMax + FUTURE_SLACK && !st0.lastSyncAt) {
+      // The other direction is only evidence of a bad clock when the clock could NOT be
+      // corrected. An account whose newest stamp is older than 24h is simply an account
+      // nobody has used since yesterday -- the overwhelmingly common case for a second
+      // device -- and treating that as a fault meant signing in on a new phone failed
+      // permanently, told the user their date was wrong, and never self-healed because
+      // lastSyncAt stayed 0. Only meaningful against a Worker too old to send its own
+      // clock; the current one sends it on every response, so skewKnown is true by the
+      // time this line runs.
+      if (!skewKnown && rMax > 0 && syncNow > rMax + FUTURE_SLACK && !st0.lastSyncAt) {
         return noteSyncFail('badclock', reason);
       }
 
@@ -1248,6 +1280,8 @@
 
       const st = syncState();
       st.lastSyncAt = syncNow; st.stall = ''; st.lastErr = '';
+      st.adopting = 0;                 // spent: this device's rows are now in the account
+      retryStep = 0;                    // a good pass resets the backoff
       // Re-read, then MAX. A Clear performed while the push was in flight has already
       // written a newer epoch to this same key; assigning the pre-push snapshot back
       // would silently undo it and every cleared row would return on the next pull.
@@ -1261,7 +1295,8 @@
       // Not while the picker is open: the user is looking at the swatches, and having
       // the theme change under them (and their own stamp overwritten) is worse than
       // being one sync late.
-      if (merged.theme.id && merged.theme.id !== cfg.theme && !$('.modal-back')) {
+      if (merged.theme.id && merged.theme.id !== cfg.theme && !$('.modal-back') &&
+          (st.themeAt || 0) === themeAtStart) {
         cfg.theme = merged.theme.id; st.themeAt = merged.theme.at; saveConfig();
       }
       saveSyncState(st);
@@ -1556,6 +1591,20 @@
       '</div>';
   }
 
+  /**
+   * Show a terminal error and THEN stop the flow.
+   *
+   * Order matters and cost us the whole error surface: set() is guarded by !me.dead,
+   * authStop() sets me.dead, so "authStop(); set(...)" computed the message and threw
+   * it away. Every terminal path did that, so a declined or expired sign-in left the
+   * panel waiting for ever with no way forward but Cancel.
+   */
+  function authFail(mount, me, html) {
+    if (!me.dead && mount && mount.isConnected) mount.innerHTML = html;
+    if (IS_TV) tvInvalidate();
+    authStop();
+  }
+
   function authStop() {
     pwGen++;                 // abandons any password derivation still in flight
     if (!authAbort) return;
@@ -1589,6 +1638,10 @@
     // by a different person would still see the previous occupant's boundUid as empty
     // and merge their library instead of replacing it.
     st.boundUid = uid;
+    // ...which is exactly why the first-merge exemption cannot be inferred from
+    // boundUid. Set it explicitly and spend it on the first SUCCESSFUL merge, so a
+    // failed first sync does not consume it.
+    st.adopting = 1;
     saveSyncState(st);
     // For a guest upgrading, the merge is a union and cannot remove anything this
     // device had -- mergeBlob's firstAdopt branch exempts local rows from the
@@ -1598,7 +1651,111 @@
     route();
   }
 
-  async function googleSignIn(mount) {
+  /**
+   * Google sign-in, the ordinary way: the system browser opens Google's own consent
+   * screen and comes straight back.
+   *
+   * The device code -- "go to google.com/device and type MKD-VLQ-FCF" -- is right for a
+   * television, where the alternative is typing an email on a D-pad, and wrong
+   * everywhere else. It was originally used everywhere because Google returns
+   * disallowed_useragent to OAuth from an embedded WebView, and both Capacitor builds
+   * are embedded WebViews. That is a reason not to use the IN-APP webview, not a reason
+   * to avoid redirect OAuth: the system browser is what Google's own guidance
+   * prescribes, and openExternal already reaches it on every target.
+   *
+   * On a modern phone this is also where fingerprint and Face ID come from -- Google's
+   * consent screen asks for them itself. Nothing here implements that, and nothing here
+   * could.
+   */
+  async function googleRedirectSignIn(mount) {
+    authStop();
+    const me = authAbort = { dead: false, timer: null };
+    // Opened SYNCHRONOUSLY, while still inside the click that started this. Safari --
+    // and therefore every browser on iOS, including the home-screen app we now ship --
+    // blocks a window.open issued after an await, because it is no longer attributable
+    // to a user gesture. The tab is parked blank and pointed at Google once the Worker
+    // answers. Electron is excluded: it denies window.open outright and has its own
+    // trusted channel.
+    let pre = null;
+    if (!IS_DESKTOP && !IS_TV) { try { pre = window.open('', '_blank'); } catch (e) { pre = null; } }
+    const closePre = () => { try { if (pre && !pre.closed) pre.close(); } catch (e) {} };
+    const set = (html) => { if (!me.dead && mount.isConnected) mount.innerHTML = html; if (IS_TV) tvInvalidate(); };
+
+    set('<div class="au-wait"><span class="ub-spin"></span> Opening Google\u2026</div>');
+    const r = await syncCall('/v1/auth/google/begin', {});
+    if (me.dead) { closePre(); return; }
+    if (r.err) {
+      closePre();
+      return set('<div class="au-err"><p>' + esc(
+        r.err === 'net' || r.err === 'timeout' ? 'No connection. Check the network and try again.'
+        : r.err === 'slow down' ? 'Too many attempts. Wait a minute and try again.'
+        : r.status === 404
+            ? 'The server has not been updated for this sign-in yet — use a device code or a password for now.'
+        : (typeof r.err === 'string' && r.err.indexOf('missing') >= 0)
+            ? 'Google sign-in is not finished being set up on the server.'
+            : 'Could not start sign-in (' + r.err + ').') +
+        '</p><button class="btn" data-au="retry">Try again</button>' +
+        (mount.closest('#splash') ? '<button class="btn ghost" data-au="guest">Continue as guest</button>' : '') +
+        '</div>');
+    }
+
+    me.url = r.d.url;                 // for "Open again", without spending a new session
+    set(
+      '<div class="au-flow au-narrow">' +
+        '<span class="au-sb"><span class="au-lead">Choose your Google account in the browser ' +
+          'window that just opened, then come back here.</span></span>' +
+        '<div class="au-foot">' +
+          '<span class="au-live"><i></i>Waiting for you to finish\u2026</span>' +
+          '<span class="au-btns">' +
+            '<button class="btn sm" data-au="reopen">Open again</button>' +
+            '<button class="btn sm ghost" data-au="cancel">Cancel</button>' +
+          '</span>' +
+        '</div>' +
+      '</div>'
+    );
+    if (pre && !pre.closed) {
+      try { pre.location.href = r.d.url; } catch (e) { openExternal(r.d.url); }
+    } else {
+      openExternal(r.d.url);
+    }
+
+    // Coming back to the app is the moment the answer is ready, and also the moment a
+    // backgrounded WebView's timers have been frozen -- so poll on return, not only on
+    // a timer. clearTimeout FIRST: without it the pending timer survives and every
+    // foreground return adds another independent poll chain, each hammering /finish.
+    const onVis = () => {
+      if (document.visibilityState !== 'visible' || me.dead) return;
+      clearTimeout(me.timer);
+      tick();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    me.offVis = () => document.removeEventListener('visibilitychange', onVis);
+
+    const tick = async () => {
+      if (me.dead) return;
+      const p = await syncCall('/v1/auth/google/finish', { session: r.d.session });
+      if (me.dead) return;
+      if (p.err) { me.timer = setTimeout(tick, 2000); return; }   // transient: keep waiting
+      const st = p.d.status;
+      if (st === 'pending') { me.timer = setTimeout(tick, 1500); return; }
+      if (st === 'ok') {
+        authStop();
+        toast('Signed in as ' + (p.d.name || 'you'));
+        return adoptUid(p.d.uid, 'google', p.d.name);
+      }
+      authFail(mount, me, '<div class="au-err"><p>' +
+        (st === 'denied' ? 'Sign-in was cancelled.'
+         : st === 'expired' ? 'That took too long. Start again.'
+         : 'Google could not complete sign-in.') +
+        '</p><button class="btn" data-au="retry">Try again</button>' +
+        (mount.closest('#splash') ? '<button class="btn ghost" data-au="guest">Continue as guest</button>' : '') +
+        '</div>');
+    };
+    me.timer = setTimeout(tick, 1500);
+  }
+
+  /** The device flow. TELEVISION ONLY -- see googleRedirectSignIn. */
+  async function googleDeviceSignIn(mount) {
     authStop();
     const me = authAbort = { dead: false, timer: null };
     const set = (html) => { if (!me.dead && mount.isConnected) mount.innerHTML = html; if (IS_TV) tvInvalidate(); };
@@ -1687,7 +1844,11 @@
     // also the moment a backgrounded WebView's timers have been throttled or frozen --
     // so waiting for the next tick can leave someone staring at "Waiting for you to
     // approve" seconds after they approved.
-    const onVis = () => { if (document.visibilityState === 'visible' && !me.dead) tick(); };
+    const onVis = () => {
+      if (document.visibilityState !== 'visible' || me.dead) return;
+      clearTimeout(me.timer);      // or every return spawns another poll chain
+      tick();
+    };
     document.addEventListener('visibilitychange', onVis);
     me.offVis = () => document.removeEventListener('visibilitychange', onVis);
     const tick = async () => {
@@ -1706,8 +1867,7 @@
         toast('Signed in as ' + (p.d.name || 'you'));
         return adoptUid(p.d.uid, 'google', p.d.name);
       }
-      authStop();
-      set('<div class="au-err"><p>' +
+      authFail(mount, me, '<div class="au-err"><p>' +
         (st === 'denied' ? 'Sign-in was declined on the phone.'
          : st === 'expired' ? 'That code expired. Codes last a few minutes.'
          : 'Google could not complete sign-in.') +
@@ -1718,8 +1878,14 @@
         // may well be that there is no network.
         (mount.closest('#splash') ? '<button class="btn ghost" data-au="guest">Continue as guest</button>' : '') +
         '</div>');
+      return;
     };
     me.timer = setTimeout(tick, wait);
+  }
+
+  /** One entry point; the device it is running on decides which flow. */
+  function googleSignIn(mount) {
+    return IS_TV ? googleDeviceSignIn(mount) : googleRedirectSignIn(mount);
   }
 
   /** Pairing: for anyone who would rather not attach a Google account. The TV shows a
@@ -1756,8 +1922,7 @@
       if (me.dead) return;
       if (p.ok && p.d.uid) { authStop(); toast('Device connected'); return adoptUid(p.d.uid, 'paired', ''); }
       if (p.err === 'expired') {
-        authStop();
-        return set('<div class="au-err"><p>That code expired before it was used.</p>' +
+        return authFail(mount, me, '<div class="au-err"><p>That code expired before it was used.</p>' +
                    '<button class="btn" data-au="retry-pair">New code</button></div>');
       }
       me.timer = setTimeout(tick, 1500);

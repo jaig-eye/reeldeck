@@ -12,12 +12,21 @@
    PASTE THIS into the Cloudflare dashboard editor (Workers & Pages -> your
    Worker -> Edit code). It has no imports and no build step.
 
-   FIVE secrets, set under Settings -> Variables and Secrets, all as type
+   SEVEN secrets, set under Settings -> Variables and Secrets, all as type
    "Secret" (encrypted) — never as plaintext variables:
        UPSTASH_REDIS_REST_URL     https://xxx-12345.upstash.io
        UPSTASH_REDIS_REST_TOKEN   AY...
-       GOOGLE_CLIENT_ID           xxx.apps.googleusercontent.com
+       GOOGLE_CLIENT_ID           xxx.apps.googleusercontent.com   (TV, device flow)
        GOOGLE_CLIENT_SECRET       GOCSPX-...
+       GOOGLE_WEB_CLIENT_ID       xxx.apps.googleusercontent.com   (everything else)
+       GOOGLE_WEB_CLIENT_SECRET   GOCSPX-...
+
+   TWO Google clients, because one client cannot do both grants: the device flow needs
+   a "TVs and Limited Input devices" client and the redirect flow needs a "Web
+   application" one. Put them in the SAME Cloud project. The account id is unaffected --
+   Google's discovery document reports subject_types_supported: ["public"], so the
+   subject is identical across clients, and the same person gets the same account from
+   either flow.
        UID_PEPPER                 32 random bytes, base64  <-- BACK THIS UP FIRST
 
    ABOUT UID_PEPPER, because getting this wrong is unrecoverable: it is the HMAC
@@ -25,6 +34,15 @@
    write-only once saved, so if it is lost it cannot be read back, and every
    account derived from it becomes unreachable. Never rotate it — rotating is
    arithmetically identical to deleting every account at once.
+
+   GOOGLE SIGN-IN IS TWO FLOWS, and which one runs is decided by the device. A
+   television gets the device code -- a short code typed at google.com/device -- because
+   the alternative is entering an email on a D-pad. Everything else gets the ordinary
+   redirect: the system browser opens Google's own consent screen and comes straight
+   back. The redirect flow is brokered here rather than run by the app, which is why it
+   needs no registered JavaScript origin, no Android package and SHA-1, and no iOS
+   bundle id: the app only ever opens one https URL on this domain, and this Worker is
+   the only party that talks to Google.
 
    THE IDENTITY MODEL, stated plainly so it is not mistaken for more than it is:
    a "user" is an opaque id the app holds. That id IS the credential — whoever
@@ -56,6 +74,9 @@
      /v1/pair/poll         { code, watcher }   -> { uid } | { pending }
      /v1/auth/google/start { }                 -> { session, user_code, qr_url, ... }
      /v1/auth/google/poll  { session }         -> { status, uid?, name?, picture? }
+     /v1/auth/google/begin  { }                -> { session, url, expires }
+     /v1/auth/google/callback  (GET, from Google) -> an HTML "you can close this" page
+     /v1/auth/google/finish { session }        -> { status, uid?, name?, picture? }
      /v1/auth/pw/signup    { email, dk }       -> { uid } | 409 exists
      /v1/auth/pw/login     { email, dk }       -> { uid } | 401 bad login
 
@@ -214,16 +235,113 @@ async function deriveEmailUid(env, email) {
   return b64url(mac);
 }
 
+/** A plain page for the browser tab Google sends back. It carries NOTHING secret:
+ *  the app collects the result over its own POST to /finish, using the session it has
+ *  held since /begin. So this page is safe in history, in a screenshot, anywhere. */
+function donePage(title, detail) {
+  return new Response(
+    '<!doctype html><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>' + title + '</title>' +
+    '<style>html{color-scheme:dark light}body{margin:0;min-height:100vh;display:grid;' +
+    'place-items:center;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;' +
+    'background:#0b0d12;color:#e8ecf5;text-align:center;padding:24px}' +
+    'h1{font-size:22px;margin:0 0 10px}p{margin:0;color:#9aa4bb;max-width:34ch}</style>' +
+    '<div><h1>' + title + '</h1><p>' + detail + '</p></div>',
+    { status: 200, headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+      } }
+  );
+}
+
+/**
+ * Where Google sends the browser back. A GET, from an unauthenticated caller, on a
+ * public URL -- so it validates the state before spending a token exchange.
+ */
+async function googleCallback(request, env, url) {
+  if (request.method !== 'GET') return json({ error: 'GET only' }, 405);
+  // Its OWN bucket. Sharing 'start' meant each sign-in spent two of the five tokens
+  // that /begin, /pair/start and the password endpoints also draw on, so the third
+  // attempt in a minute locked the user out of every sign-in method at once.
+  if (!throttle(request, 'oauthcb', 20)) return donePage('Too many attempts', 'Wait a minute and try signing in again.');
+  const state = url.searchParams.get('state') || '';
+  const code = url.searchParams.get('code') || '';
+  const err = url.searchParams.get('error') || '';
+
+  if (!isSession(state)) return donePage('Sign-in failed', 'That link is not valid. Start again from the app.');
+  const raw = await redis(env, 'GET', 'gs:' + state);
+  if (!raw) return donePage('Sign-in expired', 'That took too long. Start again from the app.');
+  let rec; try { rec = JSON.parse(raw); } catch (e) { return donePage('Sign-in failed', 'Start again from the app.'); }
+  if (rec.status !== 'pending') return donePage('Already used', 'That sign-in link has already been used.');
+
+  const finish = async (patch) => {
+    await redis(env, 'SET', 'gs:' + state, JSON.stringify(Object.assign(rec, patch)), 'EX', PAIR_TTL);
+  };
+
+  if (err) {
+    await finish({ status: err === 'access_denied' ? 'denied' : 'error' });
+    return donePage('Sign-in cancelled', 'You can close this and try again in the app.');
+  }
+  if (!code) { await finish({ status: 'error' }); return donePage('Sign-in failed', 'Google sent no authorization code.'); }
+
+  try {
+    const t = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: env.GOOGLE_WEB_CLIENT_ID,
+        client_secret: env.GOOGLE_WEB_CLIENT_SECRET,
+        code: code,
+        grant_type: 'authorization_code',
+        redirect_uri: url.origin + '/v1/auth/google/callback',
+      }),
+    });
+    const j = await t.json();          // never logged: it carries live tokens
+    if (!t.ok) { await finish({ status: 'error' }); return donePage('Sign-in failed', 'Google would not complete the exchange.'); }
+
+    // IDENTICAL to the device path on purpose. Reading u.email here instead of u.sub,
+    // or deriving the id any other way, would silently split every existing Google
+    // account in two -- the same person would get a different account depending on
+    // which flow they used.
+    const ui = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: 'Bearer ' + j.access_token },
+    });
+    if (!ui.ok) { await finish({ status: 'error' }); return donePage('Sign-in failed', 'Could not read your Google profile.'); }
+    const u = await ui.json();
+    if (!u.sub) { await finish({ status: 'error' }); return donePage('Sign-in failed', 'Google returned no account id.'); }
+
+    await finish({
+      status: 'ok',
+      uid: await deriveUid(env, u.sub),
+      name: u.given_name || u.name || '',
+      picture: u.picture || '',
+    });
+    return donePage('Signed in', 'You can close this tab and go back to Reeldeck.');
+  } catch (e) {
+    await finish({ status: 'error' });
+    return donePage('Sign-in failed', 'Something went wrong. Try again from the app.');
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
-    if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
 
     if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) {
       return json({ error: 'Worker is missing its Upstash secrets' }, 500);
     }
 
-    const path = new URL(request.url).pathname.replace(/\/+$/, '');
+    // Path FIRST, then the method guard. Google's redirect back to the OAuth callback
+    // is a GET, and the old order rejected it with "POST only" before the path was even
+    // read -- so the callback would have 405'd with every other part of the flow
+    // looking correct.
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/+$/, '');
+
+    if (path === '/v1/auth/google/callback') return googleCallback(request, env, url);
+    if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
     let body;
     try {
       const text = await request.text();
@@ -304,6 +422,54 @@ export default {
         // a screen is worth nothing afterwards.
         await redis(env, 'DEL', 'p:' + body.code);
         return json({ uid: rec2.state });
+      }
+
+      // ---- Google, redirect flow (phone, desktop, web) ----------------------
+      // The device code stays for television only. Everywhere else this is the
+      // ordinary consent screen people expect: tap, choose an account, done.
+      if (path === '/v1/auth/google/begin') {
+        if (!throttle(request, 'start', 5)) return json({ error: 'slow down' }, 429);
+        if (!env.GOOGLE_WEB_CLIENT_ID || !env.GOOGLE_WEB_CLIENT_SECRET) {
+          return json({ error: 'Worker is missing its Google web client' }, 500);
+        }
+        // PUBLIC: goes to Google and ends up in a browser URL bar.
+        const state = crypto.randomUUID();
+        // SECRET: returned here and nowhere else. /finish requires it.
+        const session = crypto.randomUUID();
+        await redis(env, 'SET', 'gs:' + state,
+          JSON.stringify({ sess: session, status: 'pending' }), 'EX', PAIR_TTL);
+        await redis(env, 'SET', 'gx:' + session, state, 'EX', PAIR_TTL);
+        const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+        auth.searchParams.set('client_id', env.GOOGLE_WEB_CLIENT_ID);
+        auth.searchParams.set('redirect_uri', new URL(request.url).origin + '/v1/auth/google/callback');
+        auth.searchParams.set('response_type', 'code');
+        auth.searchParams.set('scope', 'openid email profile');
+        auth.searchParams.set('state', state);
+        // No refresh token is wanted: this exchange is used once, to read a subject.
+        auth.searchParams.set('access_type', 'online');
+        // Always show the picker. Without it a browser already signed in to one Google
+        // account silently reuses it, which on a shared machine signs you in as
+        // somebody else with no visible step.
+        auth.searchParams.set('prompt', 'select_account');
+        return json({ session, url: auth.toString(), expires: PAIR_TTL });
+      }
+
+      if (path === '/v1/auth/google/finish') {
+        if (!throttle(request, 'rw', 60)) return json({ error: 'slow down' }, 429);
+        if (!isSession(body.session)) return json({ error: 'bad session' }, 400);
+        const st8 = await redis(env, 'GET', 'gx:' + body.session);
+        if (!st8) return json({ status: 'expired' });
+        const raw3 = await redis(env, 'GET', 'gs:' + st8);
+        if (!raw3) return json({ status: 'expired' });
+        let rec3; try { rec3 = JSON.parse(raw3); } catch (e) { return json({ status: 'expired' }); }
+        // The session is the credential here; the state alone must never be enough.
+        if (rec3.sess !== body.session) return json({ status: 'expired' });
+        if (rec3.status === 'pending') return json({ status: 'pending' });
+        // Single use: burn both keys the moment the result is handed over.
+        await redis(env, 'DEL', 'gs:' + st8);
+        await redis(env, 'DEL', 'gx:' + body.session);
+        if (rec3.status !== 'ok') return json({ status: rec3.status || 'error' });
+        return json({ status: 'ok', uid: rec3.uid, name: rec3.name || '', picture: rec3.picture || '' });
       }
 
       // ---- email + password ------------------------------------------------

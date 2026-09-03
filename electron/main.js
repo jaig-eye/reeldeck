@@ -133,6 +133,20 @@ function setupSecurity() {
 
 // Auto-update via the GitHub Releases we publish to. Only runs in an installed
 // build; downloads in the background and applies on quit. Renderer shows a toast.
+/** Deliver to the renderer once it EXISTS. setupUpdater runs immediately after
+ *  createWindow, which returns as soon as loadURL is called -- the page has not parsed
+ *  its preload bridge yet, so a send() here goes nowhere. Both early-return branches
+ *  below (portable, macOS) relied on it, so their "there is a new version, download it"
+ *  notice was silently dropped every time. */
+function tellRenderer(payload) {
+  if (!win || win.isDestroyed()) return;
+  const wc = win.webContents;
+  if (wc.isLoading()) wc.once('did-finish-load', () => {
+    if (win && !win.isDestroyed()) win.webContents.send('reeldeck:update', payload);
+  });
+  else wc.send('reeldeck:update', payload);
+}
+
 function setupUpdater() {
   if (!app.isPackaged) return;
   // electron-builder sets this only for the PORTABLE build. Its update feed points at
@@ -140,9 +154,7 @@ function setupUpdater() {
   // copy and leave the portable exe running and stale. A portable build is meant to be
   // replaced by downloading a new one, so say that instead of pretending.
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('reeldeck:update', { state: 'portable' });
-    }
+    tellRenderer({ state: 'portable' });
     return;
   }
   // Squirrel.Mac refuses to apply an update to an app without a valid code signature,
@@ -152,9 +164,7 @@ function setupUpdater() {
   // about. Reuse the same honest state the portable build uses: there is a new
   // version, go and download it. Delete this the day the build is signed.
   if (process.platform === 'darwin') {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('reeldeck:update', { state: 'portable' });
-    }
+    tellRenderer({ state: 'portable' });
     return;
   }
   try {
