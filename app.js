@@ -252,7 +252,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.17';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.18';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -4015,7 +4015,13 @@
         <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>`;
       document.body.appendChild(m);
       const r = btn.getBoundingClientRect();
-      m.style.top = Math.round(r.bottom + 8) + 'px';
+      // Clamped against the safe area, not just against 0. The button sits inside a
+      // header that already carries safe-area-inset-top, so in practice this is a
+      // floor rather than a correction -- but it is set as an inline style, so a
+      // stylesheet rule could never provide one.
+      const safeTop = parseFloat(getComputedStyle(document.documentElement)
+        .getPropertyValue('--sat')) || 0;
+      m.style.top = Math.round(Math.max(r.bottom + 8, safeTop + 8)) + 'px';
       m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
       btn.setAttribute('aria-expanded', 'true');
       m.onclick = (e2) => {

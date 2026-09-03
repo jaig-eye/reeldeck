@@ -149,6 +149,20 @@ Which message appears depends on the Mac:
  → **About This Mac**. "Apple M1/M2/M3/M4…" → take the **arm64** dmg. "Intel" → take
 the **x64** one. The wrong one either refuses to launch or runs slowly under Rosetta.
 
+### Why the build carries an ad-hoc signature
+
+`build.mac.identity` is `"-"`, an ad-hoc signature. It does not satisfy Gatekeeper and
+it is not notarization, but it does give the arm64 binary a valid cdhash — and without
+*any* signature an arm64 binary is refused outright with an unbypassable "is damaged"
+error, whereas one with a cdhash gets the recoverable "Apple could not verify" dialog
+that has an **Open Anyway** button. It must not be paired with `hardenedRuntime`.
+
+Do not try to explain this in `package.json` itself. electron-builder validates its
+config against a schema with `additionalProperties: false`, so a `"//identity"` key
+added as a comment fails the build — on **both** Windows and macOS, because the whole
+config is validated regardless of the platform being built. That mistake cost the
+v1.0.17 desktop installers.
+
 ### Auto-update does not work on macOS
 
 Squirrel.Mac refuses to apply an update to an app without a valid code signature, and
