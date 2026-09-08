@@ -214,7 +214,7 @@ nav.main a.active { color: var(--text); background: var(--surface-2); }
   max-height: 66vh; overflow-y: auto;
 }
 .suggest .row { display: flex; gap: 11px; padding: 9px 11px; align-items: center; }
-.suggest .row:hover, .suggest .row.hl { background: var(--surface-2); }
+.suggest .row:hover { background: var(--surface-2); }
 .suggest .row img { width: 40px; height: 58px; object-fit: cover; border-radius: 6px; background: var(--bg-3); flex: none; }
 .suggest .row .t { font-weight: 600; font-size: 14px; }
 .suggest .row .s { color: var(--muted); font-size: 12px; }
@@ -227,10 +227,7 @@ nav.main a.active { color: var(--text); background: var(--surface-2); }
 }
 .icon-btn:hover { color: var(--text); background: var(--surface-2); }
 .icon-btn svg { width: 19px; height: 19px; }
-.icon-btn.has-update { position: relative; color: var(--accent); }
-.icon-btn.has-update::after { content: ''; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
 
-.menu-toggle { display: none; }
 
 /* ---------- Scroll-aware header ---------- */
 header.top { transition: box-shadow .25s ease, background .25s ease; }
@@ -577,7 +574,6 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .person .c { color: var(--muted); font-size: 12px; }
 
 /* Seasons / episodes */
-.season-picker { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .ep-list { display: grid; gap: 10px; }
 .ep {
   display: flex; gap: 14px; padding: 12px; background: var(--surface); border: 1px solid var(--border);
@@ -649,12 +645,6 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .set-group { margin-bottom: 22px; }
 .set-group h4 { margin: 0 0 4px; font-size: 15px; }
 .set-group .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
-.set-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.set-row label { font-size: 13px; font-weight: 600; }
-.set-row input, .set-row textarea, .set-row select { width: 100%; background: var(--bg-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 13px; font-family: var(--font); outline: none; }
-.set-row input:focus, .set-row textarea:focus { border-color: var(--accent-2); }
-.set-row .desc { color: var(--muted-2); font-size: 12px; }
-.set-row textarea { min-height: 60px; resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .set-actions { display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 16px; }
 .theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .theme-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s; }
@@ -664,8 +654,6 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .theme-card .tprev i { flex: 1; }
 .theme-card .tname { font-size: 12.5px; font-weight: 700; }
 @media (max-width: 560px) { .theme-grid { grid-template-columns: repeat(2, 1fr); } }
-.warn-box { background: rgba(255,84,112,.08); border: 1px solid rgba(255,84,112,.3); border-radius: 12px; padding: 13px 15px; color: #ffc2cd; font-size: 13px; line-height: 1.55; margin-bottom: 16px; }
-.warn-box b { color: #fff; }
 
 /* ---------- Get app / Install on TV ---------- */
 .getapp { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; max-width: 1040px; }
@@ -701,21 +689,14 @@ footer.site a { display: inline-block; padding: 8px 4px; margin: -8px -4px; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 
 /* Update banner (desktop auto-update) */
-.update-banner {
-  position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(22px + env(safe-area-inset-bottom, 0px)); z-index: 250;
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px;
-  padding: 12px 16px; box-shadow: var(--shadow); font-weight: 600; font-size: 14px; max-width: 92vw;
-}
-@media (max-width: 860px) { .update-banner { bottom: calc(74px + env(safe-area-inset-bottom, 0px)); } }
-.update-banner .ub-msg { display: inline-flex; align-items: center; gap: 8px; }
-/* Download progress bar */
-.update-banner .ub-bar { flex-basis: 100%; height: 6px; border-radius: 99px; background: var(--surface); overflow: hidden; }
-.update-banner .ub-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); transition: width .25s ease; }
-/* Checking spinner */
-.update-banner .ub-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: ub-spin .7s linear infinite; }
+/* The bottom update banner is gone: it announced itself unasked, and on a remote it was
+   pinned chrome the D-pad had to be steered onto to dismiss. A dot on the account button
+   carries the news now, and Settings is where you act on it. The spinner keyframes stay --
+   .upd-box in Settings and the sign-in panels both still use .ub-spin. */
 @keyframes ub-spin { to { transform: rotate(360deg); } }
+.ub-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border);
+           border-top-color: var(--accent); animation: ub-spin .7s linear infinite; flex: none;
+           display: inline-block; }
 
 /* ---------- UX polish: accessibility, touch, motion ---------- */
 * { -webkit-tap-highlight-color: transparent; }
@@ -1020,7 +1001,6 @@ body.tv.cursor-on .cinema-exit { pointer-events: none; }
   .bottom-nav a svg { width: 22px; height: 22px; }
   .bottom-nav a.active { color: var(--accent); }
   body { padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
-  .menu-toggle { display: none; }
   header.top { padding-top: env(safe-area-inset-top, 0px); height: calc(var(--header-h) + env(safe-area-inset-top, 0px)); }
   main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
   /* skill: 44px+ touch targets on mobile */
@@ -1032,7 +1012,6 @@ body.tv.cursor-on .cinema-exit { pointer-events: none; }
 }
 @media (max-width: 860px) {
   nav.main { display: none; }
-  .menu-toggle { display: grid; }
   .detail-body { flex-direction: column; align-items: flex-start; padding-top: 30px; }
   .detail-body .poster { width: 140px; }
   .detail-hero { min-height: 380px; }
@@ -1114,7 +1093,7 @@ body.tv.home header.top:not(.scrolled) {
 }
 body.tv.home header.top:not(.scrolled) .icon-btn { background: rgba(0,0,0,.42); border-color: rgba(255,255,255,.16); }
 body.tv nav.main { display: flex !important; }
-body.tv .bottom-nav, body.tv .menu-toggle, body.tv .rail-arrow { display: none !important; }
+body.tv .bottom-nav, body.tv .rail-arrow { display: none !important; }
 body.tv .brand { font-size: clamp(17px, 1.8vw, 23px); }
 body.tv .brand-mark { width: clamp(26px, 2.8vw, 36px); height: clamp(26px, 2.8vw, 36px); }
 body.tv nav.main a { font-size: clamp(14px, 1.35vw, 17px); padding: 11px clamp(9px, 1.5vw, 20px); border-radius: 12px; }
@@ -1123,7 +1102,6 @@ body.tv .icon-btn { width: clamp(40px, 3.8vw, 48px); height: clamp(40px, 3.8vw, 
 body.tv .icon-btn svg { width: 22px; height: 22px; }
 /* Overscan for the fixed chrome that lives at the screen edges. */
 body.tv .toast { bottom: calc(22px + 3vh); }
-body.tv .update-banner { bottom: calc(22px + 3vh); }
 body.tv .cinema-exit { top: calc(12px + 3vh); right: calc(14px + 3vw); }
 body.tv footer.site { padding: 26px var(--tvpad) calc(40px + 3vh); font-size: 15px; }
 
@@ -1309,8 +1287,8 @@ body.tv.cinema-on .tv-controls {
 body.tv.cinema-on .tv-controls.faded { opacity: 0; pointer-events: none; }
 /* The pointer owns the D-pad outright while it is up. */
 body.tv.cursor-on .tv-controls { display: none; }
-/* On a TV the window IS the screen, so "Movie mode" and "TV mode" would be the same
-   button twice -- and the control bar's Full screen already covers it. */
+/* On a TV the window IS the screen, so Theater mode and Fullscreen would be the same
+   button twice. */
 body.tv .source-bar #tv-mode, body.tv .source-bar #movie-mode { display: none; }
 body.tv .tv-controls-hint { display: block; font-size: 13px; margin: 10px 0 0; max-width: 78ch; line-height: 1.5; }
 
@@ -1704,7 +1682,7 @@ body:not(.tv) nav.main a.active::after {
 .rail h2, .section > h3, .dv-main h3 { font-size: clamp(22px, 1.7vw, 28px); }
 /* Small caps + tracking for the label-ish text next to a serif title reads as
    editorial rather than as an unstyled span. */
-.dv-kicker, .bb-meta .pill-type {
+.bb-meta .pill-type {
   font-family: var(--font); text-transform: uppercase;
   letter-spacing: .14em; font-size: 11.5px; font-weight: 700;
 }
@@ -1753,7 +1731,6 @@ header.top.scrolled::after {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: 14px;
 }
-.dv-kicker { color: var(--accent); }
 .dv-title { margin: 0; font-size: clamp(40px, 6.4vw, 92px); line-height: .92; color: #fff;
   text-shadow: 0 4px 30px var(--hero-text-shadow); max-width: 16ch; }
 .detail-logo { max-height: clamp(90px, 15vh, 190px); max-width: min(560px, 76vw); object-fit: contain;
@@ -1807,7 +1784,6 @@ header.top.scrolled::after {
    and the facts column is wide enough to read from a sofa. */
 body.tv .dv-title { font-size: clamp(40px, 8vh, 88px); }
 body.tv .dv-tagline { font-size: clamp(16px, 2.6vh, 24px); }
-body.tv .dv-kicker { font-size: clamp(11px, 1.8vh, 15px); }
 body.tv .dv-stage { padding-top: clamp(120px, 26vh, 300px); }
 body.tv .dv-body { grid-template-columns: minmax(0, 1fr) clamp(260px, 24vw, 380px); }
 body.tv .dv-main .overview { font-size: clamp(16px, 2.4vh, 21px); }
@@ -1979,10 +1955,38 @@ body:not(.tv) .season-wrap { -webkit-mask-image: none; mask-image: none; }
   display: grid; place-items: center; transition: border-color var(--dur-ui) var(--ease-ui);
 }
 .acct-btn:hover { border-color: var(--accent-2); }
+/* One face, three fallbacks: the Google picture, then the account initial, then a gear.
+   The header used to render cfg.brand's initial while the menu rendered the account's, so
+   the same person showed as two different letters in two adjacent places. */
 .acct-av {
   width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
-  font-weight: 800; font-size: 13px; color: var(--accent-ink);
-  background: var(--accent);
+  overflow: hidden;
+}
+.acct-av .acct-pic { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; }
+.acct-av .acct-ini {
+  width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; font-size: 13px; color: var(--accent-ink); background: var(--accent);
+}
+/* Signed out there is no identity to show, so the button says what it opens instead of
+   drawing an anonymous person. Quieter than the accent circle, because it is not a badge. */
+.acct-av .acct-ini.gear {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border);
+}
+.acct-av .acct-ini.gear svg { width: 60%; height: 60%; }
+
+/* ---- "there is something here" ---------------------------------------------------
+   The whole passive update UI. A dot, on the button and on the row it leads to. */
+.acct-btn { position: relative; }
+.acct-btn.has-dot::after {
+  content: ''; position: absolute; top: -1px; right: -1px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--bg);
+}
+.am-item.has-dot { color: var(--text); font-weight: 700; }
+.am-item.has-dot::after {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); margin-left: auto; flex: none;
 }
 .acct-menu {
   position: fixed; z-index: 260; min-width: 236px; padding: 8px;

@@ -280,7 +280,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.22';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.23';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -330,7 +330,7 @@
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
   // #tv-controls only counts as pinned while cinema mode has it fixed over the
   // player; in normal flow it is an ordinary row and must be measured as one.
-  const TV_PINNED = 'header.top, #update-banner, #cinema-exit, .toast, #next-up, body.cinema-on #tv-controls';
+  const TV_PINNED = 'header.top, #cinema-exit, .toast, #next-up, body.cinema-on #tv-controls';
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
@@ -443,31 +443,37 @@
   /* ------------------------------------------------------------
      Icons
      ------------------------------------------------------------ */
+  // Phosphor Icons (MIT) -- https://phosphoricons.com -- inlined rather than
+  // linked: the desktop and Android builds run from a local file, and the
+  // published artifact's CSP allows scripts from a short CDN allowlist only, so an
+  // icon font or a runtime sprite fetch would fail exactly where the app is meant to
+  // work offline. One family on one 256 grid; `fill` weight only where an icon has
+  // to read as ON against its own OFF twin.
   const ICON = {
-    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
-    menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
-    bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg>',
-    bookmarkFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h12a1 1 0 011 1v15l-7-4-7 4V5a1 1 0 011-1z"/></svg>',
-    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>',
-    gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>',
-    star: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 6.9 7.5.6-5.7 5 1.8 7.4L12 18.2 5.4 21.9l1.8-7.4-5.7-5 7.5-.6z"/></svg>',
-    film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>',
-    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10"/></svg>',
-    tv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="13" rx="2"/><path d="M8 3l4 4 4-4"/></svg>',
-    cast: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16a6 6 0 016 6M2 12a10 10 0 0110 10M2 20a2 2 0 012 2"/><path d="M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/></svg>',
-    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
-    chevR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>',
-    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
-    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
-    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg>',
-    ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>',
-    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
-    download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>',
-    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>',
-    logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 12H4m0 0l4-4m-4 4l4 4M14 4h5a1 1 0 011 1v14a1 1 0 01-1 1h-5"/></svg>',
-    devices: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="14" height="10" rx="1"/><rect x="17" y="9" width="5" height="11" rx="1"/><path d="M6 18h6"/></svg>',
-    sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/></svg>',
-    mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/></svg>'
+    play: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></svg>',
+    menu: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></svg>',
+    bookmark: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/></svg>',
+    bookmarkFill: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Z"/></svg>',
+    search: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>',
+    gear: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"/></svg>',
+    star: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M234.29,114.85l-45,38.83L203,211.75a16.4,16.4,0,0,1-24.5,17.82L128,198.49,77.47,229.57A16.4,16.4,0,0,1,53,211.75l13.76-58.07-45-38.83A16.46,16.46,0,0,1,31.08,86l59-4.76,22.76-55.08a16.36,16.36,0,0,1,30.27,0l22.75,55.08,59,4.76a16.46,16.46,0,0,1,9.37,28.86Z"/></svg>',
+    film: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,104H102.09L210,75.51a8,8,0,0,0,5.68-9.84l-8.16-30a15.93,15.93,0,0,0-19.42-11.13L35.81,64.74a15.75,15.75,0,0,0-9.7,7.4,15.51,15.51,0,0,0-1.55,12L32,111.56c0,.14,0,.29,0,.44v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V112A8,8,0,0,0,216,104ZM192.16,40l6,22.07-22.62,6L147.42,51.83Zm-66.69,17.6,28.12,16.24-36.94,9.75L88.53,67.37Zm-79.4,44.62-6-22.08,26.5-7L94.69,89.4ZM208,200H48V120H208v80Z"/></svg>',
+    home: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M219.31,108.68l-80-80a16,16,0,0,0-22.62,0l-80,80A15.87,15.87,0,0,0,32,120v96a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V160h32v56a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V120A15.87,15.87,0,0,0,219.31,108.68ZM208,208H160V152a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8v56H48V120l80-80,80,80Z"/></svg>',
+    tv: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,64H147.31l34.35-34.34a8,8,0,1,0-11.32-11.32L128,60.69,85.66,18.34A8,8,0,0,0,74.34,29.66L108.69,64H40A16,16,0,0,0,24,80V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V80A16,16,0,0,0,216,64Zm0,136H40V80H216V200Z"/></svg>',
+    back: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"/></svg>',
+    chevR: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></svg>',
+    info: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"/></svg>',
+    plus: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></svg>',
+    check: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg>',
+    x: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></svg>',
+    download: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z"/></svg>',
+    user: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24ZM74.08,197.5a64,64,0,0,1,107.84,0,87.83,87.83,0,0,1-107.84,0ZM96,120a32,32,0,1,1,32,32A32,32,0,0,1,96,120Zm97.76,66.41a79.66,79.66,0,0,0-36.06-28.75,48,48,0,1,0-59.4,0,79.66,79.66,0,0,0-36.06,28.75,88,88,0,1,1,131.52,0Z"/></svg>',
+    logout: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M120,216a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V40a8,8,0,0,1,8-8h64a8,8,0,0,1,0,16H56V208h56A8,8,0,0,1,120,216Zm109.66-93.66-40-40a8,8,0,0,0-11.32,11.32L204.69,120H112a8,8,0,0,0,0,16h92.69l-26.35,26.34a8,8,0,0,0,11.32,11.32l40-40A8,8,0,0,0,229.66,122.34Z"/></svg>',
+    devices: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,72H208V64a24,24,0,0,0-24-24H40A24,24,0,0,0,16,64v96a24,24,0,0,0,24,24H152v8a24,24,0,0,0,24,24h48a24,24,0,0,0,24-24V96A24,24,0,0,0,224,72ZM40,168a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H184a8,8,0,0,1,8,8v8H176a24,24,0,0,0-24,24v72Zm192,24a8,8,0,0,1-8,8H176a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8Zm-96,16a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h40A8,8,0,0,1,136,208Zm80-96a8,8,0,0,1-8,8H192a8,8,0,0,1,0-16h16A8,8,0,0,1,216,112Z"/></svg>',
+    sync: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,48V96a8,8,0,0,1-8,8H168a8,8,0,0,1,0-16h28.69L182.06,73.37a79.56,79.56,0,0,0-56.13-23.43h-.45A79.52,79.52,0,0,0,69.59,72.71,8,8,0,0,1,58.41,61.27a96,96,0,0,1,135,.79L208,76.69V48a8,8,0,0,1,16,0ZM186.41,183.29a80,80,0,0,1-112.47-.66L59.31,168H88a8,8,0,0,0,0-16H40a8,8,0,0,0-8,8v48a8,8,0,0,0,16,0V179.31l14.63,14.63A95.43,95.43,0,0,0,130,222.06h.53a95.36,95.36,0,0,0,67.07-27.33,8,8,0,0,0-11.18-11.44Z"/></svg>',
+    mail: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,48H32a8,8,0,0,0-8,8V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A8,8,0,0,0,224,48ZM203.43,64,128,133.15,52.57,64ZM216,192H40V74.19l82.59,75.71a8,8,0,0,0,10.82,0L216,74.19V192Z"/></svg>',
+    theater: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200Z"/></svg>',
+    fullscreen: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M200,80v32a8,8,0,0,1-16,0V88H160a8,8,0,0,1,0-16h32A8,8,0,0,1,200,80ZM96,168H72V144a8,8,0,0,0-16,0v32a8,8,0,0,0,8,8H96a8,8,0,0,0,0-16ZM232,56V200a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56ZM216,200V56H40V200H216Z"/></svg>',
   };
 
   /* ------------------------------------------------------------
@@ -662,6 +668,27 @@
   }
 
   /** Drop one entry from BOTH stores, so a dismissed title stops resurfacing. */
+  /**
+   * Dismiss an entire title from the shelf.
+   *
+   * The rail shows one tile per series, so removing it has to take every episode with
+   * it. Forgetting only the episode on top would surface the previous one in its place,
+   * and the tile would have to be dismissed once per episode ever watched before the
+   * show finally went away.
+   */
+  function progForgetGroup(g) {
+    if (!g) return progForget(null);
+    const m = /^(movie|tv):(\d+)$/.exec(g);
+    if (!m) return progForget(g);
+    const type = m[1], id = m[2];
+    const keys = histAll().filter(r => r.type === type && String(r.id) === id).map(r => r.k);
+    if (!keys.length) return;
+    // progForget saves and flushes each time; do the whole set, then let the last call
+    // carry the sync. Cheap enough at history size, and it keeps one code path for the
+    // pointer cleanup that a series needs.
+    keys.forEach(progForget);
+  }
+
   function progForget(key) {
     if (!key) return;
     const p = progAll();
@@ -696,15 +723,27 @@
     return pr ? Math.min(1, pr.pct || 0) : 0;
   }
 
-  /** Everything started but not finished, newest first — drives "Continue watching". */
-  function progResumable() {
-    const p = progAll(); if (progPrune(p)) progSave(p);
-    const hist = histAll();
+  /**
+   * History collapsed to one row per TITLE, newest first.
+   *
+   * histAll() is per EPISODE, which is right for the history log and wrong for the
+   * shelf: four episodes of one show took four of the rail's twenty slots and pushed
+   * everything else off it. Since histAll() is already newest-first, the first row seen
+   * for a series IS the latest episode watched, so this keeps that one and drops the
+   * rest -- no sorting, no date comparison.
+   *
+   * `n` is how many episodes of that series are behind the tile, so the caller can say
+   * so instead of silently hiding them.
+   */
+  function histByTitle(rows) {
+    const seen = Object.create(null);
     const out = [];
-    for (const row of hist) {
-      const pr = p[row.k];
-      if (!pr || progDone(pr) || !(pr.pct > 0.01)) continue;
-      out.push(Object.assign({}, row, { pr: pr }));
+    for (const r of (rows || histAll())) {
+      const g = r.type + ':' + r.id;          // series, not episode
+      if (seen[g]) { seen[g].n++; continue; }
+      const row = Object.assign({}, r, { g: g, n: 1 });
+      seen[g] = row;
+      out.push(row);
     }
     return out;
   }
@@ -764,7 +803,7 @@
     if (!st || typeof st !== 'object' || Array.isArray(st)) st = {};
     if (!st.clearedAt || typeof st.clearedAt !== 'object') st.clearedAt = { prog: 0, hist: 0 };
     return Object.assign({
-      on: false, uid: '', kind: '', name: '',
+      on: false, uid: '', kind: '', name: '', pic: '',
       lastSyncAt: 0, skew: 0, dirty: false, migrated: 0,
       themeAt: 0, stall: '', lastErr: ''
     }, st);
@@ -828,8 +867,16 @@
     tombSave(t);
   }
 
-  /** 192 bits from the CSPRNG. Math.random() is a predictable PRNG and this id is,
-   *  on its own, the entire credential for an account on an unauthenticated server. */
+  /**
+   * 192 bits from the CSPRNG. Math.random() is a predictable PRNG and this id is, on its
+   * own, the entire credential for an account on an unauthenticated server.
+   *
+   * NOT CALLED by the shipping app: every account gets its id from the server through
+   * adoptUid(), and a guest stays local-only. Kept because it is a security primitive
+   * with tests pinning its length and uniqueness -- deleting it would take those tests
+   * with it, and the next person who needs an anonymous id would have to write this
+   * again, which is exactly where Math.random() gets reached for.
+   */
   function newAnonUid() {
     const b = new Uint8Array(24);
     crypto.getRandomValues(b);
@@ -1651,7 +1698,7 @@
   }
 
   /** Adopt an identity and immediately reconcile with whatever the account already has. */
-  async function adoptUid(uid, kind, name) {
+  async function adoptUid(uid, kind, name, pic) {
     const st = syncState();
     // Whose data is currently in the four stores? If it belongs to a DIFFERENT account,
     // merging would carry the previous occupant's library and -- worse -- their
@@ -1668,6 +1715,10 @@
       st.themeAt = 0;
     }
     st.uid = uid; st.on = true; st.kind = kind || 'anon'; st.name = name || '';
+    // Google hands this to the Worker and the Worker has always passed it back; the
+    // client just dropped it. Only https, and only if it looks like a URL -- it goes
+    // straight into a src attribute.
+    st.pic = (typeof pic === 'string' && /^https:\/\//.test(pic)) ? pic : '';
     st.lastSyncAt = 0; st.stall = ''; st.lastErr = '';
     // Bound HERE, not after a successful sync. If the first sync fails -- no network
     // in the seconds after signing in on a TV is the ordinary case -- a later sign-in
@@ -1738,8 +1789,14 @@
     me.url = r.d.url;                 // for "Open again", without spending a new session
     set(
       '<div class="au-flow au-narrow">' +
-        '<span class="au-sb"><span class="au-lead">Choose your Google account in the browser ' +
-          'window that just opened, then come back here.</span></span>' +
+        '<span class="au-sb"><span class="au-lead">' + (IS_DESKTOP
+            // On desktop the system browser frequently opens BEHIND the app window, so
+            // "the window that just opened" describes something the user cannot see and
+            // the panel looks stuck. Name the place to look.
+            ? 'Your browser has been opened at Google — check behind this window if you ' +
+              'do not see it. Choose your account there, then come back.'
+            : 'Choose your Google account in the browser window that just opened, then come back here.') +
+          '</span></span>' +
         '<div class="au-foot">' +
           '<span class="au-live"><i></i>Waiting for you to finish\u2026</span>' +
           '<span class="au-btns">' +
@@ -1777,7 +1834,7 @@
       if (st === 'ok') {
         authStop();
         toast('Signed in as ' + (p.d.name || 'you'));
-        return adoptUid(p.d.uid, 'google', p.d.name);
+        return adoptUid(p.d.uid, 'google', p.d.name, p.d.picture);
       }
       authFail(mount, me, '<div class="au-err"><p>' +
         (st === 'denied' ? 'Sign-in was cancelled.'
@@ -1910,7 +1967,7 @@
       if (st === 'ok') {
         authStop();
         toast('Signed in as ' + (p.d.name || 'you'));
-        return adoptUid(p.d.uid, 'google', p.d.name);
+        return adoptUid(p.d.uid, 'google', p.d.name, p.d.picture);
       }
       authFail(mount, me, '<div class="au-err"><p>' +
         (st === 'denied' ? 'Sign-in was declined on the phone.'
@@ -2017,18 +2074,22 @@
 
     view().innerHTML = (
       '<div class="sync-page">' +
-        '<h1 class="page-title">' + ICON.sync + ' Sync</h1>' +
+        '<h1 class="page-title">' + ICON.devices + ' Devices</h1>' +
         (on
           ? '<div class="sync-on">' +
-              '<p class="sync-lead">Your watchlist, history and where you left off are saved to ' +
-              'your account and follow you to every device.</p>' +
+              '<p class="sync-lead">Your watchlist, history and where you left off save ' +
+              'themselves and follow you to every device you sign in on. There is nothing ' +
+              'to switch on and nothing to press.</p>' +
               '<div class="sync-facts">' +
                 '<div><span>Signed in with</span><b>' + who + '</b></div>' +
-                '<div><span>Last synced</span><b>' + esc(when) + '</b></div>' +
+                '<div><span>Last saved</span><b>' + esc(when) + '</b></div>' +
                 (st.stall ? '<div class="bad"><span>Problem</span><b>' + esc(st.stall) + '</b></div>' : '') +
               '</div>' +
               '<div class="sync-actions">' +
-                '<button class="btn" data-au="now">' + ICON.sync + ' Sync now</button>' +
+                // Offered ONLY when something is actually wrong. As a permanent control it
+                // implied sync was the user's job; as a response to a stated problem it is
+                // the obvious next thing to try.
+                (st.stall ? '<button class="btn" data-au="now">' + ICON.sync + ' Try again</button>' : '') +
                 '<button class="btn" data-au="pairclaim">' + ICON.devices + ' Connect a device</button>' +
                 '<button class="btn danger" data-au="signout">' + ICON.logout + ' Sign out</button>' +
               '</div>' +
@@ -2036,8 +2097,8 @@
             '</div>'
           : '<div class="sync-off">' +
               '<p class="sync-lead">Sign in and your watchlist, history and resume points ' +
-              'follow you to your phone, your TV and your desktop. Without it everything ' +
-              'stays on this device only.</p>' +
+              'follow you to your phone, your TV and your desktop, automatically. Without ' +
+              'it everything stays on this device only.</p>' +
               authChoicesHTML(false) +
               '<div class="au-mount"></div>' +
               '<p class="sync-fine">Signing in with Google only reads your name and email ' +
@@ -2403,7 +2464,7 @@
     // Wall-clock counts time the app was not even on screen. Lock the phone on a
     // 100-minute film for 90 minutes and a single tick on resume writes the whole
     // 90 minutes: pct crosses DONE_PCT, the title is labelled "Watched" and
-    // progResumable drops it from Continue watching -- the resume point is destroyed.
+    // the title drops out of Recently watched -- the resume point is destroyed.
     // 13 of the 14 default mirrors take this path on a fresh install, so it is the
     // common case, not the edge one. Bank the foreground seconds on the way out and
     // restart the clock on the way back in; only visible time is ever counted.
@@ -2511,24 +2572,28 @@
    * entries resume where they stopped; finished ones simply start again.
    */
   function recentRailHTML() {
-    let rows = histAll();
+    // Grouped BEFORE slicing, or the cap would be spent on repeats of one show.
+    let rows = histByTitle();
     if (!rows.length) return '';
     if (IS_TV) rows = rows.slice(0, 14);
     const tiles = rows.slice(0, 20).map(r => {
       const href = r.type === 'tv'
         ? ('#/watch/tv/' + r.id + '?s=' + (r.s || 1) + '&e=' + (r.e || 1))
         : ('#/watch/movie/' + r.id);
+      // The episode shown IS the latest one watched, so it doubles as "where you are up
+      // to" -- which is what the tile is for.
       const sub = r.type === 'tv' ? ('S' + (r.s || 1) + ' · E' + (r.e || 1)) : 'Film';
+      const more = r.type === 'tv' && r.n > 1 ? ' · ' + r.n + ' watched' : '';
       const pr = progGet(r.type, r.id, r.s, r.e);
       const pct = pr ? Math.round(Math.min(1, pr.pct || 0) * 100) : 0;
       return `<div class="card" data-nav="${href}" tabindex="0" role="button"
-                   aria-label="${esc(r.title || 'title')}, ${sub}, watched ${relTime(r.at)}">
+                   aria-label="${esc(r.title || 'title')}, ${sub}${more}, watched ${relTime(r.at)}">
         <div class="poster">
           <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
           ${pct > 1 ? `<span class="card-prog"><i style="width:${pct}%"></i></span>` : ''}
         </div>
-        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub} · ${relTime(r.at)}</div></div>
-        <button class="cw-x" data-unwatch="${esc(r.k)}" tabindex="${IS_TV ? '0' : '-1'}"
+        <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub}${more} · ${relTime(r.at)}</div></div>
+        <button class="cw-x" data-unwatch="${esc(r.k)}" data-unwatch-group="${esc(r.g)}" tabindex="${IS_TV ? '0' : '-1'}"
                 aria-label="Remove ${esc(r.title || 'this title')} from Recently watched">${ICON.x}</button>
       </div>`;
     }).join('');
@@ -3342,7 +3407,20 @@
       // Presentation API for Cast.
       const sandbox = playerGuardOn()
         ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"' : '';
-      frameInner = `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
+      // NO `fullscreen` in the allow list, deliberately. Fullscreen inside a
+      // cross-origin frame is gated by Permissions Policy, whose default allowlist is
+      // `self`, so omitting the token leaves document.fullscreenEnabled false inside the
+      // embed and its own full-screen control cannot fire. Measured: with the token the
+      // frame reports true, without it false, and with no allow attribute at all false.
+      //
+      // This is a fix, not a restriction. A player that enters NATIVE fullscreen is
+      // promoted to the browser's top layer, where nothing outside its subtree paints --
+      // that is what hid the next-episode pill, the D-pad pointer and every toast. It
+      // also hands the video to the system player, which drops the DOM-drawn subtitles
+      // the mirrors render, which is why they vanished over AirPlay. Our own Theater and
+      // Fullscreen buttons call requestFullscreen on .player-frame, in OUR document, so
+      // they are unaffected by the frame's policy and keep every overlay working.
+      frameInner = `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
     }
 
     // Roll over to the neighbouring season rather than dead-ending, but never past
@@ -3434,8 +3512,8 @@
           <span class="lbl">${src ? 'Playing on <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
           <span class="sb-modes">
-            <button class="btn sm" id="movie-mode" title="Fill this window. Best for AirPlay and screen mirroring — it never hands the video to the system player, so the mirror's subtitles keep showing.">Movie mode</button>
-            <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen (real full screen)">${ICON.tv} TV mode</button>
+            <button class="btn sm" id="movie-mode" title="Fill this window. Best for AirPlay and screen mirroring — it never hands the video to the system player, so the mirror's subtitles keep showing.">${ICON.theater} Theater mode</button>
+            <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.fullscreen} Fullscreen</button>
           </span>
         </div>
         ${epStrip}
@@ -3652,10 +3730,10 @@
   /**
    * Two different "bigger" requests, which used to be one button.
    *
-   *   wantScreen = false  MOVIE MODE. The player fills the WINDOW. Pure CSS, no
+   *   wantScreen = false  THEATER MODE. The player fills the WINDOW. Pure CSS, no
    *                       permission, no gesture requirement, and the rest of the
    *                       desktop stays usable around it.
-   *   wantScreen = true   TV MODE. The player fills the SCREEN, via real
+   *   wantScreen = true   FULLSCREEN. The player fills the SCREEN, via a real
    *                       requestFullscreen.
    *
    * On a TV the window IS the screen, so the distinction is invisible there and the
@@ -3692,7 +3770,7 @@
     if (!$('#cinema-exit')) {
       const ex = document.createElement('button');
       ex.id = 'cinema-exit'; ex.className = 'cinema-exit'; ex.innerHTML = ICON.x + ' Exit';
-      ex.setAttribute('aria-label', wantScreen ? 'Exit TV mode' : 'Exit movie mode');
+      ex.setAttribute('aria-label', wantScreen ? 'Exit full screen' : 'Exit theater mode');
       ex.onclick = exitCinema; frame.appendChild(ex);
       // Top hot-zone: reliably re-reveals the control on hover/tap even though the
       // cross-origin <iframe> swallows pointer events over the video itself.
@@ -4175,6 +4253,40 @@ ${IS_TV ? '' : `
      button, because that is where people look for it and because it leaves the bar
      with room to breathe. Browsing by genre moved to a drawer, which also let the
      Movies/TV filter bar stop being a wall of controls. */
+  /**
+   * The account button's face, in one place so the header and the menu cannot disagree.
+   *
+   * They did: the header drew the initial of cfg.brand while the menu drew the initial of
+   * the signed-in name, so the same person was "R" in the bar and "B" in the panel
+   * directly underneath it. Order is picture, then initial, then a gear -- an anonymous
+   * person-glyph for a signed-out account says nothing the gear does not, and the menu it
+   * opens is mostly settings.
+   */
+  function acctFaceHTML() {
+    const st = syncState();
+    if (st.on && st.uid) {
+      // https only: this string goes straight into a src attribute. A broken or blocked
+      // avatar falls back to the initial rather than leaving an empty circle.
+      if (st.pic) {
+        return '<img class="acct-pic" src="' + esc(st.pic) + '" alt="" referrerpolicy="no-referrer"' +
+               ' data-ini="' + esc((st.name || '?').charAt(0).toUpperCase()) + '">';
+      }
+      return '<span class="acct-ini">' + esc((st.name || '?').charAt(0).toUpperCase()) + '</span>';
+    }
+    return '<span class="acct-ini gear">' + ICON.gear + '</span>';
+  }
+
+  // A hotlinked Google avatar can 404 or be blocked; swap in the initial rather than
+  // leave a hole. Delegated, because the element is rebuilt on every header render.
+  document.addEventListener('error', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'IMG' || !t.classList.contains('acct-pic')) return;
+    const sp = document.createElement('span');
+    sp.className = 'acct-ini';
+    sp.textContent = t.dataset.ini || '?';
+    t.replaceWith(sp);
+  }, true);
+
   function closeAcct() {
     const m = $('#acct-menu'); if (m) m.remove();
     const b = $('#acct-btn'); if (b) b.setAttribute('aria-expanded', 'false');
@@ -4194,13 +4306,15 @@ ${IS_TV ? '' : `
         ? (sst.stall ? 'Sync needs attention'
                      : 'Synced ' + (sst.lastSyncAt ? relTime(sst.lastSyncAt) : 'soon'))
         : 'Watching on this device';
-      const initial = (signedIn && sst.name ? sst.name : (cfg.brand || 'R')).charAt(0).toUpperCase();
       m.innerHTML = `
-        <div class="am-who"><span class="acct-av">${esc(initial)}</span>
+        <div class="am-who"><span class="acct-av">${acctFaceHTML()}</span>
           <span><b>${esc(label)}</b><small>${esc(sub2)}</small></span></div>
-        <button class="am-item" data-am="sync" role="menuitem">${signedIn ? ICON.sync + ' Sync &amp; devices' : ICON.user + ' Sign in'}</button>
+        <button class="am-item" data-am="sync" role="menuitem">${signedIn ? ICON.devices + ' Devices' : ICON.user + ' Sign in'}</button>
         <button class="am-item" data-am="settings" role="menuitem">${ICON.gear} Settings</button>
-        <button class="am-item" data-am="update" role="menuitem">${ICON.download} Check for updates</button>
+        <button class="am-item${updState.s === 'available' || updState.s === 'ready' ? ' has-dot' : ''}" data-am="update" role="menuitem">${ICON.download} ${
+          updState.s === 'ready' ? 'Install update' + (updState.v ? ' \u00b7 v' + esc(updState.v) : '')
+          : updState.s === 'available' ? 'Update available' + (updState.v ? ' \u00b7 v' + esc(updState.v) : '')
+          : 'Check for updates'}</button>
         <button class="am-item" data-am="getapp" role="menuitem">${ICON.tv} Install on TV</button>
         <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>`;
       document.body.appendChild(m);
@@ -4219,7 +4333,12 @@ ${IS_TV ? '' : `
         const what = it.dataset.am; closeAcct();
         if (what === 'sync') go('#/sync');
         else if (what === 'settings') openSettings();
-        else if (what === 'update') checkForUpdate(true);
+        // Something is already waiting: open the place that can act on it rather than
+        // starting a check whose answer we are already holding.
+        else if (what === 'update') {
+          if (updState.s === 'available' || updState.s === 'ready') openSettings();
+          else checkForUpdate(true);
+        }
         else if (what === 'getapp') go('#/get-app');
         else if (what === 'watchlist') go('#/watchlist');
       };
@@ -4553,7 +4672,7 @@ ${IS_TV ? '' : `
       <button class="icon-btn" id="search-btn" data-nav="#/search" data-section="search" title="Search" aria-label="Search">${ICON.search}</button>
       <a class="icon-btn" href="#/watchlist" data-nav="#/watchlist" data-section="watchlist" title="Watchlist" aria-label="Watchlist">${ICON.bookmark}</a>
       <button class="acct-btn" id="acct-btn" aria-haspopup="true" aria-expanded="false" title="Account" aria-label="Account and settings">
-        <span class="acct-av" aria-hidden="true">${esc((cfg.brand || 'R').charAt(0).toUpperCase())}</span>
+        <span class="acct-av" aria-hidden="true">${acctFaceHTML()}</span>
       </button>`;
 
     // Search moved out of the header and onto its own page, for every platform.
@@ -4669,7 +4788,9 @@ ${IS_TV ? '' : `
       // neighbour rather than being sent back to the top of the page.
       const goneCard = uw.closest('.card');
       const nextCard = goneCard && (goneCard.nextElementSibling || goneCard.previousElementSibling);
-      progForget(uw.dataset.unwatch);
+      // A grouped tile stands for every episode of that series, so dismiss all of them.
+      if (uw.dataset.unwatchGroup) progForgetGroup(uw.dataset.unwatchGroup);
+      else progForget(uw.dataset.unwatch);
       const card = uw.closest('.card'), rail = uw.closest('.rail');
       if (card) card.remove();
       // The last one out takes the rail with it, rather than leaving a bare heading.
@@ -4774,54 +4895,52 @@ ${IS_TV ? '' : `
   // errors and progress were invisible). Works for desktop (electron-updater
   // events) and web/Android (GitHub Releases API).
   let updInteractive = false;   // was the current check triggered by the button?
-  function updBanner() {
-    let b = document.getElementById('update-banner');
-    if (!b) { b = document.createElement('div'); b.id = 'update-banner'; b.className = 'update-banner'; document.body.appendChild(b); }
-    clearTimeout(updBanner._t);
-    return b;
+
+  /**
+   * Put the dot on the account button, and rebuild the menu row if it is open.
+   *
+   * This is the whole of the passive update UI now. An update is never urgent enough to
+   * take over the bottom of the screen, and on a TV the banner was pinned chrome that the
+   * D-pad had to be steered onto before it could be dismissed.
+   */
+  function updBadge() {
+    const on = updState.s === 'available' || updState.s === 'ready';
+    const b = document.getElementById('acct-btn');
+    if (b) b.classList.toggle('has-dot', on);
+    const item = document.querySelector('#acct-menu [data-am="update"]');
+    if (item) item.classList.toggle('has-dot', on);
   }
-  function updClose() { clearTimeout(updBanner._t); const b = document.getElementById('update-banner'); if (b) b.remove(); }
-  function updWireDismiss() { const x = document.getElementById('ub-x'); if (x) x.onclick = updClose; }
-  function updChecking() { updBanner().innerHTML = '<span class="ub-msg"><span class="ub-spin"></span>Checking for updates…</span>'; }
-  function updNone() {
-    updBanner().innerHTML = '<span class="ub-msg">You’re on the latest version (v' + esc(APP_VERSION) + ').</span><button class="btn sm" id="ub-x">OK</button>';
-    updWireDismiss(); updBanner._t = setTimeout(updClose, 5000);
-  }
-  function updError(msg) {
-    updBanner().innerHTML = '<span class="ub-msg">' + esc(msg || 'Update check failed — try again later.') + '</span>' +
-      '<button class="btn sm primary" id="ub-retry">Retry</button><button class="btn sm" id="ub-x">Dismiss</button>';
-    const r = document.getElementById('ub-retry'); if (r) r.onclick = () => checkForUpdate(true);
-    updWireDismiss();
-  }
-  function updDownloading(pct) {
-    pct = Math.max(0, Math.min(100, Math.round(pct || 0)));
-    updBanner().innerHTML = '<span class="ub-msg">Downloading update… ' + pct + '%</span><div class="ub-bar"><i style="width:' + pct + '%"></i></div>';
-  }
+
+  // Only ever reached from an interactive check: the user pressed a button, so say
+  // something. Toasts already sit above the player and the cinema frame.
+  function updChecking() { if (updInteractive) toast('Checking for updates…'); }
+  function updNone() { if (updInteractive) toast('You’re on the latest version (v' + APP_VERSION + ').'); }
+  // A failed check the user did not ask for is not news. Settings shows the error for
+  // anyone who goes looking, via renderUpdBox.
+  function updError(msg) { if (updInteractive) toast(msg || 'Update check failed — try again later.'); }
+  // Progress belongs in Settings, which renderUpdBox already draws and updates in place.
+  function updDownloading() {}
   function updReady(version) {
-    updBanner().innerHTML = '<span class="ub-msg">Update ' + (version ? 'v' + esc(version) + ' ' : '') + 'ready to install.</span>' +
-      '<button class="btn sm primary" id="ub-install">Restart &amp; update</button><button class="btn sm" id="ub-x">Later</button>';
-    const i = document.getElementById('ub-install'); if (i) i.onclick = () => { if (window.reeldeck && window.reeldeck.installUpdate) window.reeldeck.installUpdate(); };
-    updWireDismiss();
+    updBadge();
+    // One line, once, and then it is in the menu waiting. Restarting the app is the
+    // user's call and there is no hurry.
+    toast('Update ' + (version ? 'v' + version + ' ' : '') + 'ready · Account → Install update');
   }
   // The banner ANNOUNCES; Settings is where you act. On a TV the banner is pinned
   // chrome that lands wherever the row model puts it, so hunting for its button with
   // a remote was the worst part of updating — and the button went to the sideload
   // instructions, which is not something you can follow on the device you are holding.
   function updWebAvailable(version) {
-    const ub = document.getElementById('update-btn'); if (ub) ub.classList.add('has-update');
-    updSet('available', { v: version });
-    updBanner().innerHTML = '<span class="ub-msg">New version available — v' + esc(version) + '.</span>' +
-      '<button class="btn sm primary" id="ub-get">' + (updCanInstall() ? 'Update' : 'Get it') + '</button>' +
-      '<button class="btn sm" id="ub-x">Later</button>';
-    const g = document.getElementById('ub-get');
-    if (g) g.onclick = () => { updClose(); openSettings(); };
-    updWireDismiss();
+    updSet('available', { v: version });     // updSet -> renderUpdBox + updBadge
+    // Only speak up if the user asked. Otherwise the dot is the entire announcement.
+    if (updInteractive) toast('Update available · v' + version);
   }
 
   function updSet(st, extra) {
     updState = Object.assign({ s: st, v: updState.v, pct: 0, msg: '' }, extra || {});
     updState.s = st;
     renderUpdBox();
+    updBadge();
   }
   // Only the Android build can install itself: it has the bridge, the permission and
   // a package installer. Desktop hands off to electron-updater; the plain web build
