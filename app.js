@@ -147,7 +147,12 @@
     // OFF by default: the iframe sandbox trips "Iframe Sandbox Detected" on most
     // providers (it's their anti-adblock gate). The desktop app blocks pop-under/ad
     // requests at the network layer instead, so video plays AND the ads are gone.
-    blockPlayerAds: false,
+    // null = automatic: guard the player wherever the HOST does not already block
+    // pop-ups itself. true/false are explicit user overrides from the player toolbar.
+    // Deliberately a new key rather than a new default for blockPlayerAds: loadConfig
+    // layers saved values OVER DEFAULTS, so the old stored `false` would have outranked
+    // any default forever and nobody already running the app would have seen the change.
+    playerGuard: null,
     // Player sources are provider-agnostic templates you control.
     // Placeholders: {id} = TMDB id, {imdb} = IMDb id, {season}, {episode}
     // e.g. { name:'MySource', movie:'https://host/embed/movie/{id}',
@@ -243,6 +248,29 @@
 
   // Desktop (Electron) exposes a trusted bridge; on the web we fall back to window.open.
   const IS_DESKTOP = !!(window.reeldeck && window.reeldeck.desktop);
+  const IS_NATIVE = (function () {
+    const C = window.Capacitor;
+    if (!C) return false;                                   // plain browser tab
+    if (typeof C.isNativePlatform === 'function') return !!C.isNativePlatform();
+    return !!C.Plugins;                                     // older bridge
+  })();
+  /**
+   * Does the thing hosting us already refuse window.open?
+   *
+   *   Android  MainActivity sets setSupportMultipleWindows(false) and
+   *            setJavaScriptCanOpenWindowsAutomatically(false)
+   *   Electron win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+   *   Browser  nothing whatsoever
+   *
+   * That asymmetry is the entire reason pop-up ads appear on the hosted web build and not
+   * in either app. Where the host does the work we leave the player unsandboxed, because
+   * the sandbox buys nothing there and some mirrors refuse to run inside one.
+   */
+  const HOST_BLOCKS_POPUPS = IS_DESKTOP || IS_NATIVE;
+  function playerGuardOn() {
+    const v = cfg.playerGuard;
+    return (v === null || v === undefined) ? !HOST_BLOCKS_POPUPS : !!v;
+  }
   const IS_TV = /ReeldeckTV/.test(navigator.userAgent || '') || location.href.indexOf('tv=1') >= 0;
   // iPadOS 13+ reports itself as a Mac, so the touch-points test is the only reliable
   // way to tell an iPad from a desktop Safari.
@@ -252,7 +280,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.20';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.21';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -398,8 +426,12 @@
     if (!t) {
       t = document.createElement('div'); t.id = 'toast'; t.className = 'toast';
       t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite');
-      document.body.appendChild(t);
     }
+    // Re-homed on every call, not just on creation: the fullscreen element is a top
+    // layer, so a toast left on document.body is not painted at all while the player is
+    // fullscreened -- and 'Volume 40%' is the only feedback Vol +/-/Mute ever give.
+    const host = overlayHost();
+    if (t.parentNode !== host) host.appendChild(t);
     t.textContent = msg; t.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
   }
@@ -2295,7 +2327,8 @@
       '<span class="nu-t">' + esc(watchNow.nextLabel || 'Next episode') + '</span>' +
       '<button class="btn primary sm" id="nu-go">' + ICON.play + ' Play</button>' +
       '<button class="btn sm" id="nu-x" aria-label="Dismiss">' + ICON.x + '</button>';
-    document.body.appendChild(el);
+    // Into whatever is currently on top -- the fullscreen frame if there is one.
+    overlayHost().appendChild(el);
     el.querySelector('#nu-go').onclick = () => { const h = watchNow && watchNow.nextHref; nextUpHide(); if (h) go(h); };
     el.querySelector('#nu-x').onclick = () => { nextUpDismissed = true; nextUpHide(); };
 
@@ -3302,7 +3335,13 @@
       </div></div>`;
     } else {
       const url = buildSourceUrl(src, type, id, imdb, season, episode, resumeAt);
-      const sandbox = cfg.blockPlayerAds ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"' : '';
+      // The omissions are the point: no allow-popups (kills window.open and
+      // target=_blank, i.e. the pop-under), no allow-top-navigation (kills the redirect
+      // that hijacks our whole page), no allow-modals, no allow-downloads. What stays is
+      // what a player genuinely needs: its own origin, its scripts, its forms, and the
+      // Presentation API for Cast.
+      const sandbox = playerGuardOn()
+        ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"' : '';
       frameInner = `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
     }
 
@@ -3364,7 +3403,7 @@
               data-src="${i}" data-mirror-name="${esc(s.name || '')}" aria-pressed="${i === cfg.activeSource}">
         <span class="num">${String(i + 1).padStart(2, '0')}</span>
         <span class="mn">${esc(s.name || ('Source ' + (i + 1)))}</span>
-        <span class="ms">${i === cfg.activeSource ? '\u25cf Projecting' : 'Mirror ' + (i + 1)}</span>
+        <span class="ms">${i === cfg.activeSource ? '\u25cf Playing' : 'Mirror ' + (i + 1)}</span>
         <span class="mbadge">${ICON.check} Verified</span>
       </button>`).join('');
 
@@ -3389,15 +3428,14 @@
           <button class="btn sm" data-vol="up" aria-label="Volume up">Vol +</button>
           <button class="btn sm" data-vol="mute" aria-label="Mute">Mute</button>
           <button class="btn sm" id="tvc-pointer">Pointer</button>
-          <button class="btn sm" id="tvc-full">⛶ Full screen</button>
         </div>
-        <p class="tv-controls-hint muted">Volume, full screen and the pointer are ours and always work. Play and seek are passed to the mirror — if one ignores them, use <b>Pointer</b> to press its own controls.</p>` : ''}
+        <p class="tv-controls-hint muted">If play or seek does nothing, the mirror ignores them — press <b>Pointer</b> and use the player's own buttons.</p>` : ''}
         <div class="source-bar">
           <span class="lbl">${src ? 'Playing on <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
           ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
           <span class="sb-modes">
-            <button class="btn sm ghost" id="movie-mode" title="Fill this window">Movie mode</button>
-            <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.tv} TV mode</button>
+            <button class="btn sm" id="movie-mode" title="Fill this window. Best for AirPlay and screen mirroring — it never hands the video to the system player, so the mirror's subtitles keep showing.">Movie mode</button>
+            <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen (real full screen)">${ICON.tv} TV mode</button>
           </span>
         </div>
         ${epStrip}
@@ -3409,9 +3447,11 @@
           </summary>
           <div class="srv-body">
             <div class="srv-opts">
-              <button class="btn sm ghost" id="toggle-sandbox" aria-pressed="${!!cfg.blockPlayerAds}"
-                      title="Restrict what the embedded player is allowed to do (may break some mirrors)">
-                ${cfg.blockPlayerAds ? 'Player locked down' : 'Lock down player'}</button>
+              <button class="btn sm ${playerGuardOn() ? '' : 'ghost'}" id="toggle-sandbox" aria-pressed="${playerGuardOn()}"
+                      title="Stops the player opening pop-up windows or redirecting the page. Cannot remove ads drawn inside the player itself, and a few mirrors refuse to run with it on.">
+                ${playerGuardOn() ? ICON.check + ' Pop-ups blocked' : 'Block pop-up ads'}</button>
+              ${playerGuardOn() || HOST_BLOCKS_POPUPS ? '' : `
+              <span class="muted" style="font-size:12.5px">Pop-up ads can open from the player.</span>`}
             </div>
             <div class="server-room">${roomTiles}</div>
             <p class="muted mirror-note"><span class="mbadge static">${ICON.check} Verified</span>
@@ -3443,7 +3483,7 @@
       if (room) room.querySelectorAll('.mirror').forEach((el, idx) => {
         el.classList.toggle('on', idx === i);
         el.setAttribute('aria-pressed', String(idx === i));
-        const ms = el.querySelector('.ms'); if (ms) ms.textContent = idx === i ? '● Projecting' : 'Mirror ' + (idx + 1);
+        const ms = el.querySelector('.ms'); if (ms) ms.textContent = idx === i ? '● Playing' : 'Mirror ' + (idx + 1);
       });
     };
     if (room) room.onclick = e => {
@@ -3459,13 +3499,14 @@
     };
     const tgl = $('#toggle-sandbox');
     if (tgl) tgl.onclick = () => {
-      cfg.blockPlayerAds = !cfg.blockPlayerAds; saveConfig();
+      // Writes an explicit true/false, which from here on outranks the automatic default.
+      cfg.playerGuard = !playerGuardOn(); saveConfig();
       // This control lives INSIDE the disclosure and its handler re-renders the whole
       // view, which closed the panel, scrolled to the top and left the only label
       // describing the new state hidden inside the thing that just shut. Say what
       // happened, and re-open the panel so the toggle is still where it was pressed.
       srvWasOpen = true;
-      toast(cfg.blockPlayerAds ? 'Player locked down' : 'Player restrictions off');
+      toast(playerGuardOn() ? 'Pop-up ads blocked' : 'Pop-ups allowed again');
       watchView(type, id, params);
     };
     const qa = $('#quick-add');
@@ -3546,7 +3587,6 @@
       }
       if (b.dataset.vol) { nativeSend('vol:' + b.dataset.vol); return; }
       if (b.id === 'tvc-pointer') { cursorOn(); return; }
-      if (b.id === 'tvc-full') { toggleCinema(true); return; }
     };
     const pe = $('#player-enter');
     if (pe) pe.onclick = cursorOn;
@@ -3559,6 +3599,42 @@
 
   // "TV mode": a full-viewport player, for casting / screen-mirroring to a TV.
   // CSS-based so it works on iOS/Android/desktop; also tries native fullscreen.
+  /**
+   * Where an overlay must live to be seen over the player.
+   *
+   * A fullscreen element renders in the top layer, so anything outside its subtree is
+   * not painted at all -- z-index does not enter into it. When the frame is
+   * fullscreened, overlays have to be INSIDE it; otherwise document.body is right,
+   * because the frame is a 16/9 box with overflow:hidden and an overlay parented there
+   * outside cinema mode would be clipped to the video.
+   */
+  function overlayHost() {
+    // Nothing but real fullscreen justifies moving an overlay out of <body>. Cinema mode
+    // is an ordinary stacking context at z-index 300 and every overlay already outranks
+    // it, so re-homing there bought nothing and cost the overlay its life on the next
+    // re-render of the view -- the frame is rebuilt, and the child goes with it.
+    return fsElement() || document.body;
+  }
+
+  /** Move the live overlays to wherever they now need to be. Focus is preserved:
+   *  re-parenting blurs, and on a remote a lost ring reads as a crash. */
+  function rehomeOverlays() {
+    const host = overlayHost();
+    const keep = document.activeElement;
+    ['next-up', 'tv-cursor', 'tv-cursor-hint'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.parentNode !== host) host.appendChild(el);
+    });
+    // The control bar is a sibling of the frame in the template, so in fullscreen it
+    // has to move too -- it is the bar the user pressed "full screen" ON.
+    const tvc = document.getElementById('tv-controls');
+    if (tvc && fsElement() && tvc.parentNode !== host) host.appendChild(tvc);
+    if (keep && document.contains(keep) && keep !== document.body) {
+      try { keep.focus({ preventScroll: true }); } catch (e) {}
+    }
+    if (IS_TV) tvInvalidate();
+  }
+
   let cinemaTimer, cinemaReveal;
   function revealCinema() {
     const ex = $('#cinema-exit'); if (ex) ex.classList.remove('faded');
@@ -3585,8 +3661,32 @@
    * On a TV the window IS the screen, so the distinction is invisible there and the
    * remote only ever gets one control.
    */
+  // ---- fullscreen, both spellings -------------------------------------------------
+  // webkitRequestFullscreen was already used to ENTER, but the exit call and the change
+  // event were unprefixed only: an engine that needed the prefix to get in had no
+  // prefixed way back out, and never delivered the event that tears cinema down.
+  function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  let fsSelfExit = false;
+  /** Leave fullscreen, and mark it as OUR doing so onFsTeardown ignores it. */
+  function fsExit() {
+    if (!fsElement()) return;
+    fsSelfExit = true;
+    const fn = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!fn) { fsSelfExit = false; return; }
+    try { Promise.resolve(fn.call(document)).catch(() => { fsSelfExit = false; }); }
+    catch (e) { fsSelfExit = false; }
+  }
+
+  let fsWired = false;
   function enterCinema(wantScreen) {
     const frame = $('.player-frame'); if (!frame) return;
+    if (!fsWired) {
+      fsWired = true;
+      // Fires for the app's own request AND for a user leaving with Escape or the
+      // remote, so it is the one place that always knows where the top layer is.
+      document.addEventListener('fullscreenchange', rehomeOverlays);
+      document.addEventListener('webkitfullscreenchange', rehomeOverlays);
+    }
     frame.classList.add('cinema'); document.body.classList.add('cinema-on');
     document.body.classList.toggle('cinema-screen', !!wantScreen);
     if (!$('#cinema-exit')) {
@@ -3610,9 +3710,10 @@
     if (wantScreen) {
       const rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
       if (rq) { try { Promise.resolve(rq.call(frame)).catch(() => {}); } catch (e) {} }
-    } else if (document.fullscreenElement) {
-      // Stepping down from TV mode to Movie mode.
-      try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (e) {}
+    } else if (fsElement()) {
+      // Stepping down from TV mode to Movie mode. fsSelfExit marks this as OURS, so the
+      // teardown handler below does not mistake it for the user leaving and kill cinema.
+      fsExit();
     }
   }
   function exitCinema() {
@@ -3628,7 +3729,7 @@
     document.body.classList.remove('cinema-screen');
     const ex = $('#cinema-exit'); if (ex) ex.remove();
     const hot = $('#cinema-hot'); if (hot) hot.remove();
-    if (document.fullscreenElement) { try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (e) {} }
+    if (fsElement()) fsExit();
     releasePlayerFocus();   // hand D-pad focus back to our UI
   }
   // Pressing the mode you are already in leaves; pressing the OTHER one switches to it
@@ -3724,8 +3825,11 @@
       curEl = document.createElement('div');
       curEl.className = 'tv-cursor'; curEl.id = 'tv-cursor';
       curEl.tabIndex = -1; curEl.setAttribute('aria-hidden', 'true');
-      document.body.appendChild(curEl);
     }
+    // Appended (or re-appended) every time: cinema mode may have been entered since,
+    // and a crosshair painted behind a fullscreen video is worse than none -- OK would
+    // still tap through at a point the user cannot see.
+    overlayHost().appendChild(curEl);
     document.body.classList.add('cursor-on');
     // Start where a play button usually is, rather than dead centre.
     curX = Math.round(window.innerWidth / 2);
@@ -3735,30 +3839,64 @@
     if (!curHint) {
       curHint = document.createElement('div');
       curHint.className = 'tv-cursor-hint';
-      document.body.appendChild(curHint);
+      curHint.id = 'tv-cursor-hint';
     }
+    overlayHost().appendChild(curHint);
     curHint.textContent = NATIVE_TAP
-      ? 'Move with the D-pad · OK to press · Back to exit'
-      : 'Pointer control needs the Reeldeck TV app · Back to exit';
-    curHint.classList.add('show');
-    clearTimeout(cursorOn._t);
-    cursorOn._t = setTimeout(() => { if (curHint) curHint.classList.remove('show'); }, 4500);
+      ? 'D-pad moves · OK presses · Back puts it away'
+      : 'Pointer control needs the Reeldeck TV app · Back puts it away';
+    cursorWake();
     // Keep DOM focus in OUR document: if it were inside the iframe we would stop
     // receiving the arrow keys that drive the cursor.
     try { curEl.focus({ preventScroll: true }); } catch (e) { try { curEl.focus(); } catch (e2) {} }
     tvInvalidate();
   }
 
+  /**
+   * Show the pointer and its hint, then let both fade if the remote goes quiet.
+   *
+   * The crosshair used to be painted once and left there for the rest of the film --
+   * #cinema-exit and the control bar were both on a fade timer, but nothing ever dimmed
+   * the pointer, so one press of OK put a white ring over the picture permanently. The
+   * hint had the opposite bug: a one-shot 4.5s timeout, so it was gone for good after
+   * the first few seconds and never came back to explain itself.
+   */
+  function cursorWake() {
+    if (!cursorActive()) return;
+    if (curEl) curEl.classList.remove('idle');
+    if (curHint) curHint.classList.add('show');
+    clearTimeout(cursorOn._t);
+    cursorOn._t = setTimeout(() => {
+      // The ring only DIMS; it never stops existing, because its position is the app's
+      // only record of where the pointer is. One that vanished and came back somewhere
+      // else would be worse than one that is merely faint.
+      if (curEl) curEl.classList.add('idle');
+      if (curHint) curHint.classList.remove('show');
+    }, 4000);
+  }
+
   function cursorOff() {
     if (!cursorActive()) return;
     document.body.classList.remove('cursor-on');
-    if (curHint) { curHint.classList.remove('show'); }
+    if (curHint) curHint.classList.remove('show');
+    if (curEl) curEl.classList.remove('idle');
     clearTimeout(cursorOn._t);
+    // Hand the ring back to something the user can SEE. Without this the remote was
+    // left focused on #tv-cursor -- aria-hidden, tabIndex -1, and now display:none --
+    // so the D-pad looked dead until a direction press happened to re-seed focus.
     tvInvalidate();
+    const back = document.getElementById('tvc-pointer') || document.getElementById('cinema-exit');
+    if (back) tvFocusEl(back);
   }
 
   function cursorDraw() {
-    if (curEl) curEl.style.transform = 'translate3d(' + curX + 'px,' + curY + 'px,0)';
+    if (!curEl) return;
+    // A re-render of the view (switching servers, an episode change) can detach whatever
+    // curEl was parented to. Body is stable, so this is now belt-and-braces -- but a
+    // detached cursor means pointer mode is still ON with nothing drawn, and OK would tap
+    // at a position the viewer cannot see. Cheap to re-attach, expensive to get wrong.
+    if (!curEl.isConnected) overlayHost().appendChild(curEl);
+    curEl.style.transform = 'translate3d(' + curX + 'px,' + curY + 'px,0)';
   }
 
   // Held direction accelerates, so crossing the screen is a flick rather than a chore.
@@ -3773,6 +3911,7 @@
     curX = Math.max(6, Math.min(curX, window.innerWidth - 6));
     curY = Math.max(6, Math.min(curY, window.innerHeight - 6));
     cursorDraw();
+    cursorWake();
   }
 
   // Where the ring was before we borrowed focus for a key press.
@@ -3852,9 +3991,22 @@
     const pe = document.getElementById('player-enter');
     if (pe && IS_TV) tvFocusEl(pe);
   }
-  document.addEventListener('fullscreenchange', () => {
-    if (!document.fullscreenElement && document.body.classList.contains('cinema-on')) exitCinema();
-  });
+  /**
+   * The USER left fullscreen (Escape, F11, the remote) -> leave the player with them.
+   *
+   * This must not fire for fullscreen exits the app asked for itself. enterCinema(false)
+   * calls fsExit() to step TV mode down to Movie mode, and exitCinema() calls it during
+   * its own teardown; treating either as a user exit meant "Movie mode" pressed while in
+   * TV mode dropped you out of the player altogether, and exitCinema re-entered itself.
+   * fsSelfExit is the one bit of state that distinguishes them.
+   */
+  function onFsTeardown() {
+    if (fsElement()) return;                 // entering, not leaving
+    if (fsSelfExit) { fsSelfExit = false; return; }
+    if (document.body.classList.contains('cinema-on')) exitCinema();
+  }
+  document.addEventListener('fullscreenchange', onFsTeardown);
+  document.addEventListener('webkitfullscreenchange', onFsTeardown);
 
   // The two mirrors that document a start-position parameter. Everything else simply
   // starts from the beginning -- there is no generic way to seek a cross-origin player.
@@ -3952,8 +4104,9 @@
         <div class="ga-card">
           <h3>Shorter link — easier to type on a remote</h3>
           <p class="muted" id="ga-auto">${autoLine}</p>
+${IS_TV ? '' : `
           <p class="muted" style="font-size:12.5px;margin-top:4px">Want your own memorable link instead? Paste one (e.g. a custom <b>tinyurl.com</b> alias) and save — it replaces the address above and updates the QR.</p>
-          <div class="ga-url"><input id="ga-short" placeholder="https://tinyurl.com/your-alias" value="${esc(manual)}"><button class="btn sm primary" id="ga-save">Save</button></div>
+          <div class="ga-url"><input id="ga-short" placeholder="https://tinyurl.com/your-alias" value="${esc(manual)}"><button class="btn sm primary" id="ga-save">Save</button></div>`}
           <p class="muted" style="font-size:12.5px;margin-top:10px">Even easier: the Downloader app supports numeric <b>codes</b> — register your link at <b>aftv.news</b> and you get a short number to punch in.</p>
         </div>
         <div class="ga-card">
@@ -4230,7 +4383,7 @@
     renderUpdBox();
     const ga = $('#set-getapp', back);
     if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
-    $('#set-reset', back).onclick = () => { if (confirm('Reset theme + settings to defaults? Your watchlist is kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); const rst = syncState(); rst.themeAt = now(); saveSyncState(rst); syncFlush('reset'); closeModal(back); route(); toast('Settings reset'); } };
+    $('#set-reset', back).onclick = () => { if (confirm('Reset settings to defaults?\n\nThis also removes any mirrors you added and restores the built-in list. Your watchlist and history are kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); const rst = syncState(); rst.themeAt = now(); saveSyncState(rst); syncFlush('reset'); closeModal(back); route(); toast('Settings reset'); } };
   }
 
   // Closing a modal must also drop pointer mode — openTrailer hands the remote to the
@@ -4542,8 +4695,12 @@
   // episodes, nav links, search rows). Native buttons/inputs handle Enter themselves.
   // The browser build has no hardware Back, so Escape is the way out of the player.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && (cursorActive() || document.body.classList.contains('cinema-on'))) {
-      if (!document.querySelector('.modal-back')) { e.preventDefault(); exitCinema(); return; }
+    if (e.key === 'Escape' && !document.querySelector('.modal-back')) {
+      // Same one-level-per-press unwind as hardware Back, so a keyboard and a remote do
+      // not disagree about what Escape means.
+      if (cursorActive()) { e.preventDefault(); cursorOff(); return; }
+      if (document.body.classList.contains('player-focused')) { e.preventDefault(); releasePlayerFocus(); return; }
+      if (document.body.classList.contains('cinema-on')) { e.preventDefault(); exitCinema(); return; }
     }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     if (cursorActive()) { e.preventDefault(); cursorTap(); return; }
@@ -4585,10 +4742,22 @@
     else { navSeen[navDepth] = navSeen[navDepth] || h; navSeen[++navDepth] = h; }
     route();
   });
-  buildHeader();
-  route();
-  wireSync();
-  maybeSplash();
+  /**
+   * First render. Declared here, CALLED FROM THE BOTTOM OF THE MODULE.
+   *
+   * Do not move the call back up. Everything here can reach a TV helper -- maybeSplash()
+   * places the D-pad ring, route() measures rows -- and those helpers close over `const`
+   * and `let` bindings declared further down the file. Calling boot() from this point
+   * threw a ReferenceError out of the top level and abandoned the rest of module init,
+   * which is what silently stripped the `tv` body class and the D-pad keydown listener
+   * from every signed-out TV launch.
+   */
+  function boot() {
+    buildHeader();
+    route();
+    wireSync();
+    maybeSplash();
+  }
 
   // PWA: register service worker so the app is installable ("Add to Home Screen").
   // No-ops on file:// (SW not allowed there) — serve over http/https or the desktop app.
@@ -5299,9 +5468,15 @@
       if (document.getElementById('acct-menu')) { closeAcct(); return; }
       const modal = document.querySelector('.modal-back');
       if (modal) { closeModal(modal); return; }
-      // In the player (pointer up, and/or full-screen): first Back returns to our UI
-      // rather than leaving the page.
-      if (cursorActive() || document.body.classList.contains('player-focused') || document.body.classList.contains('cinema-on')) { exitCinema(); return; }
+      // The player nests three states, and Back unwinds exactly ONE of them per press:
+      //   pointer up                 ->  put the pointer away, keep watching
+      //   remote lent to the embed   ->  take the remote back
+      //   full screen                ->  leave the player
+      // Collapsing these into a single exitCinema() meant dismissing the pointer also
+      // ended playback, so there was no way to stop pointing and carry on watching.
+      if (cursorActive()) { cursorOff(); return; }
+      if (document.body.classList.contains('player-focused')) { releasePlayerFocus(); return; }
+      if (document.body.classList.contains('cinema-on')) { exitCinema(); return; }
       // history.length never decreases, so testing it meant exitApp() was unreachable
       // after the very first navigation and Back became inert on the home screen.
       // Track our own depth instead: Android TV's contract is "Back on root exits".
@@ -5309,5 +5484,10 @@
       App.exitApp();
     });
   }
+
+  // LAST STATEMENT IN THE MODULE, deliberately. Every `const`/`let` above is initialised
+  // by now, so boot() cannot fall into a temporal dead zone, and the `tv` class plus the
+  // D-pad listeners are already installed before the first paint.
+  boot();
 
 })();

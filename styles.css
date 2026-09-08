@@ -679,7 +679,12 @@ footer.site a { display: inline-block; padding: 8px 4px; margin: -8px -4px; }
 .pager .pg { color: var(--muted); font-weight: 600; }
 
 /* Toast */
-.toast { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 200; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+/* z-index 420, not 200: cinema mode fixes .player-frame over the viewport at 300, so a
+   toast at 200 was painted BEHIND the player and every message raised during playback was
+   invisible -- including "Volume 40%", which is the only feedback the TV volume buttons
+   give. 420 clears the frame (300), the exit pill and control bar (310), and the pointer
+   and its hint (400/401), so it is legible even with the pointer up. */
+.toast { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 420; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 
 /* Update banner (desktop auto-update) */
@@ -902,6 +907,21 @@ body.tv .player-enter {
   border: 0; cursor: pointer; color: #fff;
 }
 body.tv.player-focused .player-enter, body.tv.cursor-on .player-enter { display: none; }
+/* ---- "Is the remote in the player, or still in our UI?" ---------------------
+   Handing the D-pad to a cross-origin embed produces no visible change at all: the
+   focus ring is inside a frame we cannot style, so the only feedback was that arrow
+   presses stopped moving our own ring. From the sofa that reads as a freeze. Outline
+   the frame itself instead -- inset, so the embed's own chrome cannot clip it away. */
+body.tv.player-focused .player-frame, body.tv.cursor-on .player-frame { position: relative; }
+body.tv.player-focused .player-frame::after,
+body.tv.cursor-on .player-frame::after {
+  content: ''; position: absolute; inset: 0; z-index: 7; pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 4px var(--accent), inset 0 0 0 7px rgba(0,0,0,.55);
+}
+/* In pointer mode the ring is still OURS, so mark the boundary more quietly than when
+   the remote has genuinely been handed away to the embed. */
+body.tv.cursor-on .player-frame::after { box-shadow: inset 0 0 0 3px rgba(255,255,255,.45); }
 
 /* ---- D-pad pointer ---------------------------------------------------------
    The only way to press a control inside a cross-origin player. Fixed-positioned so
@@ -914,7 +934,13 @@ body.tv.cursor-on .tv-cursor {
   border: 3px solid #fff; background: rgba(255,255,255,.18);
   box-shadow: 0 0 0 2px rgba(0,0,0,.7), 0 6px 20px rgba(0,0,0,.55);
   pointer-events: none; outline: none; will-change: transform;
+  transition: opacity .45s ease;
 }
+/* Dimmed, not removed: the ring's position is the only record of where the pointer is,
+   so it has to stay findable. Faint enough to stop competing with the picture, solid
+   enough to locate from three metres. OPACITY ONLY -- the transition here must never
+   cover `transform`, which is what moves it. */
+body.tv.cursor-on .tv-cursor.idle { opacity: .3; }
 body.tv.cursor-on .tv-cursor::after {
   content: ''; position: absolute; left: 50%; top: 50%;
   width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff;
@@ -960,6 +986,13 @@ body.tv .player-enter:focus .pe-pill { outline: 4px solid #fff; outline-offset: 
    pointer has its own on-screen hint and Back exits, so the hover-reveal is expendable
    while it is up; reaching the embed is not. */
 body.tv.cursor-on .cinema-hot { pointer-events: none; }
+/* Same reasoning for the Exit pill. It sits top-right at z-index 310, which is where
+   players keep cast, quality and settings, so a pointer aimed at the gear hit Exit and
+   threw the viewer out of the player instead of opening a menu. It stays VISIBLE -- it
+   is the only on-screen reminder of how to leave -- but stops hit-testing while the
+   pointer is up, because Back now dismisses the pointer on its own and makes the button
+   live again on the very next press. */
+body.tv.cursor-on .cinema-exit { pointer-events: none; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
@@ -1246,9 +1279,12 @@ body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { s
 .tv-controls, .tv-controls-hint { display: none; }
 body.tv .tv-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
 /* Cinema mode fixes .player-frame over the whole viewport at z-index 300 and locks
-   body scrolling, so a control bar left in normal flow is buried underneath it --
-   pressing our own Full screen button would have thrown the controls away. Float it
-   above the frame instead, where a TV viewer expects it. */
+   body scrolling, so a control bar left in normal flow is buried underneath it. Float
+   it above the frame instead, where a TV viewer expects it.
+   NOTE: z-index settles this only while the frame is an ordinary stacking context. If
+   the frame is ever genuinely fullscreened it moves to the TOP LAYER, which no z-index
+   can reach -- which is why rehomeOverlays() re-parents this bar INTO the frame rather
+   than trying to out-stack it. */
 body.tv.cinema-on .tv-controls {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(16px + 3vh); z-index: 310; margin: 0;
