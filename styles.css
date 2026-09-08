@@ -404,6 +404,10 @@ body::before {
 main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .page-title { font-size: 26px; font-weight: 800; margin: 4px 0 18px; letter-spacing: -.3px; }
 .muted { color: var(--muted); }
+/* The load-failure icon. It was a raw emoji, which rendered in whatever the platform's
+   emoji font is -- a colour glyph in the middle of a monochrome Phosphor set. */
+.cn-warn { color: var(--muted); margin-bottom: 10px; }
+.cn-warn svg { width: 44px; height: 44px; }
 .center-note { text-align: center; color: var(--muted); padding: 60px 20px; }
 .center-note .note-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
 

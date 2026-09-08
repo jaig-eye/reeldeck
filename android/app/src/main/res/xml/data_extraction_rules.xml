@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nothing in this app is backed up or transferred to another device.
+
+  android:allowBackup="false" alone is not enough on Android 12+ (API 31), where it
+  switches off CLOUD backup but leaves device-to-device transfer on by default. That is
+  what this file closes. Both halves matter because minSdk is 22, so the old
+  `adb backup` path is still in scope on the oldest supported devices.
+
+  Why close it at all: the app keeps the account uid in WebView localStorage, and that
+  uid is on its own the entire credential for the account against an unauthenticated
+  server. Nothing is lost by excluding it. The watchlist, history and resume points
+  already live in the account and come back on the next sign-in, which is what the sync
+  layer is for.
+
+  (No double hyphen anywhere in this comment on purpose: XML forbids it inside a
+  comment, and an invalid resource file fails the Android build.)
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

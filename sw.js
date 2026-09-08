@@ -1,9 +1,9 @@
 // Reeldeck service worker — makes the app installable and load offline-ish.
 // Only touches SAME-ORIGIN app shell files. TMDB, image CDN and the streaming
 // providers are always fetched live from the network (never cached/intercepted).
-const CACHE = 'reeldeck-v41';
+const CACHE = 'reeldeck-v42';
 const SHELL = [
-  './', './index.html', './app.js?v=41', './styles.css?v=41',
+  './', './index.html', './app.js?v=42', './styles.css?v=42',
   './assets/vendor/qrcode.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png',
   // The header logo mask and the Apple touch icon: without them the brand mark is an
@@ -42,13 +42,21 @@ self.addEventListener('fetch', (e) => {
   // was launched twice. Everything else stays cache-first: those URLs carry a
   // version query, so a new release can never match an old entry.
   if (e.request.mode === 'navigate') {
-    e.respondWith(
+    const fromCache = () =>
+      caches.match(e.request).then((c) => c || caches.match('./index.html'));
+    // Network-first, but not network-only-and-wait-for-ever. A stalled connection never
+    // settles the fetch, and without this the user stared at a blank page while a
+    // complete shell sat in the cache. 3.5s is long enough that any working connection
+    // wins the race and short enough that a broken one is not a hang.
+    const netOrCache = Promise.race([
       fetch(e.request).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
         return res;
-      }).catch(() => caches.match(e.request).then((c) => c || caches.match('./index.html')))
-    );
+      }),
+      new Promise((resolve) => setTimeout(() => resolve(fromCache().then((c) => c || null)), 3500))
+    ]).then((res) => res || fromCache()).catch(fromCache);
+    e.respondWith(netOrCache);
     return;
   }
 

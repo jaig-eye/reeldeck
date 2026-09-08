@@ -220,6 +220,21 @@
   /* ------------------------------------------------------------
      TMDB client
      ------------------------------------------------------------ */
+  /**
+   * fetch() with a deadline.
+   *
+   * Browsers do not time out a hung request in any useful timeframe, so a stalled
+   * connection left the caller awaiting a promise that never settled -- which for
+   * tmdb() meant the view kept its skeleton for ever, with no error and no retry,
+   * because the catch it needed was never reached.
+   */
+  function fetchTimeout(url, opts, ms) {
+    const ac = new AbortController();
+    const kill = setTimeout(() => ac.abort(), ms || 10000);
+    return fetch(url, Object.assign({}, opts, { signal: ac.signal }))
+      .finally(() => clearTimeout(kill));
+  }
+
   async function tmdb(path, params) {
     params = params || {};
     const base = cfg.tmdbBase.replace(/\/+$/, '');
@@ -230,11 +245,37 @@
       const v = params[k];
       if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, v);
     }
-    const r = await fetch(u.toString());
+    // ONE retry, and only for the failures that are actually transient: a dropped or
+    // stalled connection, or a 5xx. A 4xx fails identically the second time -- a bad key
+    // stays bad, a missing title stays missing -- and retrying a 429 without backoff
+    // makes rate limiting worse rather than better.
+    let r = null, netErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await new Promise(res => setTimeout(res, 700));
+      netErr = null;
+      try { r = await fetchTimeout(u.toString(), null, 10000); }
+      catch (e) {
+        netErr = e;
+        // A TIMEOUT is not worth retrying: the request did not fail fast, so the network
+        // is slow or hanging, and a second attempt buys another full deadline before the
+        // user is told anything at all. Retry only failures that came back quickly.
+        if (e && e.name === 'AbortError') break;
+        continue;
+      }
+      if (r.status >= 500) continue;
+      break;
+    }
+    if (netErr) {
+      throw new Error(netErr.name === 'AbortError'
+        ? 'The network is not responding. Check your connection and try again.'
+        : 'No connection. Check your network and try again.');
+    }
     if (!r.ok) {
       let msg = 'Request failed (' + r.status + ')';
       try { const j = await r.json(); if (j && j.status_message) msg = j.status_message; } catch (_) {}
       if (r.status === 401) msg = 'TMDB rejected the API key. Add your own free key in Settings.';
+      if (r.status === 429) msg = 'TMDB is rate limiting this key. Wait a moment and try again.';
+      if (r.status >= 500) msg = 'TMDB is having trouble right now. Try again in a moment.';
       throw new Error(msg);
     }
     return r.json();
@@ -280,7 +321,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.24';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.25';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -471,6 +512,7 @@
     logout: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M120,216a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V40a8,8,0,0,1,8-8h64a8,8,0,0,1,0,16H56V208h56A8,8,0,0,1,120,216Zm109.66-93.66-40-40a8,8,0,0,0-11.32,11.32L204.69,120H112a8,8,0,0,0,0,16h92.69l-26.35,26.34a8,8,0,0,0,11.32,11.32l40-40A8,8,0,0,0,229.66,122.34Z"/></svg>',
     devices: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,72H208V64a24,24,0,0,0-24-24H40A24,24,0,0,0,16,64v96a24,24,0,0,0,24,24H152v8a24,24,0,0,0,24,24h48a24,24,0,0,0,24-24V96A24,24,0,0,0,224,72ZM40,168a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H184a8,8,0,0,1,8,8v8H176a24,24,0,0,0-24,24v72Zm192,24a8,8,0,0,1-8,8H176a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8Zm-96,16a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h40A8,8,0,0,1,136,208Zm80-96a8,8,0,0,1-8,8H192a8,8,0,0,1,0-16h16A8,8,0,0,1,216,112Z"/></svg>',
     sync: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,48V96a8,8,0,0,1-8,8H168a8,8,0,0,1,0-16h28.69L182.06,73.37a79.56,79.56,0,0,0-56.13-23.43h-.45A79.52,79.52,0,0,0,69.59,72.71,8,8,0,0,1,58.41,61.27a96,96,0,0,1,135,.79L208,76.69V48a8,8,0,0,1,16,0ZM186.41,183.29a80,80,0,0,1-112.47-.66L59.31,168H88a8,8,0,0,0,0-16H40a8,8,0,0,0-8,8v48a8,8,0,0,0,16,0V179.31l14.63,14.63A95.43,95.43,0,0,0,130,222.06h.53a95.36,95.36,0,0,0,67.07-27.33,8,8,0,0,0-11.18-11.44Z"/></svg>',
+    warn: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,144V104a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,180Z"/></svg>',
     mail: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,48H32a8,8,0,0,0-8,8V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A8,8,0,0,0,224,48ZM203.43,64,128,133.15,52.57,64ZM216,192H40V74.19l82.59,75.71a8,8,0,0,0,10.82,0L216,74.19V192Z"/></svg>',
     theater: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200Z"/></svg>',
     fullscreen: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M200,80v32a8,8,0,0,1-16,0V88H160a8,8,0,0,1,0-16h32A8,8,0,0,1,200,80ZM96,168H72V144a8,8,0,0,0-16,0v32a8,8,0,0,0,8,8H96a8,8,0,0,0,0-16ZM232,56V200a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56ZM216,200V56H40V200H216Z"/></svg>',
@@ -865,23 +907,6 @@
     const t = tombAll();
     t[key] = now();
     tombSave(t);
-  }
-
-  /**
-   * 192 bits from the CSPRNG. Math.random() is a predictable PRNG and this id is, on its
-   * own, the entire credential for an account on an unauthenticated server.
-   *
-   * NOT CALLED by the shipping app: every account gets its id from the server through
-   * adoptUid(), and a guest stays local-only. Kept because it is a security primitive
-   * with tests pinning its length and uniqueness -- deleting it would take those tests
-   * with it, and the next person who needs an anonymous id would have to write this
-   * again, which is exactly where Math.random() gets reached for.
-   */
-  function newAnonUid() {
-    const b = new Uint8Array(24);
-    crypto.getRandomValues(b);
-    return btoa(String.fromCharCode.apply(null, b))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');   // 32 chars
   }
 
   /**
@@ -2877,7 +2902,15 @@
     const q = params.q || '';
     const page = Math.max(1, parseInt(params.page || '1', 10));
     const selGenres = (params.genres || '').split(',').filter(Boolean);
+    // Paint BEFORE fetching. genres() is awaited below, and on a slow connection that
+    // await used to hold the previous page on screen -- title, posters and all -- so
+    // choosing "TV Shows" looked like a tap that had not registered. A title and a
+    // skeleton cost nothing and say the right thing: you are here, it is loading.
+    view().innerHTML = '<h1 class="page-title">' +
+      (q ? 'Search' : (isTV ? 'TV Shows' : 'Movies')) + '</h1>' +
+      '<div id="results">' + skeletonGrid(18) + '</div>';
     const gl = await genres(isTV ? 'tv' : 'movie').catch(() => []);
+    if (!routeIs(my)) return;   // navigated on while genres was in flight
 
     // Build toolbar
     const sortSel = SORTS.map(s => `<option value="${s.v}" ${params.sort === s.v ? 'selected' : ''}>${s.label}</option>`).join('');
@@ -4140,15 +4173,15 @@
   // are unreachable, in which case the full URL is used (it always works).
   async function shortenUrl(longUrl) {
     try {
-      const r = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl));
+      const r = await fetchTimeout('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl), null, 6000);
       if (r.ok) { const t = (await r.text()).trim(); if (/^https?:\/\/tinyurl\.com\/\S+$/i.test(t)) return t; }
     } catch (e) {}
     try {
-      const r = await fetch('https://spoo.me/', {
+      const r = await fetchTimeout('https://spoo.me/', {
         method: 'POST',
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'url=' + encodeURIComponent(longUrl)
-      });
+      }, 6000);
       if (r.ok) { const j = await r.json(); if (j && j.short_url) return String(j.short_url).trim(); }
     } catch (e) {}
     return null;
@@ -4437,7 +4470,7 @@ ${IS_TV ? '' : `
   function errorState(e, sel) {
     const msg = (e && e.message) || 'Something went wrong';
     const html = `<div class="center-note">
-      <div style="font-size:44px;margin-bottom:10px">⚠️</div>
+      <div class="cn-warn">${ICON.warn}</div>
       <div style="font-weight:700;color:var(--text);margin-bottom:6px">Couldn't load data</div>
       <div>${esc(msg)}</div>
       <button class="btn sm" style="margin-top:16px" onclick="location.reload()">Retry</button>
@@ -5075,7 +5108,8 @@ ${IS_TV ? '' : `
     }
     if (interactive) { updSet('checking'); if (!quiet) updChecking(); }
     try {
-      const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      const r = await fetchTimeout('https://api.github.com/repos/' + REPO + '/releases/latest',
+        { headers: { Accept: 'application/vnd.github+json' } }, 8000);
       if (!r.ok) throw new Error('http ' + r.status);
       const d = await r.json();
       const latest = (d.tag_name || '').replace(/^v/, '');
