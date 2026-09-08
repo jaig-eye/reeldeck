@@ -280,7 +280,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.23';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.24';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -1735,6 +1735,7 @@
     // account's clear epochs precisely so that stays true.
     await syncOnce('manual');
     splashClose();
+    refreshAcctFace();   // the header was built at boot and does not rebuild on its own
     route();
   }
 
@@ -2182,9 +2183,10 @@
                      'It also stays in your account, and signing in again brings it back.')) return;
         authStop();
         const s2 = syncState();
-        s2.on = false; s2.uid = ''; s2.kind = ''; s2.name = ''; s2.lastSyncAt = 0;
+        s2.on = false; s2.uid = ''; s2.kind = ''; s2.name = ''; s2.pic = ''; s2.lastSyncAt = 0;
         saveSyncState(s2);
         toast('Signed out');
+        refreshAcctFace();   // back to the gear, rather than the last person's picture
         return route();
       }
     };
@@ -4286,6 +4288,20 @@ ${IS_TV ? '' : `
     sp.textContent = t.dataset.ini || '?';
     t.replaceWith(sp);
   }, true);
+
+  /**
+   * Repaint just the account button's face.
+   *
+   * NOT buildHeader(): it ends by calling wireAccountMenu(), which registers an
+   * unconditional document-level click listener to close the account menu. buildHeader
+   * runs exactly once, from boot(), so that listener is a singleton today -- calling it
+   * again on every sign-in would stack another one each time. Only the avatar actually
+   * changes here, so only the avatar is rewritten.
+   */
+  function refreshAcctFace() {
+    const av = document.querySelector('#acct-btn .acct-av');
+    if (av) av.innerHTML = acctFaceHTML();
+  }
 
   function closeAcct() {
     const m = $('#acct-menu'); if (m) m.remove();
