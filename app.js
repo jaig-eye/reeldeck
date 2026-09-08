@@ -280,7 +280,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.21';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.22';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -5000,6 +5000,22 @@ ${IS_TV ? '' : `
     // out anything sitting inside a switched-off container (a rotated-away hero
     // slide, a faded overlay) without walking the ancestor chain.
     if (cs.visibility === 'hidden' || cs.opacity === '0' || cs.pointerEvents === 'none') return null;
+    // Is it RENDERED? Every test above inspects one property; this one asks the question
+    // directly, and it is the only thing that catches a collapsed <details>. Chromium
+    // collapses one through ::details-content instead of display:none on the children, so
+    // the contents keep a real layout box -- 1270x488 for the closed Servers panel, with
+    // visibility:visible, opacity 1, pointer-events auto and a non-null offsetParent.
+    // Every heuristic here passed them, so 15 controls on the player page and 21 on the
+    // TV Shows grid were invisible D-pad targets sitting behind the content. The ring
+    // walked into them and disappeared, which is what read as the app freezing.
+    if (el.checkVisibility && !el.checkVisibility()) return null;
+    // checkVisibility landed in Chromium 105 and a TV WebView can be older than the phone
+    // it shares a codebase with, so keep an explicit fallback for the case that caused
+    // this. A <summary> is the one part of a closed <details> that stays reachable.
+    else if (!el.checkVisibility) {
+      const det = el.closest('details:not([open])');
+      if (det && !el.closest('summary')) return null;
+    }
     return r;
   }
 
@@ -5412,6 +5428,70 @@ ${IS_TV ? '' : `
     const c = e.target.closest && e.target.closest('.card');
     if (c) runtimeSoon(c);
   });
+
+  /* ---- The top bar steps aside when nothing is happening ---------------------
+     Wired HERE, above the IS_TV block, on purpose: listeners fire in registration
+     order, so chromeWake runs before tvSpatialNav on the same keydown. The bar is
+     therefore already revealed and re-measured by the time the row model is built,
+     and one UP press from the first content row both brings it back and lands on
+     it. Registered after it, the first press would have been spent on the reveal. */
+  const CHROME_IDLE_MS = 4000;
+  let chromeTimer = null;
+
+  // Reasons the bar must stay put. Hiding it while it holds focus would strand the
+  // ring (or the caret) somewhere off screen, and the search suggestions drop out of
+  // the bar itself, so hiding it would take them with it.
+  function chromeHoldOpen() {
+    const hdr = document.querySelector('header.top');
+    if (!hdr) return true;
+    if (hdr.contains(document.activeElement)) return true;
+    if (hdr.querySelector('.suggest')) return true;
+    try { if (hdr.matches(':hover')) return true; } catch (e) {}
+    const a = document.activeElement;
+    if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return true;
+    // Any overlay owns the screen; the bar is not what the user is looking at, but
+    // sliding it away underneath an open drawer or modal is just noise.
+    if (document.getElementById('splash')) return true;
+    const dw = document.getElementById('drawer');
+    if (dw && dw.classList.contains('open')) return true;
+    if (document.getElementById('acct-menu')) return true;
+    if (document.querySelector('.modal-back')) return true;
+    return false;
+  }
+
+  function chromeSleep() {
+    if (chromeHoldOpen()) { chromeArm(); return; }   // re-check later rather than give up
+    if (document.body.classList.contains('chrome-idle')) return;
+    document.body.classList.add('chrome-idle');
+    if (IS_TV) tvInvalidate();   // the bar has left the row model
+  }
+
+  function chromeArm() {
+    clearTimeout(chromeTimer);
+    chromeTimer = setTimeout(chromeSleep, CHROME_IDLE_MS);
+  }
+
+  function chromeWake() {
+    if (document.body.classList.contains('chrome-idle')) {
+      document.body.classList.remove('chrome-idle');
+      // Re-measure NOW: pointer-events has just changed back, and on TV the row model
+      // is about to be rebuilt by the very keypress that woke us.
+      if (IS_TV) tvInvalidate();
+    }
+    chromeArm();
+  }
+
+  // `click` is in the list despite pointerdown covering a real mouse: activation that
+  // never produces a pointer event still has to wake the bar -- assistive technology,
+  // and any remote or automation that synthesises a click directly.
+  ['pointermove', 'pointerdown', 'touchstart', 'wheel', 'keydown', 'click'].forEach(ev =>
+    document.addEventListener(ev, chromeWake, { passive: true, capture: true }));
+  window.addEventListener('scroll', chromeWake, { passive: true });
+  // Focus landing in the bar (Tab, or the router placing the ring) must reveal it.
+  document.addEventListener('focusin', (e) => {
+    if (e.target.closest && e.target.closest('header.top')) chromeWake();
+  });
+  chromeArm();
 
   if (IS_TV) {
     document.body.classList.add('tv');

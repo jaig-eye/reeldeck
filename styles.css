@@ -234,6 +234,19 @@ nav.main a.active { color: var(--text); background: var(--surface-2); }
 
 /* ---------- Scroll-aware header ---------- */
 header.top { transition: box-shadow .25s ease, background .25s ease; }
+/* ---- Idle: the bar steps aside -------------------------------------------------
+   Sticky, so a transform costs no reflow and the page underneath never shifts.
+   pointer-events:none is not cosmetic: tvMeasure rejects it, which is what keeps the
+   D-pad from putting the ring on a bar that is off screen. */
+header.top { transition: box-shadow .25s ease, background .25s ease,
+                         transform .3s var(--ease-ui, ease), opacity .3s var(--ease-ui, ease); }
+body.chrome-idle header.top { transform: translateY(-100%); opacity: 0; pointer-events: none; }
+/* Someone who has asked for less motion still gets the bar out of the way, just without
+   the slide. */
+@media (prefers-reduced-motion: reduce) {
+  header.top { transition: box-shadow .25s ease, background .25s ease, opacity .2s linear; }
+  body.chrome-idle header.top { transform: none; visibility: hidden; }
+}
 header.top.scrolled { box-shadow: 0 6px 26px rgba(0,0,0,.30); }
 
 /* ---------- Subtle film-grain texture over everything ---------- */

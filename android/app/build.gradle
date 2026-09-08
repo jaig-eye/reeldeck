@@ -7,8 +7,8 @@ android {
         applicationId "com.reeldeck.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 19
-        versionName "1.0.21"
+        versionCode 20
+        versionName "1.0.22"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -54,8 +54,10 @@ android {
             if (signingConfigs.shared.storeFile != null) signingConfig signingConfigs.shared
         }
         debug {
-            // The shipped APK is a debug build (see the CI workflow), so the stable
-            // key has to apply here too or the whole exercise is pointless.
+            // CI ships assembleRelease now, so this is only for local throwaway builds.
+            // It still takes the shared key when one is supplied, so a locally built
+            // debug APK can replace a released one on a test device instead of failing
+            // with "App not installed".
             if (signingConfigs.shared.storeFile != null) signingConfig signingConfigs.shared
         }
     }
