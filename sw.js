@@ -1,9 +1,9 @@
 // Reeldeck service worker — makes the app installable and load offline-ish.
 // Only touches SAME-ORIGIN app shell files. TMDB, image CDN and the streaming
 // providers are always fetched live from the network (never cached/intercepted).
-const CACHE = 'reeldeck-v51';
+const CACHE = 'reeldeck-v52';
 const SHELL = [
-  './', './index.html', './app.js?v=51', './styles.css?v=51',
+  './', './index.html', './app.js?v=52', './styles.css?v=52',
   './assets/vendor/qrcode.js',
   './manifest.webmanifest', './assets/icon-192.png', './assets/icon-512.png',
   // The header logo mask and the Apple touch icon: without them the brand mark is an

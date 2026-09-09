@@ -380,7 +380,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.34';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.35';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -3322,17 +3322,21 @@
     newEpSave(all);
   }
   /**
-   * Is there an aired episode past the viewer's place? {s, e, date} or null.
-   * A show never opened counts only while its latest episode is genuinely recent --
-   * "new" on a series that ended in 2009 would be noise.
+   * A NEW episode: one that aired in the last fortnight and the viewer has not reached.
+   * {s, e, date} or null.
+   *
+   * "Past your place" alone was the wrong test: a series that ended in 2019 told
+   * someone on S1E1 there was a new episode. New means recent. A show you are behind
+   * on badges only while the latest one is actually new; a finished show never does.
    */
   function newEpState(id) {
     const c = newEpAll()[id];
-    if (!c || !c.s) return null;
+    if (!c || !c.s || !c.date) return null;
+    const aired = Date.parse(c.date + 'T12:00:00');
+    if (!aired || aired > now() + 86400000 || (now() - aired) > 14 * 86400000) return null;
     const last = progShow(id);
-    if (last) return ((c.s * 1000 + c.e) > ((last.s || 0) * 1000 + (last.e || 0))) ? c : null;
-    const aired = c.date ? Date.parse(c.date) : 0;
-    return (aired && (now() - aired) < 8 * 86400000) ? c : null;
+    if (last && (c.s * 1000 + c.e) <= ((last.s || 0) * 1000 + (last.e || 0))) return null;   // already seen
+    return c;
   }
   /** Fetch what is missing or stale, four at a time. Resolves true if anything changed. */
   async function newEpScan(ids) {
@@ -4783,7 +4787,7 @@ ${IS_TV ? '' : `
         <button class="am-item" data-am="sync" role="menuitem">${signedIn ? ICON.devices + ' Devices' : ICON.user + ' Sign in'}</button>
         <button class="am-item${updState.s === 'available' || updState.s === 'ready' ? ' has-dot' : ''}" data-am="settings" role="menuitem">${ICON.gear} Settings${
           updState.s === 'ready' ? ' \u00b7 update ready' : updState.s === 'available' ? ' \u00b7 update available' : ''}</button>
-        <button class="am-item" data-am="getapp" role="menuitem">${ICON.tv} Install on TV</button>
+        ${IS_TV ? '' : `<button class="am-item" data-am="getapp" role="menuitem">${ICON.tv} Install on TV</button>`}
         <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>
         <button class="am-item" data-am="reload" role="menuitem">${ICON.sync} Reload app</button>`;
       document.body.appendChild(m);
@@ -4942,9 +4946,9 @@ ${IS_TV ? '' : `
             <input type="file" id="set-import-file" accept=".json,application/json" hidden>
           </div>
         </div>`}
-        <div class="set-group">
+        ${IS_TV ? '' : `<div class="set-group">
           <button class="btn sm" id="set-getapp" style="width:100%;justify-content:center">${ICON.tv} Install on TV / other devices</button>
-        </div>
+        </div>`}
         <div class="set-group">
           <h4>About</h4>
           <p class="hint">Reeldeck <b>v${APP_VERSION}</b> · ${IS_TV ? 'Android TV' : IS_DESKTOP ? 'Desktop' : 'Web'}</p>

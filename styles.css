@@ -289,7 +289,10 @@ body::before {
 .bb-bg { position: absolute; inset: 0; background-size: cover; background-position: center 18%; }
 .bb-slide.on .bb-bg { animation: bbzoom 20s ease-out both; }
 @keyframes bbzoom { from { transform: scale(1.1); } to { transform: scale(1); } }
+/* Three layers: the left band under the title, the bottom band under the buttons, and
+   a top band under the header bar, so the bar itself can be transparent. */
 .bb-scrim { position: absolute; inset: 0; background:
+  linear-gradient(180deg, rgba(6,8,12,.62) 0%, rgba(6,8,12,.30) 9%, transparent 22%),
   linear-gradient(90deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.6) 34%, rgba(6,8,12,.05) 62%, transparent 100%),
   linear-gradient(0deg, transparent 0%, rgba(6,8,12,.62) 20%, rgba(6,8,12,.28) 42%, transparent 64%); }
 .bb-info { position: absolute; left: 0; bottom: 9%; z-index: 2; max-width: min(620px, 84vw); padding: 0 clamp(18px, 5vw, 56px); }
@@ -1154,7 +1157,7 @@ body.tv header.top {
    backdrops, and the existing .scrolled toggle brings the solid bar back the moment
    you leave the top of the page. */
 body.tv.home header.top:not(.scrolled) {
-  background: linear-gradient(180deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.45) 55%, rgba(0,0,0,0) 100%);
+  background: transparent;      /* the billboard's own top scrim does the darkening */
   border-bottom-color: transparent;
 }
 body.tv.home header.top:not(.scrolled) .icon-btn { background: rgba(0,0,0,.42); border-color: rgba(255,255,255,.16); }
@@ -1587,7 +1590,11 @@ body:not(.tv) .grid { animation: rd-rise var(--dur-enter) var(--ease-enter) both
    cropped. Over the hero it is a gradient that fades to nothing; once the page
    scrolls it becomes real chrome with a hairline. */
 header.top {
-  background: linear-gradient(180deg, rgba(6,8,12,.82) 0%, rgba(6,8,12,.45) 55%, transparent 100%);
+  /* Transparent, not a scrim of its own: a bar-shaped gradient ended at the bar's
+     bottom edge and read as a band laid across the artwork. The darkening the nav
+     needs over a bright backdrop now belongs to the billboard (.bb-scrim's top layer),
+     which fades into the image instead of stopping where the bar does. */
+  background: transparent;
   backdrop-filter: none; -webkit-backdrop-filter: none;
   border-bottom: 1px solid transparent;
   transition: background var(--dur-ui) var(--ease-ui),
@@ -2457,3 +2464,9 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
   padding: 6px 9px; border-radius: 7px; background: var(--bg-3); border: 1px solid var(--border);
   color: var(--text); min-width: 36px; text-align: center;
 }
+
+/* 10-foot sizes for the newer badges, matching .rate / .typebadge above. */
+body.tv .card .poster .newep { font-size: 12px; padding: 4px 10px; left: 10px; bottom: 12px; }
+body.tv .pill.next-ep svg { width: 16px; height: 16px; }
+/* "Because you watched <a long series name>" must not wrap under the See-all link. */
+.rail .rail-head h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
