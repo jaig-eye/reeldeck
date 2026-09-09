@@ -331,8 +331,8 @@ public class MainActivity extends BridgeActivity {
      * that actually needed fixing: pick the deferred download back up here instead.
      */
     @Override
-    protected void onResume() {
-        super.onResume();
+    public void onResume() {   // PUBLIC: BridgeActivity declares it public, and Java
+        super.onResume();      // forbids an override from narrowing that to protected.
         final String url = pendingInstallUrl;
         if (url == null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
