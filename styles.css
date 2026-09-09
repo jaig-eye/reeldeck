@@ -393,7 +393,15 @@ body::before {
 .ch-meta { color: rgba(255,255,255,.7); font-size: 11.5px; margin-top: 2px; }
 
 /* ---------- Top 10 rank rail ---------- */
-.rank-rail .track { grid-auto-columns: 268px; align-items: end; }
+/* Columns size to their CONTENT. A fixed column had to be kept in agreement with the
+   numeral size, the overlap and the poster width by hand, and never was: the pair
+   either rattled around in a column too wide for it or the two-glyph "10" spilled into
+   the next one. The gap alone spaces the pairs.
+   .rail.rank-rail, not .rank-rail: the generic .rail .track rule below scores the same
+   and comes later, so a plain .rank-rail .track LOST to it -- the fixed column here was
+   never applied at all, every pair was squeezed into a 165px column, and each poster
+   overhung the next number. That is what put the numbers on the wrong films. */
+.rail.rank-rail .track { grid-auto-columns: max-content; align-items: end; }
 .rank-item { display: flex; align-items: flex-end; }
 /* Vector digits, not text. -webkit-text-stroke rendered on the font's own hinted
    outline, which aliased badly at this size; a filled path has exact edges. */
@@ -401,16 +409,16 @@ body::before {
    column, lapped only at its trailing edge, and bright enough to read as deliberate.
    Faint grey digits half-hidden behind artwork just looked like a rendering fault. */
 .rank-num {
-  /* ONE size, and the overlap derived from it. Three hand-tuned pixel margins that had
-     to be kept in agreement is how the numeral ended up sitting in the gap BETWEEN two
-     cards, belonging to neither. At half a glyph the poster clearly owns its number. */
+  /* ONE size, and the overlap derived from it, so the two can never disagree. */
   --rank-size: 128px;
   display: flex; align-items: flex-end; flex: none;
-  margin-right: calc(var(--rank-size) * -0.52);
-  /* A filled dark numeral measured 1.25:1 against the page -- invisible, which is what
-     made it read as a smudge rather than a design. Outlined and lifted to ~2.6:1 it is
-     clearly deliberate without competing with the artwork it sits behind. */
-  color: rgba(255,255,255,.30);
+  /* The poster laps a QUARTER of the numeral. At half, the digit was mostly behind the
+     artwork and read as a rendering fault; at a quarter it is plainly a number the
+     poster stands on, and "10" still reads as one numeral. */
+  margin-right: calc(var(--rank-size) * -0.26);
+  /* Outlined, in a fraction of the theme's OWN text colour. White at 30% was ~2.6:1 on
+     the dark themes and simply invisible on Daylight's white surfaces. */
+  color: color-mix(in srgb, var(--text) 34%, transparent);
   transition: color .2s ease;
 }
 .rank-num svg {
@@ -424,9 +432,10 @@ body::before {
 }
 /* 10 is two glyphs: tuck them so the pair reads as one numeral, not two icons. */
 .rank-num svg + svg { margin-left: calc(var(--rank-size) * -0.31); }
+/* The numeral lights up with its poster. ONE rule: a later hover rule used to override
+   this with a grey, so hover and focus disagreed about what "lit" looked like. */
 .rank-item:hover .rank-num, .rank-item:focus-within .rank-num { color: var(--accent); }
 .rank-item .poster { width: 126px; flex: none; aspect-ratio: 2/3; }
-.rank-item:hover .rank-num { color: var(--surface-2); }
 
 @media (max-width: 860px) {
   .billboard, .billboard-sk { height: 64vh; min-height: 380px; margin-top: -16px; }
@@ -436,7 +445,6 @@ body::before {
   .bb-cta .btn.lg { padding: 12px 18px; font-size: 14px; }
   .bb-dots { bottom: 5%; }   /* clear of .bb-info, which sits at 13% on mobile */
   .rank-num { --rank-size: 86px; }
-  .rank-rail .track { grid-auto-columns: 176px; }
   .rank-item .poster { width: 94px; }
   .rail-arrow { display: none; }
 }
@@ -685,7 +693,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .modal .mh h3 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 9px; }
 .modal .mh h3 svg { width: 20px; height: 20px; flex: none; }
 .modal .mb { padding: 22px; }
-.modal .video-wrap { aspect-ratio: 16/9; background: #000; position: relative; }   /* positions the TV remote hand-off overlay */
+.modal .video-wrap { aspect-ratio: 16/9; background: #000; position: relative; }
 .modal .video-wrap iframe { width: 100%; height: 100%; border: 0; }
 
 /* Settings form */
@@ -697,6 +705,8 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .theme-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s; }
 .theme-card:hover { border-color: var(--accent-2); transform: translateY(-2px); }
 .theme-card.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* A tick as well as the border: the border alone is the focus ring's shape and colour. */
+.theme-card.on .tname::after { content: ' ✓'; color: var(--accent); font-weight: 800; }
 .theme-card .tprev { display: flex; width: 100%; height: 34px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
 .theme-card .tprev i { flex: 1; }
 .theme-card .tname { font-size: 12.5px; font-weight: 700; }
@@ -844,14 +854,23 @@ body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34p
 }
 .epx.watched .epx-t { color: var(--muted); }
 .epx.watched .epx-thumb img { opacity: .5; }
-.epx.on .epx-thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+/* NOW PLAYING is a label, not a ring. An accent ring on the thumbnail was the same
+   shape and colour as the focus ring, so on a TV the episode you were watching and the
+   episode you were pointing at looked alike. Rings mean "selected" everywhere in this
+   UI; state is a fill or a badge. */
+.epx.on .epx-thumb img { opacity: .55; }
 .epx.on .epx-t { color: var(--text); }
-/* "This is the one playing" — the ring alone reads as focus, not as state. */
 .epx-now {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  background: rgba(0,0,0,.45); color: var(--accent);
+  position: absolute; left: 8px; bottom: 8px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: 99px;
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 10.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+  box-shadow: 0 2px 8px rgba(0,0,0,.45);
 }
-.epx-now svg { width: 26px; height: 26px; }
+.epx-now svg { width: 11px; height: 11px; }
+body.tv .epx-now { left: 10px; bottom: 10px; padding: 5px 11px; font-size: 13px; }
+body.tv .epx-now svg { width: 13px; height: 13px; }
 @media (hover: hover) { .epx:hover .epx-t { color: var(--accent); } }
 
 body.tv .ep-strip { scroll-behavior: auto; gap: clamp(12px, 1.6vw, 20px); }
@@ -950,40 +969,16 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
   z-index: 300; border-radius: 0; aspect-ratio: auto; border: 0;
 }
 body.cinema-on { overflow: hidden; }
-/* TV: "Open player" entry overlay — press OK to hand the remote to the embed */
-.player-enter { display: none; }
-body.tv .player-enter {
-  position: absolute; inset: 0; z-index: 6;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  background: linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.42));
-  border: 0; color: #fff;
-}
-/* The primary action fills the frame, so OK anywhere on the scrim hands over the remote.
-   The pointer sits inside it as a smaller, separate target -- a fallback with a stated
-   reason, rather than the first thing the remote lands on. */
-body.tv .pe-go {
-  position: absolute; inset: 0; background: none; border: 0; color: inherit; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-}
-/* The pointer sits beside Exit rather than over the film. No offset arithmetic: the row
-   places both, so neither has to know how wide the other is. */
-body.tv .cinema-pointer svg { width: 15px; height: 15px; }
-body.tv.player-focused .player-enter, body.tv.cursor-on .player-enter { display: none; }
-/* ---- "Is the remote in the player, or still in our UI?" ---------------------
-   Handing the D-pad to a cross-origin embed produces no visible change at all: the
-   focus ring is inside a frame we cannot style, so the only feedback was that arrow
-   presses stopped moving our own ring. From the sofa that reads as a freeze. Outline
-   the frame itself instead -- inset, so the embed's own chrome cannot clip it away. */
-body.tv.player-focused .player-frame, body.tv.cursor-on .player-frame { position: relative; }
-body.tv.player-focused .player-frame::after,
-body.tv.cursor-on .player-frame::after {
-  content: ''; position: absolute; inset: 0; z-index: 7; pointer-events: none;
-  border-radius: inherit;
-  box-shadow: inset 0 0 0 4px var(--accent), inset 0 0 0 7px rgba(0,0,0,.55);
-}
-/* In pointer mode the ring is still OURS, so mark the boundary more quietly than when
-   the remote has genuinely been handed away to the embed. */
-body.tv.cursor-on .player-frame::after { box-shadow: inset 0 0 0 3px rgba(255,255,255,.45); }
+/* ---- TV playback is the pointer, and nothing else ----------------------------
+   No entry scrim, no Pointer button, no outline on the frame. Open an episode and the
+   pointer is simply up over the mirror's own controls, with Exit in the corner; Back
+   leaves. The outline that used to mark "the remote is inside the player" marked a
+   state that no longer exists, and in full screen it was just a box around the film.
+
+   On the WATCH PAGE (after Back) the frame is an ordinary D-pad target -- the same ring
+   as everything else you can select, from the generic [tabindex] rule -- and OK there
+   brings the pointer back. Never in cinema, where the pointer holds the remote. */
+body.tv .player-frame.cinema, body.tv .player-frame.cinema:focus, body.tv .player-frame.cinema.tv-focus { box-shadow: none; }
 
 /* ---- D-pad pointer ---------------------------------------------------------
    The only way to press a control inside a cross-origin player. Fixed-positioned so
@@ -1021,16 +1016,6 @@ body.tv.cursor-on .tv-cursor.tap { animation: cur-tap .28s ease-out; }
   opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap;
 }
 .tv-cursor-hint.show { opacity: 1; }
-.player-enter .pe-pill {
-  display: inline-flex; align-items: center; gap: 10px;
-  font-size: 22px; font-weight: 800; color: #000;
-  background: var(--accent); padding: 14px 26px; border-radius: 99px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.5);
-}
-.player-enter .pe-pill svg { width: 24px; height: 24px; }
-.player-enter small { font-size: 15px; opacity: .92; background: rgba(0,0,0,.5); padding: 6px 14px; border-radius: 99px; }
-body.tv .pe-go:focus { outline: none; }
-body.tv .pe-go:focus .pe-pill { outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05); }
 .cinema-chrome {
   position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 310;
   display: flex; align-items: center; gap: 10px;
@@ -1238,11 +1223,13 @@ body.tv .rail .track {
   margin: calc(-1 * clamp(20px, 4vh, 36px)) calc(-1 * var(--tvpad)) calc(-1 * clamp(28px, 6vh, 50px));
   scroll-snap-type: none;
 }
-body.tv .rank-rail .track { grid-auto-columns: calc(var(--tile) * 1.48); }
+body.tv .rank-rail .track { grid-auto-columns: max-content; }
 /* font-size did nothing once the digits became SVG, so on TV they had NO size rule at
    all and fell back to the desktop 128px. */
 body.tv .rank-num { --rank-size: calc(var(--tile) * 0.92); }
-body.tv .rank-item .poster { width: calc(var(--tile) * 0.75); }
+/* The SAME width as every other poster on the page. Three-quarters of a tile made the
+   Top 10 the hardest row on the screen to read from the sofa. */
+body.tv .rank-item .poster { width: var(--tile); }
 body.tv .cast-track {
   grid-auto-columns: calc(var(--tile) * 0.72); gap: clamp(12px, 1.8vh, 22px);
   padding: clamp(22px, 4vh, 34px) var(--tvpad) clamp(24px, 4vh, 38px);
@@ -1273,6 +1260,14 @@ body.tv .ep .play { display: none; }
 body.tv .ep .en { font-size: 15px; }
 body.tv .ep .et { font-size: 18px; }
 body.tv .ep .eo { font-size: 15px; }
+
+/* ---- State is never a ring on TV ---------------------------------------------
+   The focus ring is an accent outline, so no "current" marker may be one too, or the
+   thing you are ON and the thing that is ON look the same from the sofa. Current
+   mirror: tint + the word Playing. Current theme: tint + a tick. Current episode: the
+   NOW PLAYING label. Accent outlines are reserved for the remote. */
+body.tv .mirror.on { border-color: var(--border); }
+body.tv .theme-card.on { border-color: var(--border); box-shadow: none; background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); }
 
 /* ---- Focus -----------------------------------------------------------------
    Selection is driven by a class we own (.tv-focus / .tv-row-active), not by the
@@ -1311,12 +1306,6 @@ body.tv .mirror.tv-focus, body.tv .theme-card.tv-focus, body.tv .chip.tv-focus, 
 body.tv .chip:focus, body.tv .chip.tv-focus { border-radius: 20px; }
 body.tv .btn:focus, body.tv .btn.tv-focus { transform: scale(1.05); }
 body.tv .btn { transition: transform .16s ease; }
-/* The player overlay fills a frame with overflow:hidden, so an outer ring is clipped
-   away entirely — the ring goes on the inset pill instead. */
-body.tv .pe-go:focus, body.tv .pe-go.tv-focus { box-shadow: none; }
-body.tv .pe-go:focus .pe-pill, body.tv .pe-go.tv-focus .pe-pill {
-  outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05);
-}
 
 /* The D-pad runs its own interruptible scroll (tvGlide). CSS smooth-scroll has to be
    off wherever it does: setting scrollLeft/scrollTop obeys scroll-behavior, so leaving
@@ -1324,22 +1313,15 @@ body.tv .pe-go:focus .pe-pill, body.tv .pe-go.tv-focus .pe-pill {
    the lag-then-bounce it was meant to remove. <html> is handled in app.js. */
 body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { scroll-behavior: auto; }
 
-/* ---- Rail paint cost on a TV -------------------------------------------------------
-   A rail holds twenty-odd posters and only four or five are ever on screen, but the
-   browser still styles, lays out and paints every one of them on each frame of a scroll.
-   content-visibility lets it skip the off-screen ones entirely; contain-intrinsic-size
-   tells it how big they would be so the scrollbar and the row geometry do not jump.
-
-   The CARD carries this, not the poster, because the card is the D-pad target: its own
-   box stays measurable (that is what contain-intrinsic-size guarantees) so tvRowModel
-   still finds it, while everything inside it is skipped until it scrolls near the
-   viewport. checkVisibility() does not treat content-visibility:auto as hidden by
-   default, so these stay in the model and remain reachable. */
-body.tv .rail .track > .card,
-body.tv .rank-rail .track > .rank-item {
-  content-visibility: auto;
-  contain-intrinsic-size: auto var(--tile) auto calc(var(--tile) * 1.9);
-}
+/* ---- No content-visibility on rail cards -------------------------------------------
+   It was here to let the browser skip painting the fifteen-odd posters that are off
+   screen during a scroll. It also brings PAINT CONTAINMENT, which clips anything drawn
+   outside the element's own box -- and the TV selection is a scale(1.10) plus a 30px
+   blur, both deliberately outside it. The result was a focus ring with its edges sliced
+   off, which is a real defect traded for an optimisation that was never measured (rAF
+   is paused in a hidden browser pane, so the improvement was assumed, not shown).
+   If rail scrolling needs help later, the thing to attack is that 30px shadow, which
+   repaints on every single move. */
 
 /* ---- Settings > About: the update panel ------------------------------------
    The banner announces; THIS is the control. The banner is pinned chrome that lands
@@ -1354,7 +1336,6 @@ body.tv .rank-rail .track > .rank-item {
 
 /* On a TV the window IS the screen, so Theater mode and Fullscreen would be the same
    button twice. */
-body.tv .source-bar #tv-mode, body.tv .source-bar #movie-mode { display: none; }
 
 /* ---- Focus: cards ---------------------------------------------------------- */
 /* Only the SELECTED poster animates. Transitioning opacity on the twenty row-mates
@@ -1397,9 +1378,7 @@ body.tv .track.tv-row-active .card:not(.tv-focus) .poster { opacity: .45; }
 body.tv .cast-track.tv-row-active .person:not(.tv-focus) img { opacity: .45; }
 body.tv .mirror, body.tv .chip, body.tv .ep, body.tv .person { transition: transform .16s ease; }
 /* The Top 10 numeral lights up with its poster. */
-body.tv .rank-item:focus .rank-num, body.tv .rank-item.tv-focus .rank-num {
-  color: var(--surface-2); -webkit-text-stroke-color: var(--accent);
-}
+body.tv .rank-item:focus .rank-num, body.tv .rank-item.tv-focus .rank-num { color: var(--accent); }
 
 /* End-of-rail "See all" tile — the rail-head link is not a remote target. */
 .more-card .poster { display: grid; place-items: center; background: var(--surface); border: 1px dashed var(--border); }
@@ -1435,9 +1414,6 @@ body.tv .modal .mh h3 { font-size: 22px; }
 body.tv .modal .mh h3 svg { width: 24px; height: 24px; }
 body.tv .modal .mh { padding: 20px 24px; }
 body.tv .theme-card { padding: 14px; font-size: 16px; }
-/* On TV the player is already full-bleed through #player-enter, and "for casting to a
-   TV" is not a thing you do on a TV. */
-body.tv #tv-mode { display: none; }
 
 /* ---- Billboard ------------------------------------------------------------- */
 /* On a 540px-tall panel the stock hero type ran up underneath the floating nav bar.

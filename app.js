@@ -370,7 +370,16 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.31';   // bump with each release (matches package.json)
+  // Is the window a different thing from the screen? Only on a desktop: the Electron
+  // app, or a browser driven by a mouse -- installed as a PWA or not, a desktop PWA is
+  // still a resizable window. On a phone, a tablet or a TV the window already IS the
+  // screen, so "fill the window" and "fill the screen" are one act and only one button
+  // is shown for it. The pointer test is the discriminator: a phone reports hover:none
+  // whether or not it is on the home screen.
+  const IS_WINDOWED = IS_DESKTOP ||
+    (!IS_NATIVE && !IS_TV &&
+     !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
+  const APP_VERSION = '1.0.32';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -413,12 +422,12 @@
   // search page's markup, so the generic fallback still lands on it when there are no
   // results — but once results exist they win, instead of trapping the ring on the box
   // you just typed into and making you press Back to reach what you searched for.
-  const TV_LANDING = ['#pe-focus', '.bb-slide.on .bb-cta .btn.primary',
+  const TV_LANDING = ['.bb-slide.on .bb-cta .btn.primary',
                       '.dv-stage .cta .btn.primary', '.grid .card', '.rail .track .card'];
   // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
   // offset so its row keeps a fixed place in the order — otherwise the update
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
-  const TV_PINNED = 'header.top, #cinema-exit, #cinema-pointer, .toast, #next-up';
+  const TV_PINNED = 'header.top, #cinema-exit, .toast, #next-up';
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
@@ -2538,8 +2547,8 @@
       document.addEventListener(ev, wake, { passive: true, capture: true }));
     el.addEventListener('focusin', wake);
     // Deliberately does NOT take the ring. Two reasons:
-    //  - Pointer mode is the DEFAULT during TV playback (#player-enter's handler is
-    //    cursorOn), and while it is on, Enter goes to cursorTap() -- a blind tap at
+    //  - Pointer mode is on throughout TV playback, and while it is, Enter goes to
+    //    cursorTap() -- a blind tap at
     //    wherever the cursor is parked, usually the middle of the video. The ring
     //    would sit on Play promising an activation that cannot happen.
     //  - Stealing focus from whatever the viewer was doing, for a prompt they did
@@ -2561,8 +2570,8 @@
     if (!el) return;
     const hadFocus = el.contains(document.activeElement);
     el.remove();
-    // tvFocusFirst() would re-run the landing list and jump to #player-enter, which
-    // scrolls the page to the top -- so only recover focus if it was actually in the
+    // tvFocusFirst() would re-run the landing list and jump to the top of the page,
+    // so only recover focus if it was actually in the
     // prompt, and recover it to where the ring last WAS rather than to page one.
     if (IS_TV) { tvInvalidate(); if (hadFocus) tvRestoreFocus(); }
   }
@@ -3450,7 +3459,7 @@
           <img loading="lazy" decoding="async" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
           ${pct ? `<span class="ep-fill" style="width:${pct}%"></span>` : ''}
           ${done ? `<span class="ep-tick">${ICON.check}</span>` : ''}
-          ${cur ? `<span class="epx-now">${ICON.play}</span>` : ''}
+          ${cur ? `<span class="epx-now">${ICON.play} Now playing</span>` : ''}
         </span>
         <span class="epx-n">E${ep.episode_number}</span>
         <span class="epx-t">${esc(ep.name || '')}</span>
@@ -3654,20 +3663,15 @@
           </div>
           ${epNav}
         </div>
-        <div class="player-frame">${frameInner}${IS_TV && src ? `<div class="player-enter" id="player-enter">
-            <button class="pe-go" id="pe-focus" aria-label="Open the player and hand the remote to it">
-              <span class="pe-pill">${ICON.play} Open player</span>
-              <small>Full screen, and the remote drives the player's own controls</small>
-            </button>
-          </div>` : ''}</div>
+        <div class="player-frame"${IS_TV && src ? ' tabindex="0" role="button" aria-label="Open the player"' : ''}>${frameInner}</div>
 
-        <div class="source-bar">
+        ${(src && IS_TV) ? '' : `<div class="source-bar">
           ${src ? '' : `<span class="lbl">No source selected</span>`}
-          <span class="sb-modes">
-            <button class="btn sm" id="movie-mode" title="Fill this window. Best for AirPlay and screen mirroring — it never hands the video to the system player, so the mirror's subtitles keep showing.">${ICON.theater} Theater mode</button>
-            <button class="btn sm" id="tv-mode" title="Fill the whole screen">${ICON.fullscreen} Fullscreen</button>
-          </span>
-        </div>
+          ${IS_TV ? '' : `<span class="sb-modes">
+            ${IS_WINDOWED ? `<button class="btn sm" id="movie-mode" title="Fill this window and leave the rest of the desktop usable">${ICON.theater} Theater mode</button>` : ''}
+            <button class="btn sm" id="tv-mode" title="Fill the screen">${ICON.fullscreen} Fullscreen</button>
+          </span>`}
+        </div>`}
         ${epStrip}
         ${sources.length ? `
         <div class="srv-now">
@@ -3812,18 +3816,10 @@
       // summary with a panel of new controls the user has to hunt for.
       if (srv.open) { const first = srv.querySelector('button'); if (first) tvFocusEl(first); }
     });
-    // OK hands the remote to the embed's own controls; the pointer is the fallback for
-    // an overlay the D-pad cannot reach at all.
-    // true = real full screen. This click IS the user gesture requestFullscreen needs.
-    const pf = $('#pe-focus');
-    if (pf) pf.onclick = () => enterPlayerFocus(true);
-
-    const pe = $('#player-enter');
-    // On TV land focus on the player entry so OK immediately hands control to the embed.
-    // The router also places the ring here (#player-enter is a landing target), but
-    // do it explicitly too so the highlight class and remembered position are set even
-    // when this view is re-rendered without a route change.
-    if (IS_TV && pf) tvFocusEl(pf);
+    // The pointer IS the player experience on TV: the mirrors' own controls are not
+    // reliably reachable by spatial navigation, and the pointer reaches all of them. So
+    // it comes up with the episode rather than waiting behind a choice.
+    if (IS_TV && src) cursorOn();
   }
 
   // "TV mode": a full-viewport player, for casting / screen-mirroring to a TV.
@@ -3845,24 +3841,6 @@
     return fsElement() || document.body;
   }
 
-  /**
-   * Re-assert the embed's focus.
-   *
-   * Entering fullscreen is asynchronous and moves focus: by the time the frame is
-   * actually fullscreen the browser has focused the fullscreen element (or nothing),
-   * so the iframe.focus() issued before the request has been undone. Nothing looks
-   * wrong until the first D-pad press, which finds no known element under the ring,
-   * falls back to the row model, and lands on the Pointer button -- the remote
-   * apparently "focusing the pointer instead" with no way into the embed.
-   */
-  function reassertPlayerFocus() {
-    if (!document.body.classList.contains('player-focused')) return;
-    const fr = document.getElementById('player-iframe');
-    if (!fr || document.activeElement === fr) return;
-    fr.setAttribute('tabindex', '0');
-    try { fr.focus({ preventScroll: true }); } catch (e) { try { fr.focus(); } catch (e2) {} }
-  }
-
   /** Move the live overlays to wherever they now need to be. Focus is preserved:
    *  re-parenting blurs, and on a remote a lost ring reads as a crash. */
   function rehomeOverlays() {
@@ -3876,20 +3854,16 @@
       try { keep.focus({ preventScroll: true }); } catch (e) {}
     }
     if (IS_TV) tvInvalidate();
-    // Fullscreen just changed, which is exactly when the embed's focus gets dropped.
-    reassertPlayerFocus();
   }
 
   let cinemaTimer, cinemaReveal;
   function revealCinema() {
-    const chrome = [$('#cinema-exit'), $('#cinema-pointer')].filter(Boolean);
-    chrome.forEach(el => el.classList.remove('faded'));
+    const ex = $('#cinema-exit');
+    if (ex) ex.classList.remove('faded');
     clearTimeout(cinemaTimer);
     cinemaTimer = setTimeout(() => {
-      [$('#cinema-exit'), $('#cinema-pointer')].forEach(el => {
-        // Never fade one out from under the ring -- that is a dead remote.
-        if (el && el !== document.activeElement) el.classList.add('faded');
-      });
+      // Never fade it out from under the ring -- that is a dead remote.
+      if (ex && ex !== document.activeElement) ex.classList.add('faded');
     }, 3000);
   }
   /**
@@ -3933,21 +3907,10 @@
     frame.classList.add('cinema'); document.body.classList.add('cinema-on');
     document.body.classList.toggle('cinema-screen', !!wantScreen);
     if (!$('#cinema-exit')) {
-      // One row in the corner, so the buttons lay themselves out instead of each being
-      // positioned by an arithmetic guess at the other's width.
+      // Exit, in the corner. On TV the pointer is up from the moment the episode opens
+      // (cursorOn brings cinema with it), so there is no Pointer button to sit beside it.
       const bar = document.createElement('div');
       bar.id = 'cinema-chrome'; bar.className = 'cinema-chrome';
-      // TV only: the pointer exists to reach a control the D-pad cannot, which is not a
-      // problem a mouse or a finger has. Placed FIRST so Exit stays in the outer corner,
-      // where it already was.
-      if (IS_TV) {
-        const pt = document.createElement('button');
-        pt.id = 'cinema-pointer'; pt.className = 'cinema-btn cinema-pointer';
-        pt.innerHTML = ICON.play + ' Pointer';
-        pt.setAttribute('aria-label', 'Use a pointer to press a control the remote cannot reach');
-        pt.onclick = (e) => { e.stopPropagation(); cursorOn(); };
-        bar.appendChild(pt);
-      }
       const ex = document.createElement('button');
       ex.id = 'cinema-exit'; ex.className = 'cinema-btn cinema-exit'; ex.innerHTML = ICON.x + ' Exit';
       ex.setAttribute('aria-label', wantScreen ? 'Exit full screen' : 'Exit theater mode');
@@ -3971,7 +3934,7 @@
       const rq = frame.requestFullscreen || frame.webkitRequestFullscreen;
       if (rq) { try { Promise.resolve(rq.call(frame)).catch(() => {}); } catch (e) {} }
     } else if (fsElement()) {
-      // Stepping down from TV mode to Movie mode. fsSelfExit marks this as OURS, so the
+      // Stepping down from Fullscreen to Theater mode. fsSelfExit marks this as OURS, so the
       // teardown handler below does not mistake it for the user leaving and kill cinema.
       fsExit();
     }
@@ -3991,6 +3954,9 @@
     const hot = $('#cinema-hot'); if (hot) hot.remove();
     if (fsElement()) fsExit();
     releasePlayerFocus();   // hand D-pad focus back to our UI
+    // TV: the ring lands on the frame, which is where the remote was before the pointer
+    // took over -- and OK there brings the pointer straight back up.
+    if (IS_TV) { const f = $('.player-frame[tabindex="0"]'); if (f) tvFocusEl(f); }
   }
   // Pressing the mode you are already in leaves; pressing the OTHER one switches to it
   // rather than dropping you all the way out and making you press again.
@@ -4001,10 +3967,6 @@
     return enterCinema(wantScreen);
   }
 
-  // TV: hand keyboard/D-pad focus to the cross-origin player so the remote drives
-  // playback. We can't script inside a cross-origin iframe, so once focus is in it
-  // the browser's OWN spatial navigation moves between the embed's controls; the
-  // ONLY way back to our UI is the hardware Back button (handled below) or Exit.
   /* ---- D-pad pointer --------------------------------------------------------
      Handing DOM focus to the player never worked, and could not: the mirrors are
      cross-origin iframes whose play/pause controls are plain <div>s with click
@@ -4078,9 +4040,12 @@
 
   function cursorActive() { return document.body.classList.contains('cursor-on'); }
 
-  function cursorOn() {
+  /** `what` names the thing Back leaves, for the hint: the player unless told otherwise. */
+  function cursorOn(what) {
     if (!IS_TV) return;
-    if (!document.body.classList.contains('cinema-on')) enterCinema();
+    // A trailer plays in a modal over the page; the cinema it would enter is the page's
+    // own player frame, underneath the modal, which is the wrong thing to fill.
+    if (!document.body.classList.contains('cinema-on') && !document.querySelector('.modal-back')) enterCinema();
     if (!curEl) {
       curEl = document.createElement('div');
       curEl.className = 'tv-cursor'; curEl.id = 'tv-cursor';
@@ -4102,13 +4067,17 @@
       curHint.id = 'tv-cursor-hint';
     }
     overlayHost().appendChild(curHint);
+    const leaves = 'Back leaves ' + (typeof what === 'string' ? what : 'the player');
     curHint.textContent = NATIVE_TAP
-      ? 'D-pad moves · OK presses · Back puts it away'
-      : 'Pointer control needs the Reeldeck TV app · Back puts it away';
+      ? 'D-pad moves · OK presses · ' + leaves
+      : 'Pointer control needs the Reeldeck TV app · ' + leaves;
     cursorWake();
     // Keep DOM focus in OUR document: if it were inside the iframe we would stop
     // receiving the arrow keys that drive the cursor.
     try { curEl.focus({ preventScroll: true }); } catch (e) { try { curEl.focus(); } catch (e2) {} }
+    // tvMark ignores the cursor on purpose, so whatever wore the ring before -- on the
+    // watch page, the frame itself -- would keep wearing it under a full-screen film.
+    tvMark(null);
     tvInvalidate();
   }
 
@@ -4141,13 +4110,12 @@
     if (curHint) curHint.classList.remove('show');
     if (curEl) curEl.classList.remove('idle');
     clearTimeout(cursorOn._t);
-    // Hand the ring back to something the user can SEE. Without this the remote was
-    // left focused on #tv-cursor -- aria-hidden, tabIndex -1, and now display:none --
-    // so the D-pad looked dead until a direction press happened to re-seed focus.
+    // Whoever switched the pointer off places the ring: exitCinema puts it on the
+    // frame, route() on the new page, a closing modal on what opened it. Left alone the
+    // remote would sit on #tv-cursor -- aria-hidden, tabIndex -1, now display:none --
+    // and the D-pad would look dead until a stray press re-seeded it; invalidating
+    // here is what lets that next press recover if a caller places nothing.
     tvInvalidate();
-    // Back to the scrim, which is visible again now that cursor-on is off.
-    const back = document.getElementById('pe-focus') || document.getElementById('cinema-exit');
-    if (back) tvFocusEl(back);
   }
 
   function cursorDraw() {
@@ -4184,7 +4152,7 @@
    * holds focus reaches the player's own handler, and most bind Space to play/pause
    * and the arrows to seek. So: focus the frame, have native dispatch a real key, and
    * take focus back the moment it acks. Best-effort by nature — a mirror that binds
-   * nothing will ignore it, which is what the Pointer button is for.
+   * nothing will ignore it, which is what the pointer is for.
    */
   function playerKey(which) {
     const fr = document.getElementById('player-iframe');
@@ -4196,7 +4164,9 @@
     // the embed, and overwriting with null there is what stranded the remote.
     const cand = (a && a !== document.body && a.id !== 'player-iframe') ? a : null;
     if (cand) pkReturn = cand;
-    cursorOff();
+    // The pointer STAYS. It used to be switched off here because it and the borrowed
+    // focus were competing modes; now it is the only mode, and dropping it for the
+    // 700ms of a key dispatch just made the crosshair blink mid-film.
     enterPlayerFocus();
     nativeSend(which);
     // If the ack never lands (an old WebView, a page swapped underneath us) focus is
@@ -4233,21 +4203,21 @@
   }
 
   /**
-   * Hand the remote to the embed.
+   * Lend the embed DOM focus for one key dispatch.
    *
-   * `wantScreen` asks for REAL full screen rather than the CSS one. Only the entry
-   * overlay passes it, because requestFullscreen needs a user gesture and the remote's
-   * media keys also arrive here, through playerKey() -- from there the request would be
-   * rejected, and a rejection is not free: it resolves as a failure the user cannot see
-   * and cannot act on.
+   * Only playerKey() calls this now: the remote's physical play/pause and seek keys are
+   * delivered as real key events into the frame, which most mirrors bind, and the ack
+   * (or a 700ms timeout) hands focus straight back. It never asks for real full screen:
+   * requestFullscreen needs a user gesture and a media key is not one, so the request
+   * would be rejected -- and a rejection is not free, it resolves as a failure the user
+   * cannot see and cannot act on.
    */
-  function enterPlayerFocus(wantScreen) {
+  function enterPlayerFocus() {
     const fr = document.getElementById('player-iframe');
     if (!fr) return;
-    if (!document.body.classList.contains('cinema-on')) enterCinema(!!wantScreen);
-    else if (wantScreen && !fsElement()) enterCinema(true);
+    if (!document.body.classList.contains('cinema-on')) enterCinema();
     document.body.classList.add('player-focused');
-    tvInvalidate();   // the Open-player overlay is gone from the row model now
+    tvInvalidate();
     fr.setAttribute('tabindex', '0');
     try { fr.focus(); } catch (e) {}
   }
@@ -4257,13 +4227,13 @@
     tvInvalidate();
     const fr = document.getElementById('player-iframe');
     if (fr) { try { fr.blur(); } catch (e) {} fr.setAttribute('tabindex', '-1'); }
-    // Route through tvFocusEl so the selection class, the remembered position and the
-    // scroll all match every other placement — a raw focus() here left the ring off.
-    // #pe-focus, NOT #player-enter: the scrim became a container holding two actions, and
-    // tvFocusEl on a plain <div> silently does nothing, so taking the remote back from
-    // the embed dropped focus to <body> and the D-pad looked dead until a stray press.
-    const pe = document.getElementById('pe-focus');
-    if (pe && IS_TV) tvFocusEl(pe);
+    // Back to the pointer, which is where the remote was before the key dispatch
+    // borrowed the frame's focus. This used to aim at the entry overlay's button; with
+    // that gone, tvFocusEl found nothing and the ring dropped to <body>, leaving the
+    // D-pad dead until a stray press woke it.
+    if (IS_TV && cursorActive() && curEl) {
+      try { curEl.focus({ preventScroll: true }); } catch (e) {}
+    }
   }
   /**
    * The USER left fullscreen (Escape, F11, the remote) -> leave the player with them.
@@ -4652,24 +4622,17 @@ ${IS_TV ? '' : `
   function openTrailer(key) {
     const back = document.createElement('div');
     back.className = 'modal-back';
-    // On TV the embed is the only thing that can pause or scrub, and an <iframe> is not
-    // a D-pad target — without a hand-off the user could start a trailer and then have
-    // no control over it at all. Same pattern as the player's "Open player" overlay.
-    const handoff = IS_TV
-      ? `<button class="player-enter" id="trailer-enter" aria-label="Control the trailer with the remote">
-           <span class="pe-pill">${ICON.play} Control trailer</span><small>OK turns the remote into a pointer</small>
-         </button>`
-      : '';
     back.innerHTML = `<div class="modal wide">
       <div class="mh"><h3>Trailer</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
       <div class="video-wrap">
         <iframe id="trailer-iframe" title="Trailer" src="https://www.youtube-nocookie.com/embed/${esc(key)}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
-        ${handoff}
       </div>
     </div>`;
-    const te = back.querySelector('#trailer-enter');
-    if (te) te.onclick = cursorOn;
     modalMount(back);
+    // On TV the embed is the only thing that can pause or scrub, and an <iframe> is not
+    // a D-pad target, so the pointer comes up with the trailer -- the same as the
+    // player, and for the same reason. Back closes the modal, and the pointer with it.
+    if (IS_TV) cursorOn('the trailer');
   }
 
   function openSettings() {
@@ -4708,8 +4671,8 @@ ${IS_TV ? '' : `
     $('#set-themes', back).onclick = (e) => {
       const card = e.target.closest('[data-theme-pick]'); if (!card) return;
       cfg.theme = card.dataset.themePick;
-      back.querySelectorAll('.theme-card').forEach(x => x.classList.remove('on'));
-      card.classList.add('on');
+      back.querySelectorAll('.theme-card').forEach(x => { x.classList.remove('on'); x.setAttribute('aria-pressed', 'false'); });
+      card.classList.add('on'); card.setAttribute('aria-pressed', 'true');
       saveConfig();  // applyTheme runs -> live switch
       // The theme is the ONE field of cfg that syncs, so it needs its own stamp --
       // cfg itself is never sent, for the reasons above syncState().
@@ -4757,7 +4720,6 @@ ${IS_TV ? '' : `
     // the first selector's match — so the header's ✕ won every time and the first OK
     // press closed the dialog the user had just opened. Try the selectors in priority.
     const f = back.querySelector('[data-theme-pick]')
-      || back.querySelector('#trailer-enter')
       || back.querySelector('.mb button, .mb [href], .mb input, .mb select, .mb [tabindex="0"]')
       || back.querySelector('button, [href], input, select, [tabindex="0"]');
     if (f) { if (IS_TV) tvFocusEl(f); else try { f.focus(); } catch (e) {} }
@@ -5034,16 +4996,19 @@ ${IS_TV ? '' : `
   // The browser build has no hardware Back, so Escape is the way out of the player.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.modal-back')) {
-      // Same one-level-per-press unwind as hardware Back, so a keyboard and a remote do
-      // not disagree about what Escape means.
-      if (cursorActive()) { e.preventDefault(); cursorOff(); return; }
-      if (document.body.classList.contains('player-focused')) { e.preventDefault(); releasePlayerFocus(); return; }
-      if (document.body.classList.contains('cinema-on')) { e.preventDefault(); exitCinema(); return; }
+      // The same as hardware Back -- one press leaves the player -- so a keyboard and a
+      // remote do not disagree about what Escape means.
+      if (cursorActive() || document.body.classList.contains('cinema-on')) {
+        e.preventDefault(); exitCinema(); return;
+      }
     }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     if (cursorActive()) { e.preventDefault(); cursorTap(); return; }
     const el = document.activeElement;
     if (!el || /^(INPUT|TEXTAREA|SELECT|BUTTON|SUMMARY)$/.test(el.tagName)) return; // native handles these
+    // The frame is a target on the TV watch page: OK brings the pointer back up over
+    // the mirror's controls, which is the only way to resume without re-rendering.
+    if (el.classList && el.classList.contains('player-frame')) { e.preventDefault(); cursorOn(); return; }
     const nav = el.closest && el.closest('[data-nav]');
     if (nav) { e.preventDefault(); go(nav.dataset.nav); }
   });
@@ -5341,7 +5306,7 @@ ${IS_TV ? '' : `
     // see occlusion, so name the chrome that is genuinely ON TOP of the player.
     // (Skipped when a modal is open: the modal is its own scope and sits above both.)
     if (document.body.classList.contains('cinema-on') && !el.closest('.modal-back') &&
-        !el.closest('.player-frame.cinema, #cinema-exit, #cinema-pointer, #next-up')) return null;
+        !el.closest('.player-frame.cinema, #cinema-exit, #next-up')) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return null;
     const cs = getComputedStyle(el);
@@ -5639,6 +5604,11 @@ ${IS_TV ? '' : `
     tvUserMoved = false;
     const stop = () => { if (gen === tvGen) tvStopWatch(); };
     const grab = () => {
+      // The pointer owns the remote. The watch page brings it up at the end of its
+      // render, and the landing pass that follows used to put the ring on the frame
+      // underneath it anyway -- harmless (the arrows check the pointer first) but a
+      // second focus the user could not see. Done, not deferred: nothing to land on.
+      if (cursorActive()) return true;
       tvEnsureFocusable();
       if (keepPlace && tvLastPos) {
         const root = document.getElementById('view');
@@ -5725,15 +5695,7 @@ ${IS_TV ? '' : `
     // Focus was lost (a re-render replaced the element under the ring). Spend this
     // press putting the ring back where the user left it rather than at the top of
     // the page — one 'wake up' press, no teleport.
-    if (ri < 0) {
-      // ...unless the player still holds the remote. The iframe is deliberately absent
-      // from the row model, so focus lost to a fullscreen transition looked exactly like
-      // a stale ring, and this branch walked the user out of the embed onto the nearest
-      // button instead of back into the film.
-      if (document.body.classList.contains('player-focused')) { reassertPlayerFocus(); return; }
-      if (!tvRestoreFocus()) tvFocusFirst();
-      return;
-    }
+    if (ri < 0) { if (!tvRestoreFocus()) tvFocusFirst(); return; }
 
     let target = null;
     if (dir === 'left' || dir === 'right') {
@@ -5745,17 +5707,22 @@ ${IS_TV ? '' : `
       const ni = ri + (dir === 'down' ? 1 : -1);
       if (ni < 0 || ni >= rows.length) return;              // top/bottom of page: stay put
       const from = rows[ri], to = rows[ni];
-      if (from.kind === 'track' && to.kind === 'track') {   // carry the index, not the column
-        // Carousel to carousel: carry the POSITION IN THE ROW, the way every TV app
-        // does — item 5 of one rail lands on item 5 of the next, not on whatever
-        // happens to sit under it after the two rails scrolled independently.
-        target = to.items[Math.min(ci, to.items.length - 1)];
-        tvColX = null;
-      } else {
-        const x = (tvColX == null) ? tvColOf(from.items[ci]) : tvColX;
-        target = to.items.reduce((b, m) => (b === null || Math.abs(tvColOf(m) - x) < Math.abs(tvColOf(b) - x)) ? m : b, null);
-        tvColX = x;                                         // hold the column down a grid
-      }
+      // ONE rule for every kind of row: land on whatever is visually below.
+      //
+      // Carousels used to carry the INDEX instead -- item 5 here went to item 5 there.
+      // Two rails scrolled to different places then put that item far off screen, so the
+      // rail had to scroll a long way to fetch it: the jump, the lag, and a ring that
+      // appeared to move sideways as well as down. Carrying the on-screen column means
+      // the target is nearly always already visible, so most vertical moves scroll
+      // nothing at all.
+      //
+      // tvColOf() corrects a remembered x for however far that carousel has scrolled
+      // since, which is what makes the column meaningful across independently scrolled
+      // rows rather than just within one.
+      const x = (tvColX == null) ? tvColOf(from.items[ci]) : tvColX;
+      target = to.items.reduce((b, m) =>
+        (b === null || Math.abs(tvColOf(m) - x) < Math.abs(tvColOf(b) - x)) ? m : b, null);
+      tvColX = x;                                           // hold the column down a page
     }
     if (target) tvFocusEl(target.el);
   }
@@ -5911,15 +5878,10 @@ ${IS_TV ? '' : `
       if (document.getElementById('acct-menu')) { closeAcct(); return; }
       const modal = document.querySelector('.modal-back');
       if (modal) { closeModal(modal); return; }
-      // The player nests three states, and Back unwinds exactly ONE of them per press:
-      //   pointer up                 ->  put the pointer away, keep watching
-      //   remote lent to the embed   ->  take the remote back
-      //   full screen                ->  leave the player
-      // Collapsing these into a single exitCinema() meant dismissing the pointer also
-      // ended playback, so there was no way to stop pointing and carry on watching.
-      if (cursorActive()) { cursorOff(); return; }
-      if (document.body.classList.contains('player-focused')) { releasePlayerFocus(); return; }
-      if (document.body.classList.contains('cinema-on')) { exitCinema(); return; }
+      // ONE press leaves the player. There is only one mode now, so the old three-step
+      // unwind -- drop the pointer, reveal a scrim, then leave -- was two presses of
+      // ceremony and a button nobody asked to see.
+      if (cursorActive() || document.body.classList.contains('cinema-on')) { exitCinema(); return; }
       // history.length never decreases, so testing it meant exitApp() was unreachable
       // after the very first navigation and Back became inert on the home screen.
       // Track our own depth instead: Android TV's contract is "Back on root exits".
