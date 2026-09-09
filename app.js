@@ -380,7 +380,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.37';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.38';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -599,7 +599,6 @@
     gear: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"/></svg>',
     star: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M234.29,114.85l-45,38.83L203,211.75a16.4,16.4,0,0,1-24.5,17.82L128,198.49,77.47,229.57A16.4,16.4,0,0,1,53,211.75l13.76-58.07-45-38.83A16.46,16.46,0,0,1,31.08,86l59-4.76,22.76-55.08a16.36,16.36,0,0,1,30.27,0l22.75,55.08,59,4.76a16.46,16.46,0,0,1,9.37,28.86Z"/></svg>',
     film: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,104H102.09L210,75.51a8,8,0,0,0,5.68-9.84l-8.16-30a15.93,15.93,0,0,0-19.42-11.13L35.81,64.74a15.75,15.75,0,0,0-9.7,7.4,15.51,15.51,0,0,0-1.55,12L32,111.56c0,.14,0,.29,0,.44v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V112A8,8,0,0,0,216,104ZM192.16,40l6,22.07-22.62,6L147.42,51.83Zm-66.69,17.6,28.12,16.24-36.94,9.75L88.53,67.37Zm-79.4,44.62-6-22.08,26.5-7L94.69,89.4ZM208,200H48V120H208v80Z"/></svg>',
-    home: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M219.31,108.68l-80-80a16,16,0,0,0-22.62,0l-80,80A15.87,15.87,0,0,0,32,120v96a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V160h32v56a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V120A15.87,15.87,0,0,0,219.31,108.68ZM208,208H160V152a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8v56H48V120l80-80,80,80Z"/></svg>',
     tv: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,64H147.31l34.35-34.34a8,8,0,1,0-11.32-11.32L128,60.69,85.66,18.34A8,8,0,0,0,74.34,29.66L108.69,64H40A16,16,0,0,0,24,80V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V80A16,16,0,0,0,216,64Zm0,136H40V80H216V200Z"/></svg>',
     back: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M165.66,202.34a8,8,0,0,1-11.32,11.32l-80-80a8,8,0,0,1,0-11.32l80-80a8,8,0,0,1,11.32,11.32L91.31,128Z"/></svg>',
     chevR: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></svg>',
@@ -2670,6 +2669,25 @@
   /* ------------------------------------------------------------
      Card + rail + grid builders
      ------------------------------------------------------------ */
+  /**
+   * Worth showing at all?
+   *
+   * A title nobody has rated is, in practice, one the mirrors do not have either: the
+   * long tail of TMDB is full of entries that exist as metadata only, and surfacing them
+   * means a Play button that leads nowhere. Recent releases are the exception -- a film
+   * out this month may have no vote yet and is exactly what people came for -- so
+   * anything dated within the last ninety days, or in the future (Coming soon), stays.
+   * The viewer's own lists (watchlist, history) are never filtered: they chose those.
+   */
+  const FRESH_MS = 90 * 86400000;
+  function viewable(it) {
+    if (!it) return false;
+    if ((+it.vote_count || 0) > 0 || (+it.vote_average || 0) > 0) return true;
+    const d = it.release_date || it.first_air_date || '';
+    const t = d ? Date.parse(d) : NaN;
+    return !isNaN(t) && t > now() - FRESH_MS;
+  }
+
   function cardHTML(item, forcedType, mixed) {
     const type = forcedType || item.media_type || (item.first_air_date || item.name && !item.title ? 'tv' : 'movie');
     itemCache[ck(type, item.id)] = item;
@@ -2700,7 +2718,8 @@
   }
 
   function railHTML(title, items, moreHref, type) {
-    if (!items || !items.length) return '';
+    items = (items || []).filter(viewable);
+    if (!items.length) return '';
     // Home renders five rails. Twenty tiles each is ~100 cards and ~1900 DOM nodes to
     // lay out, restyle and composite on every D-pad press; fourteen is still more than
     // anyone scrolls through before taking the "See all" tile at the end.
@@ -3022,7 +3041,7 @@
         tmdb('/movie/top_rated'), tmdb('/movie/upcoming', { region: cfg.region }),
         seed ? tmdb('/' + seed.type + '/' + seed.id + '/recommendations').catch(() => null) : Promise.resolve(null)
       ]);
-      const trendItems = (trend.results || []).filter(x => x.media_type !== 'person');
+      const trendItems = (trend.results || []).filter(x => x.media_type !== 'person' && viewable(x));
       const heroItems = trendItems.filter(x => x.backdrop_path).slice(0, 5);
       const logos = await Promise.all(heroItems.map(heroLogo));
       if (!routeIs(my)) return;   // the user has navigated away — this response is stale
@@ -3181,7 +3200,7 @@
         if (params.yto) p[dlte] = params.yto + '-12-31';
         data = await tmdb('/discover/' + (isTV ? 'tv' : 'movie'), p);
       }
-      const results = (data.results || []).filter(x => x.poster_path || x.backdrop_path);
+      const results = (data.results || []).filter(x => (x.poster_path || x.backdrop_path) && viewable(x));
       const totalPages = Math.min(data.total_pages || 1, 500);
       const box = $('#results');
       if (!box || !routeIs(my)) return;   // navigated away while the request was in flight
@@ -3267,7 +3286,7 @@
     recentQPush(q);
     try {
       const data = await tmdb('/search/multi', { query: q, page: 1, include_adult: 'false' });
-      const results = (data.results || []).filter(x => x.media_type !== 'person' && (x.poster_path || x.backdrop_path));
+      const results = (data.results || []).filter(x => x.media_type !== 'person' && (x.poster_path || x.backdrop_path) && viewable(x));
       const box = $('#results');
       if (!box || !routeIs(my)) return;   // navigated away while the request was in flight
       box.innerHTML = results.length
@@ -3533,7 +3552,7 @@
       }
 
       // Similar
-      const sim = (similar.results || []).filter(x => x.poster_path).slice(0, 14);
+      const sim = (similar.results || []).filter(x => x.poster_path && viewable(x)).slice(0, 14);
       if (sim.length) html += `<div class="section">${railHTML(isTV ? 'Similar shows' : 'Similar movies', sim, null, type)}</div>`;
 
       if (!routeIs(my)) return;   // stale response — the user is on another page now
@@ -3657,7 +3676,7 @@
         tmdb('/person/' + id),
         tmdb('/person/' + id + '/combined_credits')
       ]);
-      const known = (credits.cast || []).filter(c => c.poster_path)
+      const known = (credits.cast || []).filter(c => c.poster_path && viewable(c))
         .sort((a, b) => (b.popularity || 0) - (a.popularity || 0)).slice(0, 24);
       view().innerHTML = `
         <div class="detail-body" style="padding-top:8px">
@@ -5159,7 +5178,6 @@ ${IS_TV ? '' : `
         <span class="brand-mark" aria-hidden="true"></span><span class="txt">${esc(cfg.brand)}</span>
       </a>
       <nav class="main" aria-label="Primary">
-        <a href="#/" data-nav="#/" data-section="home">Home</a>
         <a href="#/movies" data-nav="#/movies" data-section="movies">Movies</a>
         <a href="#/tv" data-nav="#/tv" data-section="tv">TV Shows</a>
       </nav>
@@ -5183,7 +5201,6 @@ ${IS_TV ? '' : `
       bn.className = 'bottom-nav';
       bn.setAttribute('aria-label', 'Primary');
       bn.innerHTML = `
-        <a href="#/" data-nav="#/" data-section="home">${ICON.home}<span>Home</span></a>
         <a href="#/movies" data-nav="#/movies" data-section="movies">${ICON.film}<span>Movies</span></a>
         <a href="#/tv" data-nav="#/tv" data-section="tv">${ICON.tv}<span>TV</span></a>
         <a href="#/search" data-nav="#/search" data-section="search">${ICON.search}<span>Search</span></a>

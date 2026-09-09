@@ -46,6 +46,9 @@ public class MainActivity extends BridgeActivity {
     // Set when an update is deferred because the install permission is missing, so the
     // download can resume by itself once the user comes back from granting it.
     private volatile String pendingInstallUrl;
+    // Flipped by onPause. After install() fires the package installer, this is how we
+    // know it actually came to the front: our activity leaves the foreground.
+    private volatile boolean leftForeground;
     /** Media keys are a REMOTE affordance; on a phone they belong to whatever the
      *  user was actually listening to, so we never take them there. */
     private volatile boolean isTelevision;
@@ -331,6 +334,12 @@ public class MainActivity extends BridgeActivity {
      * that actually needed fixing: pick the deferred download back up here instead.
      */
     @Override
+    public void onPause() {    // PUBLIC, like onResume below: BridgeActivity declares both public.
+        super.onPause();
+        leftForeground = true;
+    }
+
+    @Override
     public void onResume() {   // PUBLIC: BridgeActivity declares it public, and Java
         super.onResume();      // forbids an override from narrowing that to protected.
         final String url = pendingInstallUrl;
@@ -475,16 +484,51 @@ public class MainActivity extends BridgeActivity {
                     + "download the APK from the Releases page instead.");
             return;
         }
+        final Intent i;
         try {
             Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk);
-            Intent i = new Intent(Intent.ACTION_VIEW);
+            i = new Intent(Intent.ACTION_VIEW);
             i.setDataAndType(uri, "application/vnd.android.package-archive");
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
-            toWeb("upd:done");
         } catch (RuntimeException e) {
-            toWeb("upd:err:Could not start the installer.");
+            toWeb("upd:err:Could not prepare the installer.");
+            return;
         }
+        // On the UI thread, not the download thread: an activity start is a UI-thread
+        // affair, and on a TV the installer launched from the worker sometimes never
+        // came to the front -- the download finished, "Install again" had to be pressed,
+        // and only that second start showed the installer. So: start it here, then
+        // WATCH. If this activity is still in the foreground 2.5s later, nothing came up;
+        // fire the same intent once more ourselves before asking the user to.
+        final WebView wv = bridgeWebView;
+        Runnable start = new Runnable() {
+            @Override
+            public void run() {
+                leftForeground = false;
+                try {
+                    startActivity(i);
+                } catch (RuntimeException e) {
+                    toWeb("upd:err:Could not start the installer.");
+                    return;
+                }
+                toWeb("upd:done");
+                if (wv == null) return;
+                wv.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (leftForeground) return;      // the installer is up
+                        try { startActivity(i); } catch (RuntimeException e) { /* reported below */ }
+                        wv.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (!leftForeground) toWeb("upd:err:The installer did not open \u2014 press Install again.");
+                            }
+                        }, 2500);
+                    }
+                }, 2500);
+            }
+        };
+        if (wv != null) wv.post(start); else runOnUiThread(start);
     }
 
     /** Parses "x,y" as two fractions of the view, each 0..1. */
