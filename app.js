@@ -326,7 +326,10 @@
       if (r.status === 401) msg = 'TMDB rejected the API key. Add your own free key in Settings.';
       if (r.status === 429) msg = 'TMDB is rate limiting this key. Wait a moment and try again.';
       if (r.status >= 500) msg = 'TMDB is having trouble right now. Try again in a moment.';
-      throw new Error(msg);
+      // Carry the endpoint: an error box that says only "could not be found" cannot be
+      // diagnosed from a screenshot, and the path is short enough to show.
+      const err = new Error(msg); err.path = path; err.status = r.status;
+      throw err;
     }
     return r.json();
   }
@@ -380,7 +383,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.38';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.39';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -3036,12 +3039,18 @@
       // Fetched alongside the rest, never awaited on its own, and a failure just means
       // no rail.
       const seed = histByTitle()[0] || null;
+      // Every request on its own. One rail failing must not blank the page: whatever
+      // came back is rendered and the rest is simply absent. Only when NOTHING came
+      // back is the page an error, and then it is the first failure that is shown.
+      let firstErr = null;
+      const soft = (p) => p.catch((e) => { if (!firstErr) firstErr = e; return null; });
       const [trend, popM, popT, topM, upcoming, recs] = await Promise.all([
-        tmdb('/trending/all/day'), tmdb('/movie/popular'), tmdb('/tv/popular'),
-        tmdb('/movie/top_rated'), tmdb('/movie/upcoming', { region: cfg.region }),
-        seed ? tmdb('/' + seed.type + '/' + seed.id + '/recommendations').catch(() => null) : Promise.resolve(null)
+        soft(tmdb('/trending/all/day')), soft(tmdb('/movie/popular')), soft(tmdb('/tv/popular')),
+        soft(tmdb('/movie/top_rated')), soft(tmdb('/movie/upcoming', { region: cfg.region })),
+        seed ? soft(tmdb('/' + seed.type + '/' + seed.id + '/recommendations')) : Promise.resolve(null)
       ]);
-      const trendItems = (trend.results || []).filter(x => x.media_type !== 'person' && viewable(x));
+      if (!trend && !popM && !popT && !topM && !upcoming) throw firstErr || new Error('Nothing could be loaded.');
+      const trendItems = ((trend && trend.results) || []).filter(x => x.media_type !== 'person' && viewable(x));
       const heroItems = trendItems.filter(x => x.backdrop_path).slice(0, 5);
       const logos = await Promise.all(heroItems.map(heroLogo));
       if (!routeIs(my)) return;   // the user has navigated away — this response is stale
@@ -3058,10 +3067,10 @@
         html += railHTML('Because you watched ' + (seed.title || 'that'), items, null, seed.type);
       }
       html += rankRailHTML('Top 10 today', trendItems);
-      html += railHTML('Popular movies', popM.results, '#/movies', 'movie');
-      html += railHTML('Popular shows', popT.results, '#/tv', 'tv');
-      html += railHTML('Top rated', topM.results, '#/movies?sort=vote_average.desc', 'movie');
-      html += railHTML('Coming soon', upcoming.results, '#/movies?sort=primary_release_date.desc', 'movie');
+      html += railHTML('Popular movies', popM && popM.results, '#/movies', 'movie');
+      html += railHTML('Popular shows', popT && popT.results, '#/tv', 'tv');
+      html += railHTML('Top rated', topM && topM.results, '#/movies?sort=vote_average.desc', 'movie');
+      html += railHTML('Coming soon', upcoming && upcoming.results, '#/movies?sort=primary_release_date.desc', 'movie');
       html += '</div>';
       view().innerHTML = html;
       wireBillboard();
@@ -3423,9 +3432,10 @@
     try {
       const [d, credits, videos, similar, ext, imgs] = await Promise.all([
         tmdb('/' + type + '/' + id),
-        tmdb('/' + type + '/' + id + '/credits'),
-        tmdb('/' + type + '/' + id + '/videos'),
-        tmdb('/' + type + '/' + id + '/similar'),
+        // Only the title itself is required; the rest of the page degrades on its own.
+        tmdb('/' + type + '/' + id + '/credits').catch(() => ({})),
+        tmdb('/' + type + '/' + id + '/videos').catch(() => ({})),
+        tmdb('/' + type + '/' + id + '/similar').catch(() => ({})),
         tmdb('/' + type + '/' + id + '/external_ids').catch(() => ({})),
         tmdb('/' + type + '/' + id + '/images', { include_image_language: 'en,null', language: 'en' }).catch(() => ({}))
       ]);
@@ -4935,6 +4945,7 @@ ${IS_TV ? '' : `
       <div class="cn-warn">${ICON.warn}</div>
       <div style="font-weight:700;color:var(--text);margin-bottom:6px">Couldn't load data</div>
       <div>${esc(msg)}</div>
+      ${e && e.path ? `<div class="muted" style="font-size:12px;margin-top:8px;opacity:.7">${esc(e.path)}${e.status ? ' · ' + e.status : ''}</div>` : ''}
       <button class="btn sm" style="margin-top:16px" onclick="location.reload()">Retry</button>
     </div>`;
     (sel ? $(sel) : view()).innerHTML = html;
