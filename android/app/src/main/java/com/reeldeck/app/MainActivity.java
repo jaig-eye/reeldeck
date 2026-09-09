@@ -13,6 +13,7 @@ import android.provider.Settings;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.webkit.DownloadListener;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 
@@ -58,6 +59,22 @@ public class MainActivity extends BridgeActivity {
         // Block pop-up / new-window ads spawned from the player iframe.
         webView.getSettings().setSupportMultipleWindows(false);
         webView.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
+
+        // Nothing an embed asks for is ever downloaded. A WebView with no listener
+        // already drops these on the floor, but by omission rather than by decision --
+        // this states the intent and pins the behaviour against a future WebView that
+        // chooses a different default. It does NOT affect the in-app updater, which
+        // fetches its APK over its own HTTP connection in downloadAndInstall() and
+        // never goes through the WebView at all.
+        webView.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition,
+                                        String mimeType, long contentLength) {
+                // Deliberately empty. Not a lambda: android/app/build.gradle declares no
+                // compileOptions, so the module's Java source level is whatever AGP
+                // defaults to, and an anonymous class compiles at any of them.
+            }
+        });
 
         // Hardware volume keys should move MEDIA volume, not the ringer — the app is
         // a video player and there is nothing else on a TV for them to mean.

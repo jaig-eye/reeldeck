@@ -321,7 +321,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.26';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.27';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -364,14 +364,12 @@
   // search page's markup, so the generic fallback still lands on it when there are no
   // results — but once results exist they win, instead of trapping the ring on the box
   // you just typed into and making you press Back to reach what you searched for.
-  const TV_LANDING = ['#player-enter', '.bb-slide.on .bb-cta .btn.primary',
+  const TV_LANDING = ['#pe-focus', '.bb-slide.on .bb-cta .btn.primary',
                       '.dv-stage .cta .btn.primary', '.grid .card', '.rail .track .card'];
   // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
   // offset so its row keeps a fixed place in the order — otherwise the update
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
-  // #tv-controls only counts as pinned while cinema mode has it fixed over the
-  // player; in normal flow it is an ordinary row and must be measured as one.
-  const TV_PINNED = 'header.top, #cinema-exit, .toast, #next-up, body.cinema-on #tv-controls';
+  const TV_PINNED = 'header.top, #cinema-exit, .toast, #next-up';
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
@@ -3462,16 +3460,24 @@
       // that hijacks our whole page), no allow-modals, no allow-downloads. What stays is
       // what a player genuinely needs: its own origin, its scripts, its forms, and the
       // Presentation API for Cast.
-      // The withheld tokens are the whole point, and they are only two: allow-popups
-      // (window.open and target=_blank -- the pop-under) and allow-top-navigation
-      // (the redirect that replaces our page). Everything a player legitimately needs
-      // is granted, including three that were missing and could plausibly have broken
-      // one: modals for its own alert/confirm, orientation-lock for the rotate into
-      // landscape, pointer-lock for drag-scrubbing. Withholding those bought nothing,
-      // because none of them can open a window.
-      const sandbox = playerGuardOn()
-        ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation ' +
-          'allow-modals allow-orientation-lock allow-pointer-lock"' : '';
+      // In a browser the frame is ALWAYS sandboxed, and `allow-downloads` is never in
+      // the list -- so an embed cannot start a download whatever else is switched on.
+      // A native host blocks downloads itself (Electron cancels 'will-download';
+      // MainActivity installs a DownloadListener that does nothing), so it is left
+      // unsandboxed rather than risking a mirror that refuses to run in one.
+      //
+      // The pop-up guard now controls ONLY the pop-up pair. Off, the frame behaves as
+      // it always did -- it can open windows and navigate the top document -- minus the
+      // one thing that is never wanted. On, those two are withheld:
+      //   allow-popups         window.open and target=_blank, i.e. the pop-under
+      //   allow-top-navigation the redirect that replaces our page
+      // Everything a player legitimately needs is granted either way.
+      const BASE_SB = 'allow-same-origin allow-scripts allow-forms allow-presentation ' +
+                      'allow-modals allow-orientation-lock allow-pointer-lock';
+      const POPUP_SB = ' allow-popups allow-top-navigation allow-popups-to-escape-sandbox';
+      const sandbox = HOST_BLOCKS_POPUPS
+        ? ''                                            // host-level blocking instead
+        : 'sandbox="' + BASE_SB + (playerGuardOn() ? '' : POPUP_SB) + '"';
       // NO `fullscreen` in the allow list, deliberately. Fullscreen inside a
       // cross-origin frame is gated by Permissions Policy, whose default allowlist is
       // `self`, so omitting the token leaves document.fullscreenEnabled false inside the
@@ -3560,19 +3566,14 @@
           </div>
           ${epNav}
         </div>
-        <div class="player-frame">${frameInner}${IS_TV && src ? `<button class="player-enter" id="player-enter" aria-label="Control the player with the remote">
-            <span class="pe-pill">${ICON.play} Control player</span><small>OK turns the remote into a pointer</small></button>` : ''}</div>
-        ${IS_TV && src ? `
-        <div class="tv-controls" id="tv-controls" role="group" aria-label="Player controls">
-          <button class="btn sm" data-pk="space">${ICON.play} Play / Pause</button>
-          <button class="btn sm" data-pk="left" aria-label="Back 10 seconds">« 10s</button>
-          <button class="btn sm" data-pk="right" aria-label="Forward 10 seconds">10s »</button>
-          <button class="btn sm" data-vol="down" aria-label="Volume down">Vol −</button>
-          <button class="btn sm" data-vol="up" aria-label="Volume up">Vol +</button>
-          <button class="btn sm" data-vol="mute" aria-label="Mute">Mute</button>
-          <button class="btn sm" id="tvc-pointer">Pointer</button>
-        </div>
-        <p class="tv-controls-hint muted">If play or seek does nothing, the mirror ignores them — press <b>Pointer</b> and use the player's own buttons.</p>` : ''}
+        <div class="player-frame">${frameInner}${IS_TV && src ? `<div class="player-enter" id="player-enter">
+            <button class="pe-go" id="pe-focus" aria-label="Control the player with the remote">
+              <span class="pe-pill">${ICON.play} Control player</span>
+              <small>Full screen, and the remote drives the player's own buttons</small>
+            </button>
+            <button class="btn sm ghost pe-alt" id="pe-pointer">Can't reach a button? Use a pointer</button>
+          </div>` : ''}</div>
+
         <div class="source-bar">
           ${src ? '' : `<span class="lbl">No source selected</span>`}
           <span class="sb-modes">
@@ -3724,23 +3725,18 @@
       // summary with a panel of new controls the user has to hunt for.
       if (srv.open) { const first = srv.querySelector('button'); if (first) tvFocusEl(first); }
     });
-    const tvc = $('#tv-controls');
-    if (tvc) tvc.onclick = (e) => {
-      const b = e.target.closest('button'); if (!b) return;
-      if (b.dataset.pk) {
-        if (!playerKey(b.dataset.pk)) toast('Player control needs the Reeldeck app on your TV');
-        return;
-      }
-      if (b.dataset.vol) { nativeSend('vol:' + b.dataset.vol); return; }
-      if (b.id === 'tvc-pointer') { cursorOn(); return; }
-    };
+    // OK hands the remote to the embed's own controls; the pointer is the fallback for
+    // an overlay the D-pad cannot reach at all.
+    const pf = $('#pe-focus');
+    if (pf) pf.onclick = enterPlayerFocus;
+    const pp = $('#pe-pointer');
+    if (pp) pp.onclick = (e) => { e.stopPropagation(); cursorOn(); };
     const pe = $('#player-enter');
-    if (pe) pe.onclick = cursorOn;
     // On TV land focus on the player entry so OK immediately hands control to the embed.
     // The router also places the ring here (#player-enter is a landing target), but
     // do it explicitly too so the highlight class and remembered position are set even
     // when this view is re-rendered without a route change.
-    if (IS_TV && pe) tvFocusEl(pe);
+    if (IS_TV && pf) tvFocusEl(pf);
   }
 
   // "TV mode": a full-viewport player, for casting / screen-mirroring to a TV.
@@ -3771,10 +3767,6 @@
       const el = document.getElementById(id);
       if (el && el.parentNode !== host) host.appendChild(el);
     });
-    // The control bar is a sibling of the frame in the template, so in fullscreen it
-    // has to move too -- it is the bar the user pressed "full screen" ON.
-    const tvc = document.getElementById('tv-controls');
-    if (tvc && fsElement() && tvc.parentNode !== host) host.appendChild(tvc);
     if (keep && document.contains(keep) && keep !== document.body) {
       try { keep.focus({ preventScroll: true }); } catch (e) {}
     }
@@ -3784,15 +3776,11 @@
   let cinemaTimer, cinemaReveal;
   function revealCinema() {
     const ex = $('#cinema-exit'); if (ex) ex.classList.remove('faded');
-    // The TV control bar rides the same timer — parked permanently over the film it
-    // would be worse than not having it.
-    const tc = $('#tv-controls'); if (tc) tc.classList.remove('faded');
     clearTimeout(cinemaTimer);
     cinemaTimer = setTimeout(() => {
-      const e2 = $('#cinema-exit'); if (e2) e2.classList.add('faded');
-      const t2 = $('#tv-controls');
-      // Never fade it out from under the ring — that is a dead remote.
-      if (t2 && !t2.contains(document.activeElement)) t2.classList.add('faded');
+      const e2 = $('#cinema-exit');
+      // Never fade it out from under the ring -- that is a dead remote.
+      if (e2 && e2 !== document.activeElement) e2.classList.add('faded');
     }, 3000);
   }
   /**
@@ -4031,7 +4019,8 @@
     // left focused on #tv-cursor -- aria-hidden, tabIndex -1, and now display:none --
     // so the D-pad looked dead until a direction press happened to re-seed focus.
     tvInvalidate();
-    const back = document.getElementById('tvc-pointer') || document.getElementById('cinema-exit');
+    // Back to the scrim, which is visible again now that cursor-on is off.
+    const back = document.getElementById('pe-focus') || document.getElementById('cinema-exit');
     if (back) tvFocusEl(back);
   }
 
@@ -4134,7 +4123,10 @@
     if (fr) { try { fr.blur(); } catch (e) {} fr.setAttribute('tabindex', '-1'); }
     // Route through tvFocusEl so the selection class, the remembered position and the
     // scroll all match every other placement — a raw focus() here left the ring off.
-    const pe = document.getElementById('player-enter');
+    // #pe-focus, NOT #player-enter: the scrim became a container holding two actions, and
+    // tvFocusEl on a plain <div> silently does nothing, so taking the remote back from
+    // the embed dropped focus to <body> and the D-pad looked dead until a stray press.
+    const pe = document.getElementById('pe-focus');
     if (pe && IS_TV) tvFocusEl(pe);
   }
   /**
@@ -5200,7 +5192,7 @@ ${IS_TV ? '' : `
     // see occlusion, so name the chrome that is genuinely ON TOP of the player.
     // (Skipped when a modal is open: the modal is its own scope and sits above both.)
     if (document.body.classList.contains('cinema-on') && !el.closest('.modal-back') &&
-        !el.closest('.player-frame.cinema, #tv-controls, #cinema-exit, #next-up')) return null;
+        !el.closest('.player-frame.cinema, #cinema-exit, #next-up')) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return null;
     const cs = getComputedStyle(el);

@@ -928,7 +928,22 @@ body.tv .player-enter {
   position: absolute; inset: 0; z-index: 6;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
   background: linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.42));
-  border: 0; cursor: pointer; color: #fff;
+  border: 0; color: #fff;
+}
+/* The primary action fills the frame, so OK anywhere on the scrim hands over the remote.
+   The pointer sits inside it as a smaller, separate target -- a fallback with a stated
+   reason, rather than the first thing the remote lands on. */
+body.tv .pe-go {
+  position: absolute; inset: 0; background: none; border: 0; color: inherit; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+}
+body.tv .pe-alt {
+  position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%);
+  z-index: 1; white-space: nowrap;
+  background: rgba(0,0,0,.55); border-color: rgba(255,255,255,.22); color: #fff;
+}
+body.tv .pe-alt:focus, body.tv .pe-alt.tv-focus {
+  outline: 3px solid #fff; outline-offset: 2px; background: rgba(0,0,0,.75);
 }
 body.tv.player-focused .player-enter, body.tv.cursor-on .player-enter { display: none; }
 /* ---- "Is the remote in the player, or still in our UI?" ---------------------
@@ -991,8 +1006,8 @@ body.tv.cursor-on .tv-cursor.tap { animation: cur-tap .28s ease-out; }
 }
 .player-enter .pe-pill svg { width: 24px; height: 24px; }
 .player-enter small { font-size: 15px; opacity: .92; background: rgba(0,0,0,.5); padding: 6px 14px; border-radius: 99px; }
-body.tv .player-enter:focus { outline: none; }
-body.tv .player-enter:focus .pe-pill { outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05); }
+body.tv .pe-go:focus { outline: none; }
+body.tv .pe-go:focus .pe-pill { outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05); }
 .cinema-exit {
   position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 310;
   display: inline-flex; align-items: center; gap: 6px;
@@ -1270,8 +1285,8 @@ body.tv .btn:focus, body.tv .btn.tv-focus { transform: scale(1.05); }
 body.tv .btn { transition: transform .16s ease; }
 /* The player overlay fills a frame with overflow:hidden, so an outer ring is clipped
    away entirely — the ring goes on the inset pill instead. */
-body.tv .player-enter:focus, body.tv .player-enter.tv-focus { box-shadow: none; }
-body.tv .player-enter:focus .pe-pill, body.tv .player-enter.tv-focus .pe-pill {
+body.tv .pe-go:focus, body.tv .pe-go.tv-focus { box-shadow: none; }
+body.tv .pe-go:focus .pe-pill, body.tv .pe-go.tv-focus .pe-pill {
   outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05);
 }
 
@@ -1292,35 +1307,9 @@ body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { s
 .upd-box .ub-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); transition: width .25s ease; }
 .upd-box .ub-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: ub-spin .7s linear infinite; flex: none; }
 
-/* ---- TV: our own player controls -------------------------------------------
-   One flex row, so the D-pad row model reads the whole set as a single row and
-   Left/Right walks it. Volume, full screen and the pointer are genuinely ours; play
-   and seek are forwarded into the embed and depend on it binding them, which is why
-   the hint below says so rather than letting a dead button look broken. */
-.tv-controls, .tv-controls-hint { display: none; }
-body.tv .tv-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
-/* Cinema mode fixes .player-frame over the whole viewport at z-index 300 and locks
-   body scrolling, so a control bar left in normal flow is buried underneath it. Float
-   it above the frame instead, where a TV viewer expects it.
-   NOTE: z-index settles this only while the frame is an ordinary stacking context. If
-   the frame is ever genuinely fullscreened it moves to the TOP LAYER, which no z-index
-   can reach -- which is why rehomeOverlays() re-parents this bar INTO the frame rather
-   than trying to out-stack it. */
-body.tv.cinema-on .tv-controls {
-  position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(16px + 3vh); z-index: 310; margin: 0;
-  max-width: 94vw; justify-content: center;
-  background: rgba(11,13,18,.82); border: 1px solid rgba(255,255,255,.2);
-  border-radius: 16px; padding: 14px 18px; backdrop-filter: blur(6px);
-  transition: opacity .35s ease;
-}
-body.tv.cinema-on .tv-controls.faded { opacity: 0; pointer-events: none; }
-/* The pointer owns the D-pad outright while it is up. */
-body.tv.cursor-on .tv-controls { display: none; }
 /* On a TV the window IS the screen, so Theater mode and Fullscreen would be the same
    button twice. */
 body.tv .source-bar #tv-mode, body.tv .source-bar #movie-mode { display: none; }
-body.tv .tv-controls-hint { display: block; font-size: 13px; margin: 10px 0 0; max-width: 78ch; line-height: 1.5; }
 
 /* ---- Focus: cards ---------------------------------------------------------- */
 /* Only the SELECTED poster animates. Transitioning opacity on the twenty row-mates
