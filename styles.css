@@ -259,6 +259,13 @@ body::before {
      never hinted at themselves and a wide window cropped the subject clean out of
      frame. Capped by aspect ratio as well as height, so the art keeps its shape. */
   height: clamp(420px, min(64vh, 56vw), 640px); overflow: hidden;
+  /* The slide swipe is ours, on pointer events. Without this the browser treats a touch
+     here as a possible page pan, claims it as soon as the finger moves and fires
+     pointercancel, so pointermove stops and the drag never reaches its threshold -- the
+     hero simply did not swipe on a phone, while working fine with a mouse. `pan-y` keeps
+     vertical panning with the browser, so the page still scrolls, and gives us the
+     horizontal movement. */
+  touch-action: pan-y;
   /* No background: the art is masked out at the bottom, so anything painted here
      would be a flat band that the page's ambient gradient does not match. */
 }
@@ -383,7 +390,12 @@ body::before {
 /* ---------- Top 10 rank rail ---------- */
 .rank-rail .track { grid-auto-columns: 248px; align-items: end; }
 .rank-item { display: flex; align-items: flex-end; }
-.rank-num { font-size: 148px; font-weight: 900; line-height: .72; color: var(--bg-3); -webkit-text-stroke: 3px var(--border); letter-spacing: -8px; flex: none; margin-right: -8px; user-select: none; transition: color .18s; }
+/* Vector digits, not text. -webkit-text-stroke rendered on the font's own hinted
+   outline, which aliased badly at this size; a filled path has exact edges. */
+.rank-num { display: flex; align-items: flex-end; flex: none; margin-right: -6px; color: var(--bg-3); transition: color .18s; }
+.rank-num svg { width: 104px; height: 104px; display: block; }
+/* 10 is two glyphs: overlap them so the pair reads as one numeral rather than two icons. */
+.rank-num svg + svg { margin-left: -34px; }
 .rank-item .poster { width: 126px; flex: none; aspect-ratio: 2/3; }
 .rank-item:hover .rank-num { color: var(--surface-2); }
 
@@ -394,7 +406,8 @@ body::before {
   .bb-ovw { -webkit-line-clamp: 2; margin-bottom: 16px; }
   .bb-cta .btn.lg { padding: 12px 18px; font-size: 14px; }
   .bb-dots { bottom: 5%; }   /* clear of .bb-info, which sits at 13% on mobile */
-  .rank-num { font-size: 96px; letter-spacing: -6px; }
+  .rank-num svg { width: 68px; height: 68px; }
+  .rank-num svg + svg { margin-left: -22px; }
   .rank-rail .track { grid-auto-columns: 176px; }
   .rank-item .poster { width: 94px; }
   .rail-arrow { display: none; }
@@ -457,7 +470,9 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
   /* overflow-x:auto forces overflow-y to compute to AUTO -- there is no
      "scroll sideways, ignore vertical" in CSS. So the rail owned a vertical
      scroller, and a wheel over Top 10 scrolled the ROW instead of the page.
-     touch-action fixed the finger; this fixes the wheel.
+     This fixes the wheel AND the finger: with no vertical scroller here, a downward
+     gesture chains straight to the page. (A touch-action:pan-x used to sit alongside
+     it and was the reason a swipe starting on a rail scrolled nothing at all.)
      The overflow came from the hover lift (transforms DO add scrollable overflow;
      shadows do not), so the cure is room rather than clipping: pad enough that
      nothing ever exceeds the padding box, then pull the padding back off with a
@@ -713,11 +728,18 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .card:focus-visible { outline: none; box-shadow: none; }
 .card:focus-visible .poster { outline: none; box-shadow: var(--ring); }
 
-/* A horizontal rail must not swallow a VERTICAL swipe. Dragging down inside Top 10
-   was being captured by the rail, so the page stayed put and the finger felt stuck in
-   the row. pan-x lets the rail keep horizontal gestures and hands vertical ones back
-   to the document. */
-.track, .cast-track, .rank-rail .track { touch-action: pan-x; }
+/* NO touch-action here, deliberately. It used to say `pan-x`, on the theory that this
+   kept horizontal gestures for the rail and handed vertical ones back to the document.
+   It does not: pan-x REMOVES vertical panning from what the gesture is allowed to do,
+   for the rail and for every ancestor, because the permitted set is intersected up the
+   tree. A downward swipe starting anywhere in a rail therefore scrolled nothing, and the
+   only way to scroll the page again was to swipe the rail back to its start.
+
+   It was fixing a real problem -- overflow-x:auto forces overflow-y to compute to auto,
+   so the rail owned a vertical scroller and ate the drag. That is now fixed at the
+   source, with an explicit `overflow-y: hidden` on each of these plus padding so nothing
+   visible is clipped. A rail that cannot scroll vertically hands the gesture to the page
+   on its own, which is what pan-x was reaching for. */
 
 /* Momentum scroll + no scrollbar clutter on horizontal rails (touch) */
 .rail .track, .cast-track { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
@@ -773,8 +795,8 @@ body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34p
 /* Change episode without leaving playback. One horizontal row, like the server room
    below it, so on a remote it is a single D-pad row rather than a trip back out. */
 .ep-strip {
-  display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 12px;
-  scrollbar-width: none; touch-action: pan-x;
+  display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 2px 2px 12px;
+  scrollbar-width: none;
 }
 .ep-strip::-webkit-scrollbar { height: 0; display: none; }
 .epx {
@@ -814,11 +836,15 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
    "Verified" is demonstrated, not claimed: the badge appears only for a mirror that
    has actually reported a real playback position to us. */
 .mbadge { display: none; }
+/* Verified is context, not a call to action. Fourteen accent-coloured badges made the
+   list look like fourteen things demanding attention and drowned out the one tile that
+   actually matters -- the mirror you are on. Muted by default; only the active tile's
+   badge keeps the accent. */
 .mirror.tracked .mbadge, .mbadge.static {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; font-weight: 800; letter-spacing: .3px;
-  color: var(--accent); background: var(--bg-3);
-  border: 1px solid var(--accent-2); border-radius: 20px; padding: 2px 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: .3px;
+  color: var(--muted); background: var(--bg-3);
+  border: 1px solid var(--border); border-radius: 20px; padding: 2px 8px;
 }
 .mbadge svg { width: 11px; height: 11px; }
 .mirror.tracked .mbadge { margin-top: 6px; }
@@ -862,8 +888,8 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
 /* Replaces a <select>: on a remote a native picker is a modal you have to escape, and
    on touch it hides how many seasons there even are. A scrolling rail shows them. */
 .season-pills {
-  display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px;
-  scroll-behavior: smooth; scrollbar-width: none; touch-action: pan-x;
+  display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 2px 2px 10px;
+  scroll-behavior: smooth; scrollbar-width: none;
 }
 .season-pills::-webkit-scrollbar { height: 0; display: none; }
 .spill {
@@ -1909,7 +1935,27 @@ body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
 
 /* The two view modes belong in the open: they are how you make the player bigger,
    which is a per-sitting decision, not a setting you configure once. */
-.sb-modes { display: inline-flex; gap: 10px; margin-left: auto; }
+/* One control, two halves: same fill, one hairline between them. Two different button
+   styles for two settings of the same thing read as unrelated controls. */
+.sb-modes { display: inline-flex; margin-left: auto; border: 1px solid var(--border);
+            border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.sb-modes .btn { border: 0; border-radius: 0; background: none; }
+.sb-modes .btn:hover { transform: none; background: var(--bg-3); }
+.sb-modes .btn + .btn { box-shadow: inset 1px 0 0 var(--border); }
+
+/* The "Playing on X" row is welded to the Servers panel below it: same width, square
+   bottom corners, no gap. It used to sit up by the player, repeating what the panel's
+   own summary already says and leaving the switch button far from the mirror list. */
+.srv-now {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 26px; padding: 10px 16px;
+  background: var(--bg-2); border: 1px solid var(--border); border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+}
+.srv-now .lbl { color: var(--muted); font-weight: 600; font-size: 13px; }
+.srv-now .lbl b { color: var(--text); }
+.srv-now .btn { margin-left: auto; }
+.srv-now + .srv { margin-top: 0; border-radius: 0 0 14px 14px; }
 @media (max-width: 640px) { .sb-modes { margin-left: 0; } }
 /* The season rail on the player page carries no heading of its own -- the strip
    below it is the subject, and this is just which slice of it you are looking at. */

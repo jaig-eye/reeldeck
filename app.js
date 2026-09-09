@@ -321,7 +321,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.25';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.26';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -2662,6 +2662,28 @@
     </div>`;
   }
 
+  // Phosphor bold numerals for the Top 10 rail. The old numbers were TEXT at 148px
+  // with -webkit-text-stroke, a non-standard property that strokes the glyph's own
+  // hinted outline -- which is why the joins and curve ends looked ragged and looked
+  // different in every engine. These are plain vector paths: exact at any size.
+  const DIGIT = {
+    '0': '<path d="M186.62,61.05c-13.76-21.62-34-33-58.62-33S83.14,39.43,69.38,61.05C58.17,78.66,52,102.44,52,128s6.17,49.33,17.38,66.94C83.14,216.57,103.41,228,128,228s44.86-11.43,58.62-33.06C197.83,177.33,204,153.56,204,128S197.83,78.66,186.62,61.05Zm-20.25,121C157.11,196.62,144.2,204,128,204s-29.11-7.38-38.37-21.94C80.84,168.25,76,149.05,76,128s4.84-40.25,13.63-54.06C98.89,59.38,111.8,52,128,52s29.11,7.38,38.37,21.94C175.16,87.75,180,107,180,128S175.16,168.25,166.37,182.06Z"/>',
+    '1': '<path d="M148,48V208a12,12,0,0,1-24,0V69.19l-21.83,13.1A12,12,0,0,1,89.83,61.71l40-24A12,12,0,0,1,148,48Z"/>',
+    '2': '<path d="M180,208a12,12,0,0,1-12,12H88a12,12,0,0,1-9.6-19.2l71.95-95.92a28,28,0,1,0-48-28.06,12,12,0,0,1-22-9.62,52.32,52.32,0,0,1,6.13-10.49,52,52,0,0,1,83.06,62.59L112,196h56A12,12,0,0,1,180,208Z"/>',
+    '3': '<path d="M180,160A60,60,0,0,1,80,204.72a12,12,0,1,1,16-17.88A36,36,0,1,0,120,124a12,12,0,0,1-9.6-19.2L144,60H88a12,12,0,0,1,0-24h80a12,12,0,0,1,9.6,19.2l-36.48,48.64A60.11,60.11,0,0,1,180,160Z"/>',
+    '4': '<path d="M184,156H172V48a12,12,0,0,0-21.37-7.5l-96,120A12,12,0,0,0,64,180h84v28a12,12,0,0,0,24,0V180h12a12,12,0,0,0,0-24Zm-36,0H89l59-73.79Z"/>',
+    '5': '<path d="M180,160A60,60,0,0,1,80,204.72a12,12,0,1,1,16-17.88,36,36,0,1,0,.69-54.28,12,12,0,0,1-19.54-11.49L92.23,45.65A12,12,0,0,1,104,36h64a12,12,0,0,1,0,24H113.84l-8.36,41.79A60,60,0,0,1,180,160Z"/>',
+    '6': '<path d="M128,100a59.21,59.21,0,0,0-7.81.53l26.27-46.64a12,12,0,0,0-20.92-11.78L76,130.13A60,60,0,1,0,128,100Zm0,96a36,36,0,1,1,36-36A36,36,0,0,1,128,196Z"/>',
+    '7': '<path d="M179.49,51.45l-48,160A12,12,0,0,1,120,220a11.82,11.82,0,0,1-3.45-.51,12,12,0,0,1-8-14.94L151.87,60H88a12,12,0,0,1,0-24h80a12,12,0,0,1,11.49,15.45Z"/>',
+    '8': '<path d="M162.44,118.91a52,52,0,1,0-68.88,0,60,60,0,1,0,68.88,0ZM100,80a28,28,0,1,1,28,28A28,28,0,0,1,100,80Zm28,124a36,36,0,1,1,36-36A36,36,0,0,1,128,204Z"/>',
+    '9': '<path d="M188,96a60,60,0,1,0-60,60,59.21,59.21,0,0,0,7.81-.53l-26.27,46.64a12,12,0,0,0,20.92,11.78l49.54-88A59.57,59.57,0,0,0,188,96ZM92,96a36,36,0,1,1,36,36A36,36,0,0,1,92,96Z"/>',
+  };
+  /** A rank as vector digits. Two glyphs for 10, which is why this is a loop. */
+  function rankNum(n) {
+    return String(n).split('').map(c =>
+      '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">' +
+      (DIGIT[c] || '') + '</svg>').join('');
+  }
   // "Top 10"-style ranked row with big numerals
   function rankRailHTML(title, items) {
     items = (items || []).filter(x => x.poster_path || x.backdrop_path).slice(0, 10);
@@ -2674,7 +2696,7 @@
           const type = it.media_type || (it.first_air_date ? 'tv' : 'movie');
           itemCache[ck(type, it.id)] = it;
           return `<div class="rank-item card" data-nav="#/${type}/${it.id}" tabindex="0" role="button" aria-label="Number ${i + 1}, ${esc(it.title || it.name)}">
-            <span class="rank-num">${i + 1}</span>
+            <span class="rank-num" aria-hidden="true">${rankNum(i + 1)}</span>
             <div class="poster">
               <img loading="lazy" src="${img(it.poster_path, 'w342')}" onerror="this.src='${PLACEHOLDER}'" alt="${esc(it.title || it.name)}">
               <div class="card-hover"><button class="ch-play" data-nav="${watchHref(type, it.id)}" tabindex="-1" aria-hidden="true">${ICON.play}</button></div>
@@ -3440,8 +3462,16 @@
       // that hijacks our whole page), no allow-modals, no allow-downloads. What stays is
       // what a player genuinely needs: its own origin, its scripts, its forms, and the
       // Presentation API for Cast.
+      // The withheld tokens are the whole point, and they are only two: allow-popups
+      // (window.open and target=_blank -- the pop-under) and allow-top-navigation
+      // (the redirect that replaces our page). Everything a player legitimately needs
+      // is granted, including three that were missing and could plausibly have broken
+      // one: modals for its own alert/confirm, orientation-lock for the rotate into
+      // landscape, pointer-lock for drag-scrubbing. Withholding those bought nothing,
+      // because none of them can open a window.
       const sandbox = playerGuardOn()
-        ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"' : '';
+        ? 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation ' +
+          'allow-modals allow-orientation-lock allow-pointer-lock"' : '';
       // NO `fullscreen` in the allow list, deliberately. Fullscreen inside a
       // cross-origin frame is gated by Permissions Policy, whose default allowlist is
       // `self`, so omitting the token leaves document.fullscreenEnabled false inside the
@@ -3544,15 +3574,18 @@
         </div>
         <p class="tv-controls-hint muted">If play or seek does nothing, the mirror ignores them — press <b>Pointer</b> and use the player's own buttons.</p>` : ''}
         <div class="source-bar">
-          <span class="lbl">${src ? 'Playing on <b style="color:var(--text)">' + esc(src.name) + '</b>' : 'No source selected'}</span>
-          ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
+          ${src ? '' : `<span class="lbl">No source selected</span>`}
           <span class="sb-modes">
             <button class="btn sm" id="movie-mode" title="Fill this window. Best for AirPlay and screen mirroring — it never hands the video to the system player, so the mirror's subtitles keep showing.">${ICON.theater} Theater mode</button>
-            <button class="btn sm ghost" id="tv-mode" title="Fill the whole screen">${ICON.fullscreen} Fullscreen</button>
+            <button class="btn sm" id="tv-mode" title="Fill the whole screen">${ICON.fullscreen} Fullscreen</button>
           </span>
         </div>
         ${epStrip}
         ${sources.length ? `
+        <div class="srv-now">
+          <span class="lbl">${src ? 'Playing on <b>' + esc(src.name) + '</b>' : 'No source selected'}</span>
+          ${sources.length > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
+        </div>
         <details class="srv" id="srv"${srvWasOpen ? ' open' : ''}>
           <summary tabindex="0">
             <span class="srv-t">Servers &amp; playback</span>
@@ -4365,7 +4398,8 @@ ${IS_TV ? '' : `
           : updState.s === 'available' ? 'Update available' + (updState.v ? ' \u00b7 v' + esc(updState.v) : '')
           : 'Check for updates'}</button>
         <button class="am-item" data-am="getapp" role="menuitem">${ICON.tv} Install on TV</button>
-        <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>`;
+        <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>
+        <button class="am-item" data-am="reload" role="menuitem">${ICON.sync} Reload app</button>`;
       document.body.appendChild(m);
       const r = btn.getBoundingClientRect();
       // Clamped against the safe area, not just against 0. The button sits inside a
@@ -4390,6 +4424,11 @@ ${IS_TV ? '' : `
         }
         else if (what === 'getapp') go('#/get-app');
         else if (what === 'watchlist') go('#/watchlist');
+        // The APK and the desktop app have no address bar and no pull-to-refresh, so a
+        // wedged session -- a mirror that hung, a view that failed to paint -- had no way
+        // out but force-quitting. Reload the document rather than re-running route(): the
+        // states worth escaping are the ones route() cannot clear.
+        else if (what === 'reload') location.reload();
       };
       closeAcct._esc = (e3) => { if (e3.key === 'Escape') closeAcct(); };
       document.addEventListener('keydown', closeAcct._esc);
@@ -5629,6 +5668,12 @@ ${IS_TV ? '' : `
   }
 
   function chromeSleep() {
+    // At the top of the page the bar is not in the way of anything, and hiding it there
+    // just makes the app look like it lost its chrome. It only earns its keep once the
+    // user has scrolled past where it would sit anyway.
+    const hdr = document.querySelector('header.top');
+    const past = (window.scrollY || 0) > (hdr ? hdr.offsetHeight : 56);
+    if (!past) { chromeArm(); return; }
     if (chromeHoldOpen()) { chromeArm(); return; }   // re-check later rather than give up
     if (document.body.classList.contains('chrome-idle')) return;
     document.body.classList.add('chrome-idle');
