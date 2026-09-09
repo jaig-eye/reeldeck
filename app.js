@@ -158,6 +158,7 @@
   // + the accent used for the player {color} param. preview = [bg, surface, accent].
   const THEMES = [
     { id: 'midnight', name: 'Midnight', accent: '#f5c518', preview: ['#0b0d12', '#1f2431', '#f5c518'] },
+    { id: 'oled',     name: 'OLED',     accent: '#f5c518', preview: ['#000000', '#151922', '#f5c518'] },
     { id: 'onyx',     name: 'Onyx',     accent: '#22d3ee', preview: ['#000000', '#17171b', '#22d3ee'] },
     { id: 'aurora',   name: 'Aurora',   accent: '#d946ef', preview: ['#0f0a1a', '#251a42', '#d946ef'] },
     { id: 'ocean',    name: 'Ocean',    accent: '#2dd4bf', preview: ['#06121a', '#143240', '#2dd4bf'] },
@@ -379,7 +380,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.33';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.34';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -729,6 +730,32 @@
     syncMark();
   }
 
+  /**
+   * "I watched this" without a player having said so.
+   *
+   * Written as a PROVIDER entry on purpose: pickProg ranks provider over elapsed
+   * regardless of age, so a deliberate mark survives the wall-clock guess a later
+   * rewatch would make -- while a mirror that does report its position still wins by
+   * recency, as it should. The series pointer moves forward only, never back.
+   * `quiet` keeps a bulk season mark out of the history log, where ten identical rows
+   * stamped in the same second would bury everything else.
+   */
+  function progMarkWatched(o) {
+    if (!o || !o.id) return;
+    const p = progAll(); progPrune(p);
+    const k = progKey(o.type, o.id, o.season, o.episode);
+    const dur = Math.max(0, Math.round(o.d || 0));
+    p[k] = { t: dur, d: dur, pct: 1, at: now(), src: 'provider' };
+    if (o.type === 'tv') {
+      const cur = p['tv:' + o.id];
+      const s = +o.season || 1, e = +o.episode || 1;
+      if (!cur || (s * 1000 + e) >= ((cur.s || 0) * 1000 + (cur.e || 0))) p['tv:' + o.id] = { s: s, e: e, at: now() };
+    }
+    progSave(p);
+    if (!o.quiet) histPush(o, 1);
+    syncFlush('mark');
+  }
+
   function histAll() {
     try { const h = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); return Array.isArray(h) ? h : []; }
     catch (e) { return []; }
@@ -758,6 +785,16 @@
     const h = m / 60; if (h < 24) return Math.round(h) + 'h ago';
     const dd = h / 24; if (dd < 7) return Math.round(dd) + 'd ago';
     try { return new Date(ms).toLocaleDateString(); } catch (e) { return 'a while ago'; }
+  }
+  /** "Sep 14" this year, "May 19, 2019" any other -- an air date for a pill or a badge. */
+  function shortDate(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso + 'T12:00:00');
+      const o = { month: 'short', day: 'numeric' };
+      if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+      return d.toLocaleDateString(undefined, o);
+    } catch (e) { return iso; }
   }
   function histPush(o, pct) {
     const h = histAll();
@@ -2976,9 +3013,14 @@
     clearHero();
     view().innerHTML = `<div class="billboard-sk sk"></div><div class="rows">${skeletonRow()}${skeletonRow()}</div>`;
     try {
-      const [trend, popM, popT, topM, upcoming] = await Promise.all([
+      // "Because you watched X": recommendations for the title watched most recently.
+      // Fetched alongside the rest, never awaited on its own, and a failure just means
+      // no rail.
+      const seed = histByTitle()[0] || null;
+      const [trend, popM, popT, topM, upcoming, recs] = await Promise.all([
         tmdb('/trending/all/day'), tmdb('/movie/popular'), tmdb('/tv/popular'),
-        tmdb('/movie/top_rated'), tmdb('/movie/upcoming', { region: cfg.region })
+        tmdb('/movie/top_rated'), tmdb('/movie/upcoming', { region: cfg.region }),
+        seed ? tmdb('/' + seed.type + '/' + seed.id + '/recommendations').catch(() => null) : Promise.resolve(null)
       ]);
       const trendItems = (trend.results || []).filter(x => x.media_type !== 'person');
       const heroItems = trendItems.filter(x => x.backdrop_path).slice(0, 5);
@@ -2992,6 +3034,10 @@
       // distinction the viewer has to work out by looking. Recently watched covers
       // both: unfinished entries resume where they stopped, finished ones start over.
       html += recentRailHTML();
+      if (seed && recs && Array.isArray(recs.results)) {
+        const items = recs.results.filter(x => x.poster_path && String(x.id) !== String(seed.id));
+        html += railHTML('Because you watched ' + (seed.title || 'that'), items, null, seed.type);
+      }
       html += rankRailHTML('Top 10 today', trendItems);
       html += railHTML('Popular movies', popM.results, '#/movies', 'movie');
       html += railHTML('Popular shows', popT.results, '#/tv', 'tv');
@@ -3000,6 +3046,11 @@
       html += '</div>';
       view().innerHTML = html;
       wireBillboard();
+      // "New episode" on the Recently watched tiles: whatever the cache already knows
+      // paints now; anything stale is fetched and painted when it lands.
+      newEpPaint();
+      newEpScan(histByTitle().filter(r => r.type === 'tv').slice(0, 14).map(r => r.id))
+        .then(ch => { if (ch && routeIs(my)) newEpPaint(); });
     } catch (e) { if (routeIs(my)) errorState(e); }
   }
 
@@ -3206,10 +3257,19 @@
     const q = params.q || '';
     const empty = `<div class="center-note">${IS_TV ? 'Press OK on the box above to type.' : 'Use the search box above to find movies, shows and people.'}
       <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div></div>`;
+    // Recent searches on the empty page: a chip is one press on a remote, against
+    // re-typing a title with the on-screen keyboard.
+    const rq = q ? [] : recentQ();
+    const recent = rq.length ? `<div class="recent-q" role="group" aria-label="Recent searches"><span class="lbl">Recent</span>${
+        rq.map(x => `<button class="chip" data-nav="#/search?q=${encodeURIComponent(x)}">${esc(x)}</button>`).join('')
+      }<button class="chip ghost" id="recent-q-clear">Clear</button></div>` : '';
     view().innerHTML = `<h1 class="page-title">${q ? 'Results for “' + esc(q) + '”' : 'Search'}</h1>${tvSearchBar(q)}
-      <div id="results">${q ? skeletonGrid(12) : empty}</div>`;
+      <div id="results">${q ? skeletonGrid(12) : recent + empty}</div>`;
     wireTvSearch();
+    const rc = $('#recent-q-clear');
+    if (rc) rc.onclick = () => { recentQClear(); route(); };
     if (!q) return;
+    recentQPush(q);
     try {
       const data = await tmdb('/search/multi', { query: q, page: 1, include_adult: 'false' });
       const results = (data.results || []).filter(x => x.media_type !== 'person' && (x.poster_path || x.backdrop_path));
@@ -3221,6 +3281,92 @@
             <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div></div>`;
     } catch (e) { const box = $('#results'); if (box && routeIs(my)) { box.innerHTML = ''; errorState(e, '#results'); } }
   }
+  /* ---- Recent searches ---------------------------------------------------------
+     Eight of them, newest first, on the empty search page. Local only: what someone
+     typed on the TV is not something the phone needs to know. */
+  const RECENT_Q_KEY = 'reeldeck.recent-searches.v1';
+  function recentQ() {
+    try { const a = JSON.parse(localStorage.getItem(RECENT_Q_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string' && x) : []; }
+    catch (e) { return []; }
+  }
+  function recentQPush(q) {
+    q = (q || '').trim(); if (!q) return;
+    const a = recentQ().filter(x => x.toLowerCase() !== q.toLowerCase());
+    a.unshift(q);
+    try { localStorage.setItem(RECENT_Q_KEY, JSON.stringify(a.slice(0, 8))); } catch (e) {}
+  }
+  function recentQClear() { try { localStorage.removeItem(RECENT_Q_KEY); } catch (e) {} }
+
+  /* ---- New episodes ------------------------------------------------------------
+     "Has something aired that I have not seen?", answered from TMDB's
+     last_episode_to_air and cached per show for six hours, so a watchlist of fifty
+     series is not fifty requests on every visit. The detail page feeds the cache for
+     free, since it fetches the same object anyway. */
+  const NEWEP_KEY = 'reeldeck.newep.v1';
+  const NEWEP_TTL = 6 * 3600000;
+  function newEpAll() {
+    try { const o = JSON.parse(localStorage.getItem(NEWEP_KEY) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
+    catch (e) { return {}; }
+  }
+  function newEpSave(o) { try { localStorage.setItem(NEWEP_KEY, JSON.stringify(o)); } catch (e) {} }
+  /** Record what a fetched /tv/{id} object says about its latest and next episode. */
+  function newEpNote(d) {
+    if (!d || !d.id) return;
+    const le = d.last_episode_to_air || {}, ne = d.next_episode_to_air || {};
+    const all = newEpAll();
+    all[d.id] = { s: le.season_number || 0, e: le.episode_number || 0, date: le.air_date || '',
+                  next: ne.air_date || '', ns: ne.season_number || 0, ne: ne.episode_number || 0, at: now() };
+    // Sixty shows is more than any watchlist; beyond that, drop the stalest.
+    const keys = Object.keys(all);
+    if (keys.length > 60) keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - 60).forEach(k => { delete all[k]; });
+    newEpSave(all);
+  }
+  /**
+   * Is there an aired episode past the viewer's place? {s, e, date} or null.
+   * A show never opened counts only while its latest episode is genuinely recent --
+   * "new" on a series that ended in 2009 would be noise.
+   */
+  function newEpState(id) {
+    const c = newEpAll()[id];
+    if (!c || !c.s) return null;
+    const last = progShow(id);
+    if (last) return ((c.s * 1000 + c.e) > ((last.s || 0) * 1000 + (last.e || 0))) ? c : null;
+    const aired = c.date ? Date.parse(c.date) : 0;
+    return (aired && (now() - aired) < 8 * 86400000) ? c : null;
+  }
+  /** Fetch what is missing or stale, four at a time. Resolves true if anything changed. */
+  async function newEpScan(ids) {
+    const cache = newEpAll(), t = now();
+    const todo = (ids || []).filter((id, i, a) => a.indexOf(id) === i)
+      .filter(id => !(cache[id] && (t - (cache[id].at || 0)) < NEWEP_TTL)).slice(0, 30);
+    if (!todo.length) return false;
+    let i = 0, changed = false;
+    const worker = async () => {
+      while (i < todo.length) {
+        const id = todo[i++];
+        try { newEpNote(await tmdb('/tv/' + id)); changed = true; }
+        catch (e) { /* stays unknown; tried again next visit */ }
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    return changed;
+  }
+  function newEpBadgeHTML(id) {
+    const st = newEpState(id);
+    if (!st) return '';
+    return `<span class="newep" title="S${st.s} \u00b7 E${st.e} aired ${esc(shortDate(st.date))}">New episode</span>`;
+  }
+  /** Put a badge on every series card on screen that has one coming. Idempotent. */
+  function newEpPaint(root) {
+    (root || document).querySelectorAll('.card[data-nav*="/tv/"]').forEach(c => {
+      const m = /\/tv\/(\d+)/.exec(c.dataset.nav || '');
+      const poster = c.querySelector('.poster');
+      if (!m || !poster || poster.querySelector('.newep')) return;
+      const h = newEpBadgeHTML(m[1]);
+      if (h) poster.insertAdjacentHTML('beforeend', h);
+    });
+  }
+
   /* ---------- Detail (movie & tv) ---------- */
   async function detailView(type, id) {
     const my = routeSeq;
@@ -3237,6 +3383,14 @@
       ]);
       itemCache[ck(type, d.id)] = d;
       d._imdb = ext.imdb_id;
+      // A film that belongs to a collection lists the rest of it. One more request, only
+      // for those films -- and the reason nobody loses track of a sequel.
+      const coll = (!isTV && d.belongs_to_collection && d.belongs_to_collection.id)
+        ? await tmdb('/collection/' + d.belongs_to_collection.id).catch(() => null) : null;
+      if (isTV) newEpNote(d);           // the badge cache gets this for free
+      const nextEp = (isTV && d.next_episode_to_air && d.next_episode_to_air.air_date) ? d.next_episode_to_air : null;
+      const lastEp = (isTV && d.last_episode_to_air && d.last_episode_to_air.air_date) ? d.last_episode_to_air : null;
+      const epLbl = (ep) => 'S' + ep.season_number + ' \u00b7 E' + ep.episode_number + ' \u00b7 ' + shortDate(ep.air_date);
       const title = d.title || d.name;
       const y = year(d.release_date || d.first_air_date);
       const _logos = (imgs.logos || []).filter(l => l.file_path && (l.iso_639_1 === 'en' || l.iso_639_1 === null)).sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
@@ -3266,6 +3420,7 @@
             ${y ? `<span class="pill">${y}</span>` : ''}
             ${runtime ? `<span class="pill">${esc(runtime)}</span>` : ''}
             ${d.status ? `<span class="pill">${esc(d.status)}</span>` : ''}
+            ${nextEp ? `<span class="pill next-ep">${ICON.tv} Next ${esc(epLbl(nextEp))}</span>` : ''}
           </div>
           <div class="dv-cta cta">
             <button class="btn primary" data-nav="${watchHref(type, d.id)}">${ICON.play} ${watchLabel(type, d.id)}</button>
@@ -3274,6 +3429,10 @@
             <button class="btn ${on ? 'primary' : 'glass'}" data-wl="${d.id}" data-type="${type}" id="detail-wl">
               ${on ? ICON.bookmarkFill : ICON.bookmark} ${on ? 'In watchlist' : 'Watchlist'}
             </button>
+            ${!isTV ? `<button class="btn glass" data-mark="movie:${d.id}" data-d="${60 * (d.runtime || 0)}"
+              data-title="${esc(title)}" data-poster="${esc(d.poster_path || '')}" aria-pressed="${progDone(progGet('movie', d.id))}"
+              title="${progDone(progGet('movie', d.id)) ? 'Mark unwatched' : 'Mark watched'}">${
+              progDone(progGet('movie', d.id)) ? ICON.check + ' Watched' : 'Mark watched'}</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -3310,6 +3469,8 @@
             ${runtime ? `<dt>${isTV ? 'Length' : 'Runtime'}</dt><dd>${esc(runtime)}</dd>` : ''}
             ${d.status ? `<dt>Status</dt><dd>${esc(d.status)}</dd>` : ''}
             ${(d.release_date || d.first_air_date) ? `<dt>Released</dt><dd>${esc(d.release_date || d.first_air_date)}</dd>` : ''}
+            ${lastEp ? `<dt>Latest episode</dt><dd>${esc(epLbl(lastEp))}</dd>` : ''}
+            ${nextEp ? `<dt>Next episode</dt><dd>${esc(epLbl(nextEp))}</dd>` : ''}
           </dl>
         </aside>
       </div>`;
@@ -3318,7 +3479,8 @@
       if (isTV) {
         const seasons = (d.seasons || []).filter(s => s.season_number >= 1);
         html += `<div class="section" id="seasons">
-          <h3>Episodes</h3>
+          <div class="season-head"><h3>Episodes</h3>
+            <button class="btn sm ghost" id="season-mark" hidden aria-pressed="false">Mark season watched</button></div>
           <div class="rail-wrap season-wrap">
           <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll seasons left">${ICON.back}</button>
           <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll seasons right">${ICON.chevR}</button>
@@ -3332,6 +3494,14 @@
         </div>`;
       }
 
+
+      // The collection, in release order, with the film you are looking at included so
+      // its place in the sequence is visible.
+      if (coll && Array.isArray(coll.parts)) {
+        const parts = coll.parts.filter(x => x.poster_path)
+          .sort((a, b) => String(a.release_date || '9999').localeCompare(String(b.release_date || '9999')));
+        if (parts.length > 1) html += `<div class="section">${railHTML(coll.name || 'Collection', parts, null, 'movie')}</div>`;
+      }
 
       // Similar
       const sim = (similar.results || []).filter(x => x.poster_path).slice(0, 14);
@@ -3349,6 +3519,48 @@
         // rendered under a select reading "Season 3", with every episode link pointing
         // at the wrong season.
         let seasonSeq = 0;
+        let curSeason = { n: 0, s: null };
+        // Painting is separate from loading so a mark can repaint from the season data
+        // already in hand instead of asking TMDB for it again.
+        const paintEps = (n, s) => {
+          const box = $('#ep-list'); if (!box) return;
+          const eps = s.episodes || [];
+          box.innerHTML = eps.map(ep => {
+            const pr = progGet('tv', id, n, ep.episode_number);
+            const done = progDone(pr);
+            const part = !!(pr && !done && pr.pct > 0.01);
+            return `
+            <div class="ep${done ? ' watched' : ''}" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}" tabindex="0" role="button"
+                 aria-label="${done ? 'Rewatch' : part ? 'Resume' : 'Play'} season ${n} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}">
+              <div class="ep-thumb">
+                <img class="thumb" alt="" loading="lazy" decoding="async" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+                ${(pr && pr.pct > 0.01) ? `<span class="ep-fill" style="width:${Math.round(Math.min(1, pr.pct) * 100)}%"></span>` : ''}
+                ${done ? `<span class="ep-tick" aria-hidden="true">${ICON.check}</span>` : ''}
+              </div>
+              <div class="ep-body">
+                <div class="en">S${n} · E${ep.episode_number}${ep.runtime ? ' · ' + ep.runtime + 'm' : ''}</div>
+                <div class="et">${esc(ep.name || 'Episode ' + ep.episode_number)}</div>
+                <div class="eo">${esc(ep.overview || '')}</div>
+                ${progBar(pr)}
+              </div>
+              ${IS_TV ? '' : `<button class="ep-mark" data-mark="tv:${id}:${n}:${ep.episode_number}" data-d="${60 * (ep.runtime || 0)}"
+                data-title="${esc(title)}" data-poster="${esc(d.poster_path || '')}" tabindex="-1" aria-pressed="${done}"
+                title="${done ? 'Mark unwatched' : 'Mark watched'}" aria-label="${done ? 'Mark unwatched' : 'Mark watched'}">${ICON.check}</button>`}
+            </div>`;
+          }).join('') || '<div class="center-note">No episode data.</div>';
+          // The season button describes the season: every episode seen -> offer to unmark.
+          const sm = $('#season-mark');
+          if (sm) {
+            const allDone = eps.length > 0 && eps.every(ep => progDone(progGet('tv', id, n, ep.episode_number)));
+            sm.hidden = !eps.length;
+            sm.dataset.n = n;
+            sm.textContent = allDone ? 'Unmark season ' + n : 'Mark season ' + n + ' watched';
+            sm.setAttribute('aria-pressed', String(allDone));
+          }
+          // The row model caches; replacing every episode under it would otherwise
+          // leave the D-pad navigating the season that just went away.
+          if (IS_TV) tvInvalidate();
+        };
         const loadSeason = async (n) => {
           const mine = ++seasonSeq, myRoute = routeSeq;
           const box = $('#ep-list'); if (!box) return;
@@ -3356,33 +3568,27 @@
           try {
             const s = await tmdb('/tv/' + id + '/season/' + n);
             if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
-            box.innerHTML = (s.episodes || []).map(ep => {
-              const pr = progGet('tv', id, n, ep.episode_number);
-              const done = progDone(pr);
-              const part = !!(pr && !done && pr.pct > 0.01);
-              return `
-              <div class="ep${done ? ' watched' : ''}" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}" tabindex="0" role="button"
-                   aria-label="${done ? 'Rewatch' : part ? 'Resume' : 'Play'} season ${n} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}">
-                <div class="ep-thumb">
-                  <img class="thumb" alt="" loading="lazy" decoding="async" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
-                  ${(pr && pr.pct > 0.01) ? `<span class="ep-fill" style="width:${Math.round(Math.min(1, pr.pct) * 100)}%"></span>` : ''}
-                  ${done ? `<span class="ep-tick" aria-hidden="true">${ICON.check}</span>` : ''}
-                </div>
-                <div class="ep-body">
-                  <div class="en">S${n} · E${ep.episode_number}${ep.runtime ? ' · ' + ep.runtime + 'm' : ''}</div>
-                  <div class="et">${esc(ep.name || 'Episode ' + ep.episode_number)}</div>
-                  <div class="eo">${esc(ep.overview || '')}</div>
-                  ${progBar(pr)}
-                </div>
-              </div>`;
-            }).join('') || '<div class="center-note">No episode data.</div>';
-            // The row model caches; replacing every episode under it would otherwise
-            // leave the D-pad navigating the season that just went away.
-            if (IS_TV) tvInvalidate();
+            curSeason = { n: +n, s: s };
+            paintEps(+n, s);
           } catch (e) {
             if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
             box.innerHTML = ''; errorState(e, '#ep-list');
           }
+        };
+        // One press for a season watched somewhere else. Quiet marks: ten history rows
+        // stamped in the same second would bury the log, and the ticks already say it.
+        const smBtn = $('#season-mark');
+        if (smBtn) smBtn.onclick = () => {
+          const n = curSeason.n, s = curSeason.s;
+          const eps = (s && s.episodes) || [];
+          if (!n || !eps.length) return;
+          const allDone = eps.every(ep => progDone(progGet('tv', id, n, ep.episode_number)));
+          if (allDone) eps.forEach(ep => progForget(progKey('tv', id, n, ep.episode_number)));
+          else eps.forEach(ep => progMarkWatched({ type: 'tv', id: id, season: n, episode: ep.episode_number,
+                                                   title: title, poster_path: d.poster_path, d: 60 * (ep.runtime || 0), quiet: true }));
+          toast('Season ' + n + (allDone ? ' marked unwatched' : ' marked watched'));
+          paintEps(n, s);
+          if (IS_TV) tvFocusEl(smBtn);
         };
         const markPill = (n) => {
           if (!pills) return;
@@ -3465,6 +3671,72 @@
         <span class="epx-t">${esc(ep.name || '')}</span>
       </button>`;
     }).join('');
+  }
+
+  /* ---- Export / import ----------------------------------------------------------
+     A backup that is yours, and a way into a fresh install without an account. */
+  function exportBlob() {
+    return { app: 'reeldeck', v: 1, at: now(), theme: cfg.theme,
+             watch: getWatch(), prog: progAll(), hist: histAll() };
+  }
+  async function exportData() {
+    const text = JSON.stringify(exportBlob());
+    const name = 'reeldeck-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    // A file where a file can be saved. The APK and the desktop app both refuse
+    // downloads outright (the same setting that stops a mirror dropping an installer),
+    // so there the text goes to the clipboard and a note or a message is the file.
+    if (!IS_NATIVE && !IS_DESKTOP) {
+      try {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => { try { URL.revokeObjectURL(a.href); } catch (e) {} }, 4000);
+        toast('Saved ' + name);
+        return;
+      } catch (e) { /* fall through to the clipboard */ }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Copied to the clipboard \u2014 paste it into a note or a file to keep it');
+    } catch (e) {
+      toast('Could not copy \u2014 the web app can save it as a file');
+    }
+  }
+  async function importFile(file) {
+    let obj = null;
+    try { obj = JSON.parse(await file.text()); } catch (e) {}
+    if (!obj || obj.app !== 'reeldeck') { toast('That is not a Reeldeck backup'); return; }
+    const n = importBlob(obj);
+    toast('Imported \u2014 ' + n.watch + ' saved, ' + n.hist + ' history, ' + n.prog + ' positions added');
+    syncFlush('import');
+    route();
+  }
+  /** Union with what is here. The newest stamp wins a conflict; nothing local goes. */
+  function importBlob(obj) {
+    const t = now();
+    // Same validation the sync path applies to a blob off the network: this file is
+    // just as untrusted.
+    const R = sanitize({ watch: obj.watch, prog: obj.prog, hist: obj.hist, tomb: {},
+                         clearedAt: { prog: 0, hist: 0 }, theme: { id: '', at: 0 } }, t + FUTURE_SLACK, t);
+    const wl = {};
+    getWatch().forEach(e => { wl['w:' + e.type + ':' + e.id] = e; });
+    let nw = 0;
+    R.watch.forEach(e => {
+      const k = 'w:' + e.type + ':' + e.id;
+      if (!wl[k]) nw++;
+      if (!wl[k] || (e.at || 0) > (wl[k].at || 0)) wl[k] = e;
+    });
+    setWatch(Object.keys(wl).map(k => wl[k]).sort((a, b) => (b.at || 0) - (a.at || 0)));
+    const p = progAll(); let np = 0;
+    for (const k in R.prog) { if (!p[k]) np++; p[k] = pickProg(p[k], R.prog[k]); }
+    progSave(p);
+    const hm = {};
+    histAll().forEach(r => { hm[r.k] = r; });
+    let nh = 0;
+    R.hist.forEach(r => { if (!hm[r.k]) nh++; hm[r.k] = pickHist(hm[r.k], r); });
+    histSave(Object.keys(hm).map(k => hm[k]).sort((a, b) => (b.at || 0) - (a.at || 0)));
+    return { watch: nw, prog: np, hist: nh };
   }
 
   /* ---------- Player ---------- */
@@ -3603,11 +3875,11 @@
       : null;
     const epNav = isTV ? `
       <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
-        ${prevHref ? `<button class="btn sm" data-nav="${prevHref}">\u2039 Prev</button>`
-                   : `<button class="btn sm" disabled>\u2039 Prev</button>`}
+        ${prevHref ? `<button class="btn sm" id="ep-prev" data-nav="${prevHref}">\u2039 Prev</button>`
+                   : `<button class="btn sm" id="ep-prev" disabled>\u2039 Prev</button>`}
         <span class="muted" style="font-weight:700">S${season} \u00b7 E${episode}${epCount ? ' of ' + epCount : ''}</span>
-        ${nextHref ? `<button class="btn sm" data-nav="${nextHref}">${hasNextEp ? 'Next \u203a' : 'Season ' + (season + 1) + ' \u203a'}</button>`
-                   : `<button class="btn sm" disabled>Next \u203a</button>`}
+        ${nextHref ? `<button class="btn sm" id="ep-next" data-nav="${nextHref}">${hasNextEp ? 'Next \u203a' : 'Season ' + (season + 1) + ' \u203a'}</button>`
+                   : `<button class="btn sm" id="ep-next" disabled>Next \u203a</button>`}
       </div>` : '';
 
     // Change episode without leaving the player. Same idea as the server room right
@@ -4286,6 +4558,7 @@
 
   /* ---------- Watchlist ---------- */
   function watchlistView() {
+    const my = routeSeq;
     const list = getWatch();
     let html = `<h1 class="page-title">Watchlist${list.length ? ` <span class="muted" style="font-size:16px">(${list.length})</span>` : ''}</h1>`;
     html += list.length
@@ -4295,6 +4568,11 @@
         </div>`;
     html += histSectionHTML();
     view().innerHTML = html;
+    // "New episode" on the series here. What the cache knows paints at once; the rest
+    // is fetched (cached six hours) and painted when it lands.
+    newEpPaint();
+    newEpScan(list.filter(i => i.type === 'tv').map(i => i.id))
+      .then(ch => { if (ch && routeIs(my)) newEpPaint(); });
     const hc = $('#hist-clear');
     // History and progress are one idea to a viewer, so Clear takes both -- leaving
     // progress bars behind with no history to explain them reads as a bug.
@@ -4442,11 +4720,15 @@ ${IS_TV ? '' : `
     if (st.on && st.uid) {
       // https only: this string goes straight into a src attribute. A broken or blocked
       // avatar falls back to the initial rather than leaving an empty circle.
+      const ini = (st.name || '').trim().charAt(0).toUpperCase();
       if (st.pic) {
         return '<img class="acct-pic" src="' + esc(st.pic) + '" alt="" referrerpolicy="no-referrer"' +
-               ' data-ini="' + esc((st.name || '?').charAt(0).toUpperCase()) + '">';
+               (ini ? ' data-ini="' + esc(ini) + '"' : '') + '>';
       }
-      return '<span class="acct-ini">' + esc((st.name || '?').charAt(0).toUpperCase()) + '</span>';
+      // No picture AND no name: a TV signed in by pairing code gets exactly that, because
+      // the pairing reply carries only the uid. There is no initial to show, and the "?"
+      // that used to stand in for it read as an error. The gear says what the button does.
+      if (ini) return '<span class="acct-ini">' + esc(ini) + '</span>';
     }
     return '<span class="acct-ini gear">' + ICON.gear + '</span>';
   }
@@ -4457,8 +4739,8 @@ ${IS_TV ? '' : `
     const t = e.target;
     if (!t || t.tagName !== 'IMG' || !t.classList.contains('acct-pic')) return;
     const sp = document.createElement('span');
-    sp.className = 'acct-ini';
-    sp.textContent = t.dataset.ini || '?';
+    if (t.dataset.ini) { sp.className = 'acct-ini'; sp.textContent = t.dataset.ini; }
+    else { sp.className = 'acct-ini gear'; sp.innerHTML = ICON.gear; }
     t.replaceWith(sp);
   }, true);
 
@@ -4650,6 +4932,16 @@ ${IS_TV ? '' : `
           <p class="hint">Pick a look — applies instantly.</p>
           <div class="theme-grid" id="set-themes">${themeCards}</div>
         </div>
+        ${IS_TV ? '' : `<div class="set-group">
+          <h4>Your data</h4>
+          <p class="hint">Watchlist, history and resume points. Import merges with what is here \u2014 nothing is removed.</p>
+          <div class="set-row">
+            <button class="btn sm" id="set-export">${ICON.download} Export</button>
+            <button class="btn sm" id="set-import">Import\u2026</button>
+            ${IS_WINDOWED ? `<button class="btn sm" id="set-keys">Keyboard shortcuts</button>` : ''}
+            <input type="file" id="set-import-file" accept=".json,application/json" hidden>
+          </div>
+        </div>`}
         <div class="set-group">
           <button class="btn sm" id="set-getapp" style="width:100%;justify-content:center">${ICON.tv} Install on TV / other devices</button>
         </div>
@@ -4681,6 +4973,15 @@ ${IS_TV ? '' : `
     renderUpdBox();
     const ga = $('#set-getapp', back);
     if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
+    const ex = $('#set-export', back);
+    if (ex) ex.onclick = exportData;
+    const imB = $('#set-import', back), imF = $('#set-import-file', back);
+    if (imB && imF) {
+      imB.onclick = () => imF.click();
+      imF.onchange = () => { const f = imF.files && imF.files[0]; if (f) { closeModal(back); importFile(f); } };
+    }
+    const kb = $('#set-keys', back);
+    if (kb) kb.onclick = () => { closeModal(back); openShortcuts(); };
     $('#set-reset', back).onclick = () => { if (confirm('Reset settings to defaults?\n\nThis also removes any mirrors you added and restores the built-in list. Your watchlist and history are kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); const rst = syncState(); rst.themeAt = now(); saveSyncState(rst); syncFlush('reset'); closeModal(back); route(); toast('Settings reset'); } };
   }
 
@@ -4759,12 +5060,6 @@ ${IS_TV ? '' : `
     });
   }
 
-  function syncSearchBox(params, parts) {
-    const inp = $('#search-input');
-    if (!inp) return;
-    if (parts[0] === 'search' || (parts[0] === 'movies' && params.q) || (parts[0] === 'tv' && params.q)) inp.value = params.q || '';
-  }
-
   function route() {
     routeSeq++;
     // Pointer mode was only ever cleared by exitCinema, so closing a trailer modal (or
@@ -4786,7 +5081,6 @@ ${IS_TV ? '' : `
     nativeSetPlayer(false);      // every view starts with no player; watchView re-arms it
     const { parts, params } = parseHash();
     authStop();                  // abandon any sign-in / pairing poll from the last view
-    closeSuggest();
     clearHero();                 // stop billboard rotation when leaving Home
     // Nothing from the previous screen may outlive it. An open modal would otherwise
     // stay mounted over the new page (browser Back on a playing trailer), and the
@@ -4811,7 +5105,6 @@ ${IS_TV ? '' : `
     if (IS_TV) tvFocusFirst(true, sameSection);  // re-establish focus once the new view has rendered
     const sec = parts[0] || 'home';
     setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? 'search' : 'home');
-    syncSearchBox(params, parts);
 
     if (!parts.length) return homeView();
     switch (parts[0]) {
@@ -4881,34 +5174,6 @@ ${IS_TV ? '' : `
     applyTheme();
   }
 
-  // Sequence guard: the debounce only delays requests, it does not order responses, so
-  // a slow "du" could repaint over a fast "dune" — and a response landing after Enter,
-  // Escape or a navigation would re-open a dropdown the user had already dismissed.
-  let suggestSeq = 0;
-  const liveSuggest = debounce(async (q) => {
-    const mine = ++suggestSeq;
-    if (!q || q.length < 2) return closeSuggest();
-    try {
-      const d = await tmdb('/search/multi', { query: q, page: 1, include_adult: 'false' });
-      const inp = $('#search-input');
-      if (mine !== suggestSeq || !inp || inp.value.trim() !== q) return;
-      const items = (d.results || []).filter(x => x.media_type !== 'person' && (x.poster_path || x.profile_path)).slice(0, 6);
-      const box = $('#suggest');
-      if (!items.length) return closeSuggest();
-      box.innerHTML = items.map(it => {
-        const t = it.title || it.name; const ty = it.media_type;
-        return `<div class="row" data-nav="#/${ty}/${it.id}" tabindex="0" role="option" aria-label="${esc(t)}">
-          <img src="${img(it.poster_path, 'w92')}" alt="" onerror="this.src='${PLACEHOLDER}'">
-          <div style="min-width:0"><div class="t">${esc(t)}</div>
-            <div class="s">${year(it.release_date || it.first_air_date) || ''} · ${ty === 'tv' ? 'TV' : 'Movie'}</div></div>
-          <span class="badge rate" style="position:static;background:var(--surface-2)">${ICON.star} ${it.vote_average ? it.vote_average.toFixed(1) : '—'}</span>
-        </div>`;
-      }).join('');
-      box.style.display = 'block';
-    } catch (e) { closeSuggest(); }
-  }, 260);
-  function closeSuggest() { suggestSeq++; const b = $('#suggest'); if (b) { b.style.display = 'none'; b.innerHTML = ''; } }
-
   // Global click delegation
   document.addEventListener('click', (e) => {
     const wl = e.target.closest('[data-wl]');
@@ -4959,6 +5224,40 @@ ${IS_TV ? '' : `
     // A resume rail that can only grow is one you stop trusting: a title you abandoned
     // sits at the front for good. Handled BEFORE [data-nav], because the control lives
     // inside a card that navigates.
+    // Mark watched / unwatched. A button INSIDE a [data-nav] row on the show page, so it
+    // must stop the row's own click from also opening the player.
+    const mk = e.target.closest('[data-mark]');
+    if (mk) {
+      e.preventDefault(); e.stopPropagation();
+      const parts = mk.dataset.mark.split(':');
+      const mt = parts[0], mid = parts[1], ms = parts[2] ? +parts[2] : null, me = parts[3] ? +parts[3] : null;
+      const wasDone = progDone(progGet(mt, mid, ms, me));
+      if (wasDone) progForget(progKey(mt, mid, ms, me));
+      else progMarkWatched({ type: mt, id: mid, season: ms, episode: me, title: mk.dataset.title || '',
+                             poster_path: mk.dataset.poster || '', d: +(mk.dataset.d || 0) });
+      toast(wasDone ? 'Marked unwatched' : 'Marked watched');
+      const done = !wasDone;
+      mk.setAttribute('aria-pressed', String(done));
+      mk.title = done ? 'Mark unwatched' : 'Mark watched';
+      mk.setAttribute('aria-label', mk.title);
+      if (mk.classList.contains('btn')) mk.innerHTML = done ? ICON.check + ' Watched' : 'Mark watched';
+      // Repaint the row in place rather than rebuilding the page under the user.
+      const row = mk.closest('.ep');
+      if (row) {
+        row.classList.toggle('watched', done);
+        const thumb = row.querySelector('.ep-thumb'), tick = row.querySelector('.ep-tick');
+        if (done && !tick && thumb) thumb.insertAdjacentHTML('beforeend', `<span class="ep-tick" aria-hidden="true">${ICON.check}</span>`);
+        if (!done && tick) tick.remove();
+        const list = document.getElementById('ep-list'), sm = document.getElementById('season-mark');
+        if (list && sm && sm.dataset.n) {
+          const all = list.querySelectorAll('.ep').length, seen = list.querySelectorAll('.ep.watched').length;
+          const whole = all > 0 && seen === all;
+          sm.textContent = whole ? 'Unmark season ' + sm.dataset.n : 'Mark season ' + sm.dataset.n + ' watched';
+          sm.setAttribute('aria-pressed', String(whole));
+        }
+      }
+      return;
+    }
     const uw = e.target.closest('[data-unwatch]');
     if (uw) {
       e.preventDefault(); e.stopPropagation();
@@ -4986,8 +5285,6 @@ ${IS_TV ? '' : `
     }
     const nav = e.target.closest('[data-nav]');
     if (nav) { e.preventDefault(); go(nav.dataset.nav); return; }
-    // click outside search closes suggestions
-    if (!e.target.closest('.search-wrap')) closeSuggest();
   });
 
   // Keyboard / D-pad OK: activate any focused [data-nav] element (cards, cast,
@@ -5392,9 +5689,7 @@ ${IS_TV ? '' : `
     [].slice.call(scope.querySelectorAll(TV_FOCUSABLE)).forEach(el => {
       const r = tvMeasure(el);
       if (!r) return;
-      // `.suggest` lives inside the header but drops down over the page, so it is
-      // content, not chrome: it keeps its own rows.
-      const pinned = !inModal && !!el.closest(TV_PINNED) && !el.closest('.suggest');
+      const pinned = !inModal && !!el.closest(TV_PINNED);
       // A carousel scrolls under the cached x, so remember which one this item is in
       // and what its scrollLeft was; tvColOf() corrects for the difference later.
       const sc = el.closest(TV_ROW_CONTAINERS);
@@ -5548,7 +5843,7 @@ ${IS_TV ? '' : `
   // Where the ring was, in the same document space the row model uses.
   function tvRemember(el) {
     const r = el.getBoundingClientRect();
-    const pinned = !!el.closest('header.top') && !el.closest('.suggest');
+    const pinned = !!el.closest('header.top');
     tvLastPos = { x: r.left + r.width / 2, cy: r.top + (pinned ? 0 : (window.scrollY || 0)) + r.height / 2 };
   }
 
@@ -5649,6 +5944,45 @@ ${IS_TV ? '' : `
     tvGiveUp = setTimeout(stop, 15000);
   }
 
+  /* ---- Keyboard shortcuts --------------------------------------------------------
+     Desktop and web only; a remote has none of these keys. The list is reachable with
+     "?" and from Settings, so it is discoverable without being announced. */
+  function openShortcuts() {
+    if (document.querySelector('.modal-back')) return;
+    const row = (k, what) => `<div class="kb-row"><kbd>${k}</kbd><span>${what}</span></div>`;
+    const back = document.createElement('div');
+    back.className = 'modal-back';
+    back.innerHTML = `<div class="modal">
+      <div class="mh"><h3>Keyboard shortcuts</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
+      <div class="mb kb-list">
+        ${row('/', 'Search')}
+        ${row('F', 'Fullscreen while watching')}
+        ${IS_WINDOWED ? row('T', 'Theater mode while watching') : ''}
+        ${row('N', 'Next episode')}
+        ${row('P', 'Previous episode')}
+        ${row('Esc', 'Leave the player, or close a dialog')}
+        ${row('?', 'This list')}
+      </div>
+    </div>`;
+    modalMount(back);
+  }
+  document.addEventListener('keydown', (e) => {
+    if (IS_TV || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+    if (document.getElementById('splash')) return;
+    if (e.key === '?') { e.preventDefault(); openShortcuts(); return; }
+    if (document.querySelector('.modal-back')) return;
+    const k = (e.key || '').toLowerCase();
+    const watching = !!document.querySelector('.player-frame');
+    if (k === 'f' && watching) { e.preventDefault(); toggleCinema(true); }
+    else if (k === 't' && watching && IS_WINDOWED) { e.preventDefault(); toggleCinema(false); }
+    else if (k === 'n' || k === 'p') {
+      const b = document.getElementById(k === 'n' ? 'ep-next' : 'ep-prev');
+      if (b && !b.disabled) { e.preventDefault(); b.click(); }
+    }
+  });
+
   // Type "/" anywhere to jump to search. Registered here, at module scope, NOT inside
   // the IS_TV block below -- that block has silently swallowed a listener twice in this
   // file, and a shortcut for a physical keyboard is meaningless on the one platform it
@@ -5736,19 +6070,6 @@ ${IS_TV ? '' : `
     if (target) tvFocusEl(target.el);
   }
 
-  // '/' jumps to search, the way every content app on a desktop does. Never on TV
-  // (no keyboard there, and the key is itself a D-pad target) and never while the
-  // caret is already sitting in a field.
-  document.addEventListener('keydown', (e) => {
-    if (IS_TV || e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
-    const t = e.target;
-    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
-    const inp = $('#search-input');
-    if (!inp) return;
-    e.preventDefault();
-    try { inp.focus(); inp.select(); } catch (e2) {}
-  });
-
   // Runtime is filled in for the card being LOOKED at, on whichever device.
   // Registered OUTSIDE the IS_TV block below: a listener placed inside it only ever
   // registers on TV, where a mouseover cannot happen at all. Second time this exact
@@ -5778,7 +6099,6 @@ ${IS_TV ? '' : `
     const hdr = document.querySelector('header.top');
     if (!hdr) return true;
     if (hdr.contains(document.activeElement)) return true;
-    if (hdr.querySelector('.suggest')) return true;
     try { if (hdr.matches(':hover')) return true; } catch (e) {}
     const a = document.activeElement;
     if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return true;

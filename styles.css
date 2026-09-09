@@ -82,6 +82,14 @@
   --chrome-bg: rgba(0, 0, 0, .72); --ghost-bg: rgba(255, 255, 255, .06);
   --shadow: 0 12px 40px rgba(0, 0, 0, .65);
 }
+/* Midnight's palette on true black: on an OLED the background pixels are simply off. */
+:root[data-theme="oled"] {
+  --bg: #000000; --bg-2: #07080b; --bg-3: #10131a;
+  --surface: #0c0e14; --surface-2: #151922; --border: #1f2430;
+  --glow: #0a0c12; --scrollbar: #20252f; --sk-hi: #161a22;
+  --chrome-bg: rgba(0, 0, 0, .74);
+  --shadow: 0 12px 40px rgba(0, 0, 0, .7);
+}
 :root[data-theme="aurora"] {
   --bg: #0f0a1a; --bg-2: #160f24; --bg-3: #1e1533;
   --surface: #1a1230; --surface-2: #251a42; --border: #34274f;
@@ -1712,15 +1720,39 @@ body:not(.tv) nav.main a.active::after {
    that content is being cut rather than continuing. Fading the trailing edge says
    "there is more" without an arrow. Pointer devices only — on TV the ring must stay
    at full contrast wherever it lands. */
+/* On the SCROLLER, not the wrapper: the wrapper also holds the arrow buttons, which
+   were being washed out by their own rail's fade. A FIXED band, not a percentage: 8% of
+   a wide screen was well over an inch, and whichever poster sat there was half dimmed
+   with nothing beyond it to explain why. 56px is a hint at the edge, not a vignette.
+   The band sits on whichever side has more to show and on neither when nothing does. */
 @media (hover: hover) {
-  body:not(.tv) .rail-wrap {
-    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 92%, transparent 100%);
-    mask-image: linear-gradient(90deg, #000 0, #000 92%, transparent 100%);
+  body:not(.tv) .rail-wrap > .track,
+  body:not(.tv) .rail-wrap > .ep-strip,
+  body:not(.tv) .rail-wrap > .season-pills {
+    --fade: 56px;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
   }
-  /* The fade says "there is more this way". With the last card already fully on screen
-     it says nothing and just dims the artwork, which read as the row being cut off. */
-  body:not(.tv) .rail-wrap.at-end,
-  body:not(.tv) .rail-wrap.no-scroll {
+  body:not(.tv) .rail-wrap.at-start > .track,
+  body:not(.tv) .rail-wrap.at-start > .ep-strip,
+  body:not(.tv) .rail-wrap.at-start > .season-pills {
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+  }
+  body:not(.tv) .rail-wrap.at-end > .track,
+  body:not(.tv) .rail-wrap.at-end > .ep-strip,
+  body:not(.tv) .rail-wrap.at-end > .season-pills {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 100%);
+  }
+  /* The fade says "there is more this way". With everything already on screen it says
+     nothing and just dims the artwork, which read as the row being cut off. */
+  body:not(.tv) .rail-wrap.no-scroll > .track,
+  body:not(.tv) .rail-wrap.no-scroll > .ep-strip,
+  body:not(.tv) .rail-wrap.no-scroll > .season-pills,
+  body:not(.tv) .rail-wrap.at-start.at-end > .track,
+  body:not(.tv) .rail-wrap.at-start.at-end > .ep-strip,
+  body:not(.tv) .rail-wrap.at-start.at-end > .season-pills {
     -webkit-mask-image: none; mask-image: none;
   }
 }
@@ -2384,3 +2416,44 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
 .ga-ios li { font-size: 14px; line-height: 1.75; }
 .ga-ios b { color: var(--text); font-weight: 700; }
 
+/* ---------- Marks, badges, recents, shortcuts ---------- */
+/* "New episode" on a series card: bottom-left, above the progress bar, clear of the
+   rating (top-left), the type badge (top-right) and the bookmark. */
+.card .poster .newep {
+  position: absolute; left: 8px; bottom: 10px; z-index: 3;
+  padding: 3px 8px; border-radius: 99px;
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 10px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+  box-shadow: 0 2px 8px rgba(0,0,0,.45); pointer-events: none;
+}
+.pill.next-ep { color: var(--accent); }
+.pill.next-ep svg { width: 14px; height: 14px; }
+.season-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.season-head h3 { margin: 0; }
+/* Per-episode mark. Sits over the row's top-right corner; shown on hover or focus so
+   the list stays quiet, and always shown where there is no hover to wait for. */
+.ep { position: relative; }
+.ep-mark {
+  position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  display: grid; place-items: center; cursor: pointer; padding: 0;
+  opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+}
+.ep-mark svg { width: 15px; height: 15px; }
+.ep:hover .ep-mark, .ep:focus-within .ep-mark, .ep-mark[aria-pressed="true"] { opacity: 1; }
+.ep-mark:hover { color: var(--text); border-color: var(--muted); }
+.ep-mark[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+@media (hover: none) { .ep-mark { opacity: 1; } }
+/* Recent searches */
+.recent-q { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 18px; }
+.recent-q .lbl { color: var(--muted); font-size: 13px; font-weight: 700; margin-right: 4px; }
+.chip.ghost { background: none; }
+/* Settings rows + the shortcut list */
+.set-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.kb-list { display: grid; gap: 12px; }
+.kb-row { display: flex; align-items: center; gap: 14px; font-size: 14px; }
+.kb-row kbd {
+  font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 6px 9px; border-radius: 7px; background: var(--bg-3); border: 1px solid var(--border);
+  color: var(--text); min-width: 36px; text-align: center;
+}
