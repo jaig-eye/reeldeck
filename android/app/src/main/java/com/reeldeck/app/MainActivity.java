@@ -352,7 +352,7 @@ public class MainActivity extends BridgeActivity {
      * download on a slow connection is indistinguishable from a hang.
      */
     private void downloadAndInstall(final String url) {
-        if (downloading) return;
+        if (downloading) { toWeb("upd:busy"); return; }   // the web layer keeps its progress view
         if (url == null || !url.startsWith("https://")) { toWeb("upd:err:Bad update URL."); return; }
         // On O+ the install intent is refused outright unless the user has granted
         // this app the right to install. Ask FIRST — failing after the download

@@ -858,19 +858,21 @@ body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34p
    shape and colour as the focus ring, so on a TV the episode you were watching and the
    episode you were pointing at looked alike. Rings mean "selected" everywhere in this
    UI; state is a fill or a badge. */
-.epx.on .epx-thumb img { opacity: .55; }
+.epx.on .epx-thumb img { opacity: .72; }
 .epx.on .epx-t { color: var(--text); }
+/* Quiet: a small dark pill with accent text in the corner. The solid accent block it
+   replaced was legible from across the room but took over the whole thumbnail. */
 .epx-now {
-  position: absolute; left: 8px; bottom: 8px; z-index: 3;
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 8px; border-radius: 99px;
-  background: var(--accent); color: var(--accent-ink);
-  font-size: 10.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
-  box-shadow: 0 2px 8px rgba(0,0,0,.45);
+  position: absolute; left: 6px; bottom: 6px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px 2px 5px; border-radius: 99px;
+  background: rgba(8,10,14,.78); color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  font-size: 9.5px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase;
 }
-.epx-now svg { width: 11px; height: 11px; }
-body.tv .epx-now { left: 10px; bottom: 10px; padding: 5px 11px; font-size: 13px; }
-body.tv .epx-now svg { width: 13px; height: 13px; }
+.epx-now svg { width: 9px; height: 9px; }
+body.tv .epx-now { left: 8px; bottom: 8px; padding: 3px 9px 3px 7px; font-size: 11px; }
+body.tv .epx-now svg { width: 11px; height: 11px; }
 @media (hover: hover) { .epx:hover .epx-t { color: var(--accent); } }
 
 body.tv .ep-strip { scroll-behavior: auto; gap: clamp(12px, 1.6vw, 20px); }
@@ -1330,6 +1332,7 @@ body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { s
 .upd-box { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .upd-box .upd-t { margin: 0; font-size: 13.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
 .upd-box .upd-warn { color: var(--accent); }
+.upd-box .upd-sub { font-size: 12.5px; opacity: .85; }
 .upd-box .ub-bar { width: 100%; height: 6px; border-radius: 99px; background: var(--surface); overflow: hidden; }
 .upd-box .ub-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); transition: width .25s ease; }
 .upd-box .ub-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: ub-spin .7s linear infinite; flex: none; }
@@ -1371,11 +1374,26 @@ body.tv .card .poster .card-hover { display: flex; opacity: 0; pointer-events: n
    Those tiles already show focus by lighting their numeral. */
 body.tv .card:not(.rank-item):focus .poster .card-hover,
 body.tv .card:not(.rank-item).tv-focus .poster .card-hover { opacity: 1; }
-/* Row-mates step back so the selection is the only bright thing on the row. Only the
-   ARTWORK dims — dimming the whole card took the captions to 3.7:1 and the years to
-   2.3:1, i.e. unreadable, while they are still meant to be scannable. */
-body.tv .track.tv-row-active .card:not(.tv-focus) .poster { opacity: .45; }
+/* Row-mates step back so the selection is the only bright thing on the row.
+
+   ONE overlay per rail, not twenty opacity changes. Dimming each row-mate's poster
+   meant every vertical move re-rastered two full rows of artwork (the row being left
+   and the row being entered) in the same frames the page was scrolling -- which is the
+   choppiness carousel-to-carousel. This overlay sits on its own compositor layer
+   (will-change), so switching it on is an opacity change the compositor applies and
+   nothing is repainted. The focused card is already positioned at z-index 6 and paints
+   above it; every other card has no z-index and paints below. */
+body.tv .rail-wrap::after {
+  content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  background: var(--bg); opacity: 0; will-change: opacity; transition: opacity .12s ease;
+}
+body.tv .rail.tv-row-active .rail-wrap::after { opacity: .55; }
 body.tv .cast-track.tv-row-active .person:not(.tv-focus) img { opacity: .45; }
+/* No soft shadow under every poster on TV. 150 posters each carrying a 20px-blur
+   box-shadow is a soft-shadow raster for every card a scroll reveals, and from three
+   metres on a dark theme the shadow does not read anyway. The FOCUSED poster keeps its
+   ring and drop shadow -- that rule comes later and is more specific. */
+body.tv .card .poster { box-shadow: none; }
 body.tv .mirror, body.tv .chip, body.tv .ep, body.tv .person { transition: transform .16s ease; }
 /* The Top 10 numeral lights up with its poster. */
 body.tv .rank-item:focus .rank-num, body.tv .rank-item.tv-focus .rank-num { color: var(--accent); }

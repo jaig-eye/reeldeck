@@ -379,7 +379,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.32';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.33';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -3459,7 +3459,7 @@
           <img loading="lazy" decoding="async" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
           ${pct ? `<span class="ep-fill" style="width:${pct}%"></span>` : ''}
           ${done ? `<span class="ep-tick">${ICON.check}</span>` : ''}
-          ${cur ? `<span class="epx-now">${ICON.play} Now playing</span>` : ''}
+          ${cur ? `<span class="epx-now">${ICON.play} Playing</span>` : ''}
         </span>
         <span class="epx-n">E${ep.episode_number}</span>
         <span class="epx-t">${esc(ep.name || '')}</span>
@@ -4028,8 +4028,16 @@
         }
         if (d.indexOf('upd:') === 0) {
           const rest = d.slice(4);
-          if (rest.indexOf('err:') === 0) return updSet('error', { msg: rest.slice(4) });
+          if (rest.indexOf('err:') === 0) {
+            updSet('error', { msg: rest.slice(4) });
+            // Settings may have been closed while the download ran ("Keep browsing").
+            // A failed DOWNLOAD still has to reach the user -- the installer is on
+            // screen for 'done', so only the failure needs a voice.
+            if (!document.getElementById('set-upd')) toast(rest.slice(4));
+            return;
+          }
           if (rest === 'done') return updSet('done');
+          if (rest === 'busy') return;             // already downloading; the view already says so
           const pct = parseInt(rest, 10);
           if (!isNaN(pct)) updSet('downloading', { pct: pct });
           return;
@@ -4491,11 +4499,8 @@ ${IS_TV ? '' : `
         <div class="am-who"><span class="acct-av">${acctFaceHTML()}</span>
           <span><b>${esc(label)}</b><small>${esc(sub2)}</small></span></div>
         <button class="am-item" data-am="sync" role="menuitem">${signedIn ? ICON.devices + ' Devices' : ICON.user + ' Sign in'}</button>
-        <button class="am-item" data-am="settings" role="menuitem">${ICON.gear} Settings</button>
-        <button class="am-item${updState.s === 'available' || updState.s === 'ready' ? ' has-dot' : ''}" data-am="update" role="menuitem">${ICON.download} ${
-          updState.s === 'ready' ? 'Install update' + (updState.v ? ' \u00b7 v' + esc(updState.v) : '')
-          : updState.s === 'available' ? 'Update available' + (updState.v ? ' \u00b7 v' + esc(updState.v) : '')
-          : 'Check for updates'}</button>
+        <button class="am-item${updState.s === 'available' || updState.s === 'ready' ? ' has-dot' : ''}" data-am="settings" role="menuitem">${ICON.gear} Settings${
+          updState.s === 'ready' ? ' \u00b7 update ready' : updState.s === 'available' ? ' \u00b7 update available' : ''}</button>
         <button class="am-item" data-am="getapp" role="menuitem">${ICON.tv} Install on TV</button>
         <button class="am-item" data-am="watchlist" role="menuitem">${ICON.bookmark} Watchlist</button>
         <button class="am-item" data-am="reload" role="menuitem">${ICON.sync} Reload app</button>`;
@@ -4515,12 +4520,6 @@ ${IS_TV ? '' : `
         const what = it.dataset.am; closeAcct();
         if (what === 'sync') go('#/sync');
         else if (what === 'settings') openSettings();
-        // Something is already waiting: open the place that can act on it rather than
-        // starting a check whose answer we are already holding.
-        else if (what === 'update') {
-          if (updState.s === 'available' || updState.s === 'ready') openSettings();
-          else checkForUpdate(true);
-        }
         else if (what === 'getapp') go('#/get-app');
         else if (what === 'watchlist') go('#/watchlist');
         // The APK and the desktop app have no address bar and no pull-to-refresh, so a
@@ -5101,7 +5100,7 @@ ${IS_TV ? '' : `
     const on = updState.s === 'available' || updState.s === 'ready';
     const b = document.getElementById('acct-btn');
     if (b) b.classList.toggle('has-dot', on);
-    const item = document.querySelector('#acct-menu [data-am="update"]');
+    const item = document.querySelector('#acct-menu [data-am="settings"]');
     if (item) item.classList.toggle('has-dot', on);
   }
 
@@ -5118,7 +5117,7 @@ ${IS_TV ? '' : `
     updBadge();
     // One line, once, and then it is in the menu waiting. Restarting the app is the
     // user's call and there is no hurry.
-    toast('Update ' + (version ? 'v' + version + ' ' : '') + 'ready · Account → Install update');
+    toast('Update ' + (version ? 'v' + version + ' ' : '') + 'ready · Settings → Restart & update');
   }
   // The banner ANNOUNCES; Settings is where you act. On a TV the banner is pinned
   // chrome that lands wherever the row model puts it, so hunting for its button with
@@ -5157,8 +5156,15 @@ ${IS_TV ? '' : `
     if (st.s === 'checking') {
       html = '<p class="upd-t"><span class="ub-spin"></span>Checking for updates…</p>';
     } else if (st.s === 'downloading') {
+      // A button, ALWAYS. This state used to have none, so pressing Download & install
+      // removed the only target under the ring and the remote went dead for the length
+      // of the download -- on a TV that reads as the app freezing, and the user's fix
+      // was Back, find the button again, press it again. The download had been running
+      // the whole time and the installer opens by itself when it lands, so say so.
       html = '<p class="upd-t">Downloading update… ' + st.pct + '%</p>' +
-             '<div class="ub-bar"><i style="width:' + st.pct + '%"></i></div>';
+             '<div class="ub-bar"><i style="width:' + st.pct + '%"></i></div>' +
+             '<p class="upd-t upd-sub">The installer opens on its own when this finishes — you can keep browsing meanwhile.</p>' +
+             '<button class="btn sm" id="upd-hide">Keep browsing</button>';
     } else if (st.s === 'ready') {
       html = '<p class="upd-t">Update ready.</p><button class="btn sm primary" id="upd-go">Restart &amp; update</button>';
     } else if (st.s === 'done') {
@@ -5192,6 +5198,8 @@ ${IS_TV ? '' : `
     const rl = box.querySelector('#upd-rel');
     if (rl) rl.onclick = () => openExternal('https://github.com/' + REPO + '/releases/latest');
     const g = box.querySelector('#upd-go');    if (g) g.onclick = updInstall;
+    const h = box.querySelector('#upd-hide');
+    if (h) h.onclick = () => { const m = box.closest('.modal-back'); if (m) closeModal(m); };
     if (IS_TV) tvInvalidate();
     // The button we were standing on has just been replaced. Put the ring on its
     // successor, or focus falls back to <body> and the remote goes dead mid-update.
@@ -5211,6 +5219,7 @@ ${IS_TV ? '' : `
       const m = document.querySelector('.modal-back'); if (m) closeModal(m);
       go('#/get-app'); return;
     }
+    if (updState.s === 'downloading') return;   // one download at a time; native drops repeats anyway
     updSet('downloading', { pct: 0 });
     nativeSend('update:' + APK_URL);
   }
