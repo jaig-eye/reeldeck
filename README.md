@@ -60,9 +60,9 @@ third-party player URL inside an `<iframe>`, and the player screen is a **"Serve
 list of mirrors you switch between. Those third-party providers are where the ads — and the
 copyright/legal risk — actually live. That part is on whatever mirror you choose, not on this app.
 
-The same **14 mirrors** the source site uses (MIRROR, MIRROR, MIRROR, MIRROR, MIRROR/SU,
-MIRROR, MIRROR, MIRROR, MIRROR, MIRROR, MIRROR, MIRROR, MIRROR) ship pre-filled and are
-fully **editable / removable** in **Settings → Playback sources**. No single mirror carries every
+**14 mirrors** are pre-filled — fetched from the app's own Worker on first run rather than
+compiled into the client — and are fully **editable / removable** in **Settings → Playback
+sources**. No single mirror carries every
 title — if one is black or errors, click another (exactly what the source's "switch mirrors" note
 means). Note: many of these providers refuse to embed on unknown origins, so a given mirror may
 render blank until the app is served from a domain they allow.
@@ -253,7 +253,7 @@ The bottom tab bar, notch/safe-area insets, standalone display and app icon are 
 The video plays inside the provider's **cross-origin `<iframe>`**, which this app doesn't own — so it
 can't grab the stream URL to cast it directly (that would be stream-ripping). Two things that DO work:
 
-1. **The provider's own cast/AirPlay button.** Several of these players (MIRROR, MIRROR, …) have
+1. **The provider's own cast/AirPlay button.** Several of these players have
    Chromecast/AirPlay built into their controls. The player iframe is now granted `picture-in-picture`,
    `fullscreen` and `airplay` permissions so those buttons function — just tap the player's own cast icon.
 2. **OS screen mirroring** — universal, works for every mirror:
