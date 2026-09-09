@@ -321,7 +321,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.29';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.30';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -2614,12 +2614,12 @@
       return `<div class="card" data-nav="${href}" tabindex="0" role="button"
                    aria-label="${esc(r.title || 'title')}, ${sub}${more}, watched ${relTime(r.at)}">
         <div class="poster">
-          <img loading="lazy" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+          <img loading="lazy" decoding="async" src="${img(r.poster_path, 'w342')}" alt="" onerror="this.src='${PLACEHOLDER}'">
           ${pct > 1 ? `<span class="card-prog"><i style="width:${pct}%"></i></span>` : ''}
         </div>
         <div class="cap"><div class="t">${esc(r.title || 'Untitled')}</div><div class="y">${sub}${more} · ${relTime(r.at)}</div></div>
-        <button class="cw-x" data-unwatch="${esc(r.k)}" data-unwatch-group="${esc(r.g)}" tabindex="${IS_TV ? '0' : '-1'}"
-                aria-label="Remove ${esc(r.title || 'this title')} from Recently watched">${ICON.x}</button>
+        ${IS_TV ? '' : `<button class="cw-x" data-unwatch="${esc(r.k)}" data-unwatch-group="${esc(r.g)}" tabindex="-1"
+                aria-label="Remove ${esc(r.title || 'this title')} from Recently watched">${ICON.x}</button>`}
       </div>`;
     }).join('');
     return `<section class="rail">
@@ -2645,7 +2645,7 @@
       const pr = progGet(r.type, r.id, r.s, r.e);
       return `<div class="hist-row" data-nav="${href}" tabindex="0" role="button"
                    aria-label="${esc(r.title || 'title')}, ${sub}, watched ${relTime(r.at)}">
-        <img class="hist-poster" loading="lazy" src="${img(r.poster_path, 'w154')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+        <img class="hist-poster" loading="lazy" decoding="async" src="${img(r.poster_path, 'w154')}" alt="" onerror="this.src='${PLACEHOLDER}'">
         <div style="min-width:0;flex:1">
           <div class="hist-t">${esc(r.title || 'Untitled')}</div>
           <div class="hist-s">${sub} \u00b7 ${relTime(r.at)}</div>
@@ -2696,7 +2696,7 @@
           return `<div class="rank-item card" data-nav="#/${type}/${it.id}" tabindex="0" role="button" aria-label="Number ${i + 1}, ${esc(it.title || it.name)}">
             <span class="rank-num" aria-hidden="true">${rankNum(i + 1)}</span>
             <div class="poster">
-              <img loading="lazy" src="${img(it.poster_path, 'w342')}" onerror="this.src='${PLACEHOLDER}'" alt="${esc(it.title || it.name)}">
+              <img loading="lazy" decoding="async" src="${img(it.poster_path, 'w342')}" onerror="this.src='${PLACEHOLDER}'" alt="${esc(it.title || it.name)}">
               <div class="card-hover"><button class="ch-play" data-nav="${watchHref(type, it.id)}" tabindex="-1" aria-hidden="true">${ICON.play}</button></div>
             </div>
           </div>`;
@@ -3184,7 +3184,7 @@
         <h3 class="dv-sub">Cast</h3>
         <div class="cast-track">
           ${cast.map(c => `<div class="person" data-nav="#/person/${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}${c.character ? ' as ' + esc(c.character) : ''}">
-            <img loading="lazy" src="${img(c.profile_path, 'w185')}" alt="" onerror="this.src='${PLACEHOLDER}'">
+            <img loading="lazy" decoding="async" src="${img(c.profile_path, 'w185')}" alt="" onerror="this.src='${PLACEHOLDER}'">
             <div class="n">${esc(c.name)}</div><div class="c">${esc(c.character || '')}</div>
           </div>`).join('')}
         </div>` : '';
@@ -3200,7 +3200,7 @@
           ${castBlock}
         </div>
         <aside class="dv-facts">
-          <img class="dv-poster" src="${img(d.poster_path, 'w500')}" alt="" loading="lazy" onerror="this.style.display='none'">
+          <img class="dv-poster" src="${img(d.poster_path, 'w500')}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">
           <dl>
             <dt>Rating</dt><dd class="dv-rate">${ICON.star}${d.vote_average ? d.vote_average.toFixed(1) : '\u2014'}${d.vote_count ? ` <span class="muted">(${d.vote_count.toLocaleString()})</span>` : ''}</dd>
             ${director ? `<dt>Director</dt><dd>${esc(director)}</dd>` : ''}
@@ -3262,7 +3262,7 @@
               <div class="ep${done ? ' watched' : ''}" data-nav="#/watch/tv/${id}?s=${n}&e=${ep.episode_number}" tabindex="0" role="button"
                    aria-label="${done ? 'Rewatch' : part ? 'Resume' : 'Play'} season ${n} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}">
                 <div class="ep-thumb">
-                  <img class="thumb" alt="" loading="lazy" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+                  <img class="thumb" alt="" loading="lazy" decoding="async" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
                   ${(pr && pr.pct > 0.01) ? `<span class="ep-fill" style="width:${Math.round(Math.min(1, pr.pct) * 100)}%"></span>` : ''}
                   ${done ? `<span class="ep-tick" aria-hidden="true">${ICON.check}</span>` : ''}
                 </div>
@@ -3354,7 +3354,7 @@
               aria-current="${cur}"
               aria-label="${cur ? 'Now playing: ' : ''}Season ${seasonNum} episode ${ep.episode_number}${ep.name ? ', ' + esc(ep.name) : ''}${done ? ', watched' : ''}">
         <span class="epx-thumb">
-          <img loading="lazy" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
+          <img loading="lazy" decoding="async" alt="" src="${img(ep.still_path, 'w300')}" onerror="this.src='${PLACEHOLDER}'">
           ${pct ? `<span class="ep-fill" style="width:${pct}%"></span>` : ''}
           ${done ? `<span class="ep-tick">${ICON.check}</span>` : ''}
           ${cur ? `<span class="epx-now">${ICON.play}</span>` : ''}
@@ -3562,9 +3562,9 @@
           ${epNav}
         </div>
         <div class="player-frame">${frameInner}${IS_TV && src ? `<div class="player-enter" id="player-enter">
-            <button class="pe-go" id="pe-focus" aria-label="Control the player with the remote">
-              <span class="pe-pill">${ICON.play} Control player</span>
-              <small>Full screen, and the remote drives the player's own buttons</small>
+            <button class="pe-go" id="pe-focus" aria-label="Open the player and hand the remote to it">
+              <span class="pe-pill">${ICON.play} Open player</span>
+              <small>Full screen, and the remote drives the player's own controls</small>
             </button>
           </div>` : ''}</div>
 
@@ -3752,6 +3752,24 @@
     return fsElement() || document.body;
   }
 
+  /**
+   * Re-assert the embed's focus.
+   *
+   * Entering fullscreen is asynchronous and moves focus: by the time the frame is
+   * actually fullscreen the browser has focused the fullscreen element (or nothing),
+   * so the iframe.focus() issued before the request has been undone. Nothing looks
+   * wrong until the first D-pad press, which finds no known element under the ring,
+   * falls back to the row model, and lands on the Pointer button -- the remote
+   * apparently "focusing the pointer instead" with no way into the embed.
+   */
+  function reassertPlayerFocus() {
+    if (!document.body.classList.contains('player-focused')) return;
+    const fr = document.getElementById('player-iframe');
+    if (!fr || document.activeElement === fr) return;
+    fr.setAttribute('tabindex', '0');
+    try { fr.focus({ preventScroll: true }); } catch (e) { try { fr.focus(); } catch (e2) {} }
+  }
+
   /** Move the live overlays to wherever they now need to be. Focus is preserved:
    *  re-parenting blurs, and on a remote a lost ring reads as a crash. */
   function rehomeOverlays() {
@@ -3765,6 +3783,8 @@
       try { keep.focus({ preventScroll: true }); } catch (e) {}
     }
     if (IS_TV) tvInvalidate();
+    // Fullscreen just changed, which is exactly when the embed's focus gets dropped.
+    reassertPlayerFocus();
   }
 
   let cinemaTimer, cinemaReveal;
@@ -5599,7 +5619,15 @@ ${IS_TV ? '' : `
     // Focus was lost (a re-render replaced the element under the ring). Spend this
     // press putting the ring back where the user left it rather than at the top of
     // the page — one 'wake up' press, no teleport.
-    if (ri < 0) { if (!tvRestoreFocus()) tvFocusFirst(); return; }
+    if (ri < 0) {
+      // ...unless the player still holds the remote. The iframe is deliberately absent
+      // from the row model, so focus lost to a fullscreen transition looked exactly like
+      // a stale ring, and this branch walked the user out of the embed onto the nearest
+      // button instead of back into the film.
+      if (document.body.classList.contains('player-focused')) { reassertPlayerFocus(); return; }
+      if (!tvRestoreFocus()) tvFocusFirst();
+      return;
+    }
 
     let target = null;
     if (dir === 'left' || dir === 'right') {

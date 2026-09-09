@@ -388,14 +388,34 @@ body::before {
 .ch-meta { color: rgba(255,255,255,.7); font-size: 11.5px; margin-top: 2px; }
 
 /* ---------- Top 10 rank rail ---------- */
-.rank-rail .track { grid-auto-columns: 248px; align-items: end; }
+.rank-rail .track { grid-auto-columns: 268px; align-items: end; }
 .rank-item { display: flex; align-items: flex-end; }
 /* Vector digits, not text. -webkit-text-stroke rendered on the font's own hinted
    outline, which aliased badly at this size; a filled path has exact edges. */
-.rank-num { display: flex; align-items: flex-end; flex: none; margin-right: -6px; color: var(--bg-3); transition: color .18s; }
-.rank-num svg { width: 104px; height: 104px; display: block; }
-/* 10 is two glyphs: overlap them so the pair reads as one numeral rather than two icons. */
-.rank-num svg + svg { margin-left: -34px; }
+/* The numeral is a PLINTH the poster stands on, not something buried behind it: its own
+   column, lapped only at its trailing edge, and bright enough to read as deliberate.
+   Faint grey digits half-hidden behind artwork just looked like a rendering fault. */
+.rank-num {
+  display: flex; align-items: flex-end; flex: none;
+  margin-right: -18px;
+  /* A filled dark numeral measured 1.25:1 against the page -- invisible, which is what
+     made it read as a smudge rather than a design. Outlined and lifted to ~2.6:1 it is
+     clearly deliberate without competing with the artwork it sits behind. */
+  color: rgba(255,255,255,.30);
+  transition: color .2s ease;
+}
+.rank-num svg {
+  width: 128px; height: 128px; display: block;
+  /* Hollow, not solid: stroking the glyph's own contour is what gives the outlined
+     numeral its shape. Phosphor ships these as filled paths, so the fill has to go. */
+  fill: none; stroke: currentColor; stroke-width: 7;
+  stroke-linejoin: round; stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  paint-order: stroke;
+}
+/* 10 is two glyphs: tuck them so the pair reads as one numeral, not two icons. */
+.rank-num svg + svg { margin-left: -40px; }
+.rank-item:hover .rank-num, .rank-item:focus-within .rank-num { color: var(--accent); }
 .rank-item .poster { width: 126px; flex: none; aspect-ratio: 2/3; }
 .rank-item:hover .rank-num { color: var(--surface-2); }
 
@@ -406,8 +426,9 @@ body::before {
   .bb-ovw { -webkit-line-clamp: 2; margin-bottom: 16px; }
   .bb-cta .btn.lg { padding: 12px 18px; font-size: 14px; }
   .bb-dots { bottom: 5%; }   /* clear of .bb-info, which sits at 13% on mobile */
-  .rank-num svg { width: 68px; height: 68px; }
-  .rank-num svg + svg { margin-left: -22px; }
+  .rank-num svg { width: 86px; height: 86px; }
+  .rank-num svg + svg { margin-left: -27px; }
+  .rank-num { margin-right: -12px; }
   .rank-rail .track { grid-auto-columns: 176px; }
   .rank-item .poster { width: 94px; }
   .rail-arrow { display: none; }
@@ -974,7 +995,7 @@ body.tv.cursor-on .tv-cursor {
    so it has to stay findable. Faint enough to stop competing with the picture, solid
    enough to locate from three metres. OPACITY ONLY -- the transition here must never
    cover `transform`, which is what moves it. */
-body.tv.cursor-on .tv-cursor.idle { opacity: .3; }
+body.tv.cursor-on .tv-cursor.idle { opacity: 0; }
 body.tv.cursor-on .tv-cursor::after {
   content: ''; position: absolute; left: 50%; top: 50%;
   width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #fff;
@@ -1211,7 +1232,11 @@ body.tv .rail .track {
   scroll-snap-type: none;
 }
 body.tv .rank-rail .track { grid-auto-columns: calc(var(--tile) * 1.48); }
-body.tv .rank-num { font-size: calc(var(--tile) * 0.84); }
+/* font-size did nothing once the digits became SVG, so on TV they had NO size rule at
+   all and fell back to the desktop 128px. */
+body.tv .rank-num svg { width: calc(var(--tile) * 0.92); height: calc(var(--tile) * 0.92); }
+body.tv .rank-num svg + svg { margin-left: calc(var(--tile) * -0.29); }
+body.tv .rank-num { margin-right: calc(var(--tile) * -0.13); }
 body.tv .rank-item .poster { width: calc(var(--tile) * 0.75); }
 body.tv .cast-track {
   grid-auto-columns: calc(var(--tile) * 0.72); gap: clamp(12px, 1.8vh, 22px);
@@ -1293,6 +1318,23 @@ body.tv .pe-go:focus .pe-pill, body.tv .pe-go.tv-focus .pe-pill {
    it on stacks a second, non-retargetable animation on top of ours — which is exactly
    the lag-then-bounce it was meant to remove. <html> is handled in app.js. */
 body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { scroll-behavior: auto; }
+
+/* ---- Rail paint cost on a TV -------------------------------------------------------
+   A rail holds twenty-odd posters and only four or five are ever on screen, but the
+   browser still styles, lays out and paints every one of them on each frame of a scroll.
+   content-visibility lets it skip the off-screen ones entirely; contain-intrinsic-size
+   tells it how big they would be so the scrollbar and the row geometry do not jump.
+
+   The CARD carries this, not the poster, because the card is the D-pad target: its own
+   box stays measurable (that is what contain-intrinsic-size guarantees) so tvRowModel
+   still finds it, while everything inside it is skipped until it scrolls near the
+   viewport. checkVisibility() does not treat content-visibility:auto as hidden by
+   default, so these stay in the model and remain reachable. */
+body.tv .rail .track > .card,
+body.tv .rank-rail .track > .rank-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--tile) auto calc(var(--tile) * 1.9);
+}
 
 /* ---- Settings > About: the update panel ------------------------------------
    The banner announces; THIS is the control. The banner is pinned chrome that lands
