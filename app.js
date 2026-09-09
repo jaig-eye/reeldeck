@@ -380,7 +380,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.36';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.37';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -5559,7 +5559,14 @@ ${IS_TV ? '' : `
       else if (d.state === 'downloading') { updSet('downloading', { pct: d.percent || 0 }); updDownloading(d.percent); }
       else if (d.state === 'ready') { updSet('ready', { v: d.version }); updReady(d.version); updInteractive = false; }
       else if (d.state === 'none') { updSet('none'); if (updInteractive) updNone(); updInteractive = false; }
-      else if (d.state === 'error') { updSet('error', { msg: 'Update failed — ' + (d.message || 'try again later.') }); if (updInteractive) updError('Update failed — ' + (d.message || 'try again later.')); updInteractive = false; }
+      else if (d.state === 'error') {
+        // main.js already sends one sentence; an older desktop build sends the whole
+        // electron-updater error, headers and all. One line, capped, either way.
+        const m = String(d.message || 'try again later.').split('\n')[0].slice(0, 140);
+        updSet('error', { msg: m });
+        if (updInteractive) updError(m);
+        updInteractive = false;
+      }
       // The portable exe cannot replace itself; electron-updater would install a
       // second, separate copy and leave this one running and stale.
       else if (d.state === 'portable') updSet('portable');

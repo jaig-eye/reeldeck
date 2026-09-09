@@ -18,7 +18,38 @@ permissions:
   contents: write
 
 jobs:
+  # ONE draft release, created before anything is built, that every job uploads into and
+  # nobody can see until `publish` says so. Two electron-builder jobs used to each race
+  # to CREATE a public release: the first to finish published a release holding only its
+  # own files, and a desktop that checked for updates in the minutes before the Windows
+  # files arrived found no latest.yml (404). The TV saw the same thing as a release with
+  # no APK. Drafts are invisible to /releases/latest and to electron-updater.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.id }}
+    steps:
+      - name: Create (or reuse) the draft release for this tag
+        id: draft
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          R: ${{ github.repository }}
+        run: |
+          set -e
+          # A re-run must land in the same draft, not open a second one.
+          ID=$(gh api "repos/$R/releases" --paginate -q ".[] | select(.draft and .tag_name==\"$TAG\") | .id" | head -1)
+          if [ -z "$ID" ]; then
+            ID=$(gh api --method POST "repos/$R/releases" -f tag_name="$TAG" -f name="$TAG" -F draft=true -F prerelease=false -q .id)
+            echo "created draft $ID for $TAG"
+          else
+            echo "reusing draft $ID for $TAG"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false          # a Windows failure must not cancel the macOS job
       matrix:
@@ -71,6 +102,7 @@ jobs:
   # attaches Reeldeck.apk to the release so Downloader can fetch it from
   # github.com/<owner>/<repo>/releases/latest/download/Reeldeck.apk
   android:
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -174,8 +206,49 @@ jobs:
           retention-days: 7
           path: Reeldeck.apk
 
-      - name: Attach APK to the release (on tag)
+      # Straight into the draft by REST, not through an action that would create its own
+      # release. Replace rather than duplicate, so a re-run leaves one Reeldeck.apk.
+      - name: Attach the APK to the draft release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: Reeldeck.apk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ID: ${{ needs.prepare.outputs.release_id }}
+          R: ${{ github.repository }}
+        run: |
+          set -e
+          [ -n "$ID" ] || { echo "::error::no draft release id from prepare"; exit 1; }
+          for a in $(gh api "repos/$R/releases/$ID/assets" --paginate -q '.[] | select(.name=="Reeldeck.apk") | .id'); do
+            gh api --method DELETE "repos/$R/releases/assets/$a"
+          done
+          curl -sSf -X POST \
+               -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Content-Type: application/vnd.android.package-archive" \
+               --data-binary @Reeldeck.apk \
+               "https://uploads.github.com/repos/$R/releases/$ID/assets?name=Reeldeck.apk" > /dev/null
+          echo "Reeldeck.apk attached to draft $ID"
+
+  # The only step that makes a release visible. It runs after EVERY builder has finished
+  # and refuses unless the set is complete, so a failed builder leaves a draft behind
+  # (visible in the Releases tab, offered to nobody) instead of a broken public release.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [prepare, build, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the asset set, then publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ID: ${{ needs.prepare.outputs.release_id }}
+          TAG: ${{ github.ref_name }}
+          R: ${{ github.repository }}
+        run: |
+          set -e
+          NAMES=$(gh api "repos/$R/releases/$ID/assets" --paginate -q '.[].name')
+          COUNT=$(printf '%s\n' "$NAMES" | grep -c . || true)
+          echo "assets on draft $ID:"; printf '  %s\n' $NAMES
+          for need in latest.yml latest-mac.yml Reeldeck.apk; do
+            printf '%s\n' "$NAMES" | grep -qx "$need" || { echo "::error::$need is missing - $TAG stays a draft."; exit 1; }
+          done
+          [ "$COUNT" -ge 13 ] || { echo "::error::only $COUNT assets - $TAG stays a draft."; exit 1; }
+          gh api --method PATCH "repos/$R/releases/$ID" -F draft=false > /dev/null
+          echo "published $TAG with $COUNT assets"

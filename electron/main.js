@@ -188,7 +188,19 @@ function setupUpdater() {
     autoUpdater.on('update-not-available', () => send({ state: 'none' }));
     autoUpdater.on('download-progress', (p) => send({ state: 'downloading', percent: Math.round(p.percent || 0) }));
     autoUpdater.on('update-downloaded', (i) => send({ state: 'ready', version: i && i.version }));
-    autoUpdater.on('error', (err) => { send({ state: 'error', message: err && err.message }); console.warn('[reeldeck] updater:', err && err.message); });
+    autoUpdater.on('error', (err) => {
+      // Classify, never forward. electron-updater's message carries the HTTP headers and
+      // a stack, and even its first line names files nobody has heard of. The renderer
+      // shows this sentence in Settings and, for a check the user asked for, in a toast.
+      const raw = String((err && err.message) || err || '');
+      let message;
+      if (/404|Cannot find|latest\.yml/i.test(raw)) message = 'The newest release is still being published \u2014 try again in a few minutes.';
+      else if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ECONNRESET|EAI_AGAIN|net::ERR|offline/i.test(raw)) message = 'No connection \u2014 will try again later.';
+      else if (/sha512|checksum|integrity|corrupt/i.test(raw)) message = 'The download was corrupted \u2014 try again.';
+      else message = 'Update check failed \u2014 try again later.';
+      send({ state: 'error', message });
+      console.warn('[reeldeck] updater:', raw.split('\n')[0]);
+    });
     autoUpdater.checkForUpdates().catch(() => {});
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 60 * 60 * 1000);
   } catch (e) { console.warn('[reeldeck] updater unavailable:', e && e.message); }
