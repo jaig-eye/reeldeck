@@ -321,7 +321,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.27';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.28';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -369,7 +369,7 @@
   // Chrome pinned to the VIEWPORT rather than the document. Measured with no scroll
   // offset so its row keeps a fixed place in the order — otherwise the update
   // banner's row slides down through the rails by exactly scrollY on every rebuild.
-  const TV_PINNED = 'header.top, #cinema-exit, .toast, #next-up';
+  const TV_PINNED = 'header.top, #cinema-exit, #cinema-pointer, .toast, #next-up';
   let tvRowSeq = 0;                                  // stable ids for carousel rows
   let tvColX = null;                                 // column held while moving vertically
   let tvLastPos = null;                              // where the ring was, for re-render recovery
@@ -3455,11 +3455,6 @@
       </div></div>`;
     } else {
       const url = buildSourceUrl(src, type, id, imdb, season, episode, resumeAt);
-      // The omissions are the point: no allow-popups (kills window.open and
-      // target=_blank, i.e. the pop-under), no allow-top-navigation (kills the redirect
-      // that hijacks our whole page), no allow-modals, no allow-downloads. What stays is
-      // what a player genuinely needs: its own origin, its scripts, its forms, and the
-      // Presentation API for Cast.
       // In a browser the frame is ALWAYS sandboxed, and `allow-downloads` is never in
       // the list -- so an embed cannot start a download whatever else is switched on.
       // A native host blocks downloads itself (Electron cancels 'will-download';
@@ -3571,7 +3566,6 @@
               <span class="pe-pill">${ICON.play} Control player</span>
               <small>Full screen, and the remote drives the player's own buttons</small>
             </button>
-            <button class="btn sm ghost pe-alt" id="pe-pointer">Can't reach a button? Use a pointer</button>
           </div>` : ''}</div>
 
         <div class="source-bar">
@@ -3727,10 +3721,10 @@
     });
     // OK hands the remote to the embed's own controls; the pointer is the fallback for
     // an overlay the D-pad cannot reach at all.
+    // true = real full screen. This click IS the user gesture requestFullscreen needs.
     const pf = $('#pe-focus');
-    if (pf) pf.onclick = enterPlayerFocus;
-    const pp = $('#pe-pointer');
-    if (pp) pp.onclick = (e) => { e.stopPropagation(); cursorOn(); };
+    if (pf) pf.onclick = () => enterPlayerFocus(true);
+
     const pe = $('#player-enter');
     // On TV land focus on the player entry so OK immediately hands control to the embed.
     // The router also places the ring here (#player-enter is a landing target), but
@@ -3775,12 +3769,14 @@
 
   let cinemaTimer, cinemaReveal;
   function revealCinema() {
-    const ex = $('#cinema-exit'); if (ex) ex.classList.remove('faded');
+    const chrome = [$('#cinema-exit'), $('#cinema-pointer')].filter(Boolean);
+    chrome.forEach(el => el.classList.remove('faded'));
     clearTimeout(cinemaTimer);
     cinemaTimer = setTimeout(() => {
-      const e2 = $('#cinema-exit');
-      // Never fade it out from under the ring -- that is a dead remote.
-      if (e2 && e2 !== document.activeElement) e2.classList.add('faded');
+      [$('#cinema-exit'), $('#cinema-pointer')].forEach(el => {
+        // Never fade one out from under the ring -- that is a dead remote.
+        if (el && el !== document.activeElement) el.classList.add('faded');
+      });
     }, 3000);
   }
   /**
@@ -3824,10 +3820,27 @@
     frame.classList.add('cinema'); document.body.classList.add('cinema-on');
     document.body.classList.toggle('cinema-screen', !!wantScreen);
     if (!$('#cinema-exit')) {
+      // One row in the corner, so the buttons lay themselves out instead of each being
+      // positioned by an arithmetic guess at the other's width.
+      const bar = document.createElement('div');
+      bar.id = 'cinema-chrome'; bar.className = 'cinema-chrome';
+      // TV only: the pointer exists to reach a control the D-pad cannot, which is not a
+      // problem a mouse or a finger has. Placed FIRST so Exit stays in the outer corner,
+      // where it already was.
+      if (IS_TV) {
+        const pt = document.createElement('button');
+        pt.id = 'cinema-pointer'; pt.className = 'cinema-btn cinema-pointer';
+        pt.innerHTML = ICON.play + ' Pointer';
+        pt.setAttribute('aria-label', 'Use a pointer to press a control the remote cannot reach');
+        pt.onclick = (e) => { e.stopPropagation(); cursorOn(); };
+        bar.appendChild(pt);
+      }
       const ex = document.createElement('button');
-      ex.id = 'cinema-exit'; ex.className = 'cinema-exit'; ex.innerHTML = ICON.x + ' Exit';
+      ex.id = 'cinema-exit'; ex.className = 'cinema-btn cinema-exit'; ex.innerHTML = ICON.x + ' Exit';
       ex.setAttribute('aria-label', wantScreen ? 'Exit full screen' : 'Exit theater mode');
-      ex.onclick = exitCinema; frame.appendChild(ex);
+      ex.onclick = exitCinema;
+      bar.appendChild(ex);
+      frame.appendChild(bar);
       // Top hot-zone: reliably re-reveals the control on hover/tap even though the
       // cross-origin <iframe> swallows pointer events over the video itself.
       const hot = document.createElement('div');
@@ -3861,7 +3874,7 @@
     const frame = $('.player-frame'); if (frame) frame.classList.remove('cinema');
     document.body.classList.remove('cinema-on');
     document.body.classList.remove('cinema-screen');
-    const ex = $('#cinema-exit'); if (ex) ex.remove();
+    const bar = $('#cinema-chrome'); if (bar) bar.remove();
     const hot = $('#cinema-hot'); if (hot) hot.remove();
     if (fsElement()) fsExit();
     releasePlayerFocus();   // hand D-pad focus back to our UI
@@ -4106,10 +4119,20 @@
     else toast('Pointer control needs the Reeldeck app on your TV');
   }
 
-  function enterPlayerFocus() {
+  /**
+   * Hand the remote to the embed.
+   *
+   * `wantScreen` asks for REAL full screen rather than the CSS one. Only the entry
+   * overlay passes it, because requestFullscreen needs a user gesture and the remote's
+   * media keys also arrive here, through playerKey() -- from there the request would be
+   * rejected, and a rejection is not free: it resolves as a failure the user cannot see
+   * and cannot act on.
+   */
+  function enterPlayerFocus(wantScreen) {
     const fr = document.getElementById('player-iframe');
     if (!fr) return;
-    if (!document.body.classList.contains('cinema-on')) enterCinema();
+    if (!document.body.classList.contains('cinema-on')) enterCinema(!!wantScreen);
+    else if (wantScreen && !fsElement()) enterCinema(true);
     document.body.classList.add('player-focused');
     tvInvalidate();   // the Open-player overlay is gone from the row model now
     fr.setAttribute('tabindex', '0');
@@ -5192,7 +5215,7 @@ ${IS_TV ? '' : `
     // see occlusion, so name the chrome that is genuinely ON TOP of the player.
     // (Skipped when a modal is open: the modal is its own scope and sits above both.)
     if (document.body.classList.contains('cinema-on') && !el.closest('.modal-back') &&
-        !el.closest('.player-frame.cinema, #cinema-exit, #next-up')) return null;
+        !el.closest('.player-frame.cinema, #cinema-exit, #cinema-pointer, #next-up')) return null;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return null;
     const cs = getComputedStyle(el);

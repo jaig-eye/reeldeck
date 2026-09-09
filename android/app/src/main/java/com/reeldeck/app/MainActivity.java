@@ -43,6 +43,9 @@ public class MainActivity extends BridgeActivity {
     /** True only while a player iframe is on screen — see nativeSetPlayer() in app.js. */
     private volatile boolean playerOpen;
     private volatile boolean downloading;
+    // Set when an update is deferred because the install permission is missing, so the
+    // download can resume by itself once the user comes back from granting it.
+    private volatile String pendingInstallUrl;
     /** Media keys are a REMOTE affordance; on a phone they belong to whatever the
      *  user was actually listening to, so we never take them there. */
     private volatile boolean isTelevision;
@@ -320,6 +323,27 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
+     * Coming back from the "install unknown apps" screen.
+     *
+     * Granting that permission sends the user out of the app, and on a TV the app
+     * sitting behind another activity reads as a freeze. Returning to a panel that
+     * still says "error" and requires the Update button to be found again is the part
+     * that actually needed fixing: pick the deferred download back up here instead.
+     */
+    @Override
+    protected void onResume() {
+        super.onResume();
+        final String url = pendingInstallUrl;
+        if (url == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && !getPackageManager().canRequestPackageInstalls()) {
+            return;   // came back without granting it; leave it pending for a later try
+        }
+        pendingInstallUrl = null;   // cleared BEFORE use, so a later resume cannot re-run it
+        downloadAndInstall(url);
+    }
+
+    /**
      * Fetch a release APK and hand it to the package installer.
      *
      * A TV has no browser to fall back on and no file manager to find a download in,
@@ -334,11 +358,20 @@ public class MainActivity extends BridgeActivity {
         // this app the right to install. Ask FIRST — failing after the download
         // wastes it and explains nothing.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
-            toWeb("upd:err:Allow Reeldeck to install apps, then press Update again.");
+            // Remember it: onResume picks this up the moment the permission screen is
+            // dismissed with the right granted, so the user does not have to find the
+            // Update button again after being sent away from the app.
+            pendingInstallUrl = url;
+            toWeb("upd:err:Allow Reeldeck to install apps \u2014 the update continues by itself.");
             try {
                 startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                         Uri.parse("package:" + getPackageName())));
-            } catch (RuntimeException e) { /* no such settings screen on this build */ }
+            } catch (RuntimeException e) {
+                // No such settings screen on this build: there is nowhere to send them,
+                // so do not leave a promise that something will continue on its own.
+                pendingInstallUrl = null;
+                toWeb("upd:err:This device will not allow app installs from Reeldeck.");
+            }
             return;
         }
         downloading = true;

@@ -937,14 +937,9 @@ body.tv .pe-go {
   position: absolute; inset: 0; background: none; border: 0; color: inherit; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
 }
-body.tv .pe-alt {
-  position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%);
-  z-index: 1; white-space: nowrap;
-  background: rgba(0,0,0,.55); border-color: rgba(255,255,255,.22); color: #fff;
-}
-body.tv .pe-alt:focus, body.tv .pe-alt.tv-focus {
-  outline: 3px solid #fff; outline-offset: 2px; background: rgba(0,0,0,.75);
-}
+/* The pointer sits beside Exit rather than over the film. No offset arithmetic: the row
+   places both, so neither has to know how wide the other is. */
+body.tv .cinema-pointer svg { width: 15px; height: 15px; }
 body.tv.player-focused .player-enter, body.tv.cursor-on .player-enter { display: none; }
 /* ---- "Is the remote in the player, or still in our UI?" ---------------------
    Handing the D-pad to a cross-origin embed produces no visible change at all: the
@@ -1008,15 +1003,18 @@ body.tv.cursor-on .tv-cursor.tap { animation: cur-tap .28s ease-out; }
 .player-enter small { font-size: 15px; opacity: .92; background: rgba(0,0,0,.5); padding: 6px 14px; border-radius: 99px; }
 body.tv .pe-go:focus { outline: none; }
 body.tv .pe-go:focus .pe-pill { outline: 4px solid #fff; outline-offset: 3px; transform: scale(1.05); }
-.cinema-exit {
+.cinema-chrome {
   position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 310;
+  display: flex; align-items: center; gap: 10px;
+}
+.cinema-btn {
   display: inline-flex; align-items: center; gap: 6px;
   background: rgba(11,13,18,.72); color: #fff; border: 1px solid rgba(255,255,255,.22);
   border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 13px; backdrop-filter: blur(6px);
   transition: opacity .35s ease;
 }
-.cinema-exit svg { width: 16px; height: 16px; }
-.cinema-exit.faded { opacity: 0; pointer-events: none; }
+.cinema-btn svg { width: 16px; height: 16px; }
+.cinema-btn.faded { opacity: 0; pointer-events: none; }
 /* transparent top strip that re-reveals the Exit control on hover/tap */
 .cinema-hot { position: fixed; top: 0; left: 0; right: 0; height: 20vh; z-index: 305; }
 /* In pointer mode this 20vh strip sits ABOVE the player and hit-tests the synthetic
@@ -1031,7 +1029,7 @@ body.tv.cursor-on .cinema-hot { pointer-events: none; }
    is the only on-screen reminder of how to leave -- but stops hit-testing while the
    pointer is up, because Back now dismisses the pointer on its own and makes the button
    live again on the very next press. */
-body.tv.cursor-on .cinema-exit { pointer-events: none; }
+body.tv.cursor-on .cinema-btn { pointer-events: none; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
@@ -1147,7 +1145,7 @@ body.tv .icon-btn { width: clamp(40px, 3.8vw, 48px); height: clamp(40px, 3.8vw, 
 body.tv .icon-btn svg { width: 22px; height: 22px; }
 /* Overscan for the fixed chrome that lives at the screen edges. */
 body.tv .toast { bottom: calc(22px + 3vh); }
-body.tv .cinema-exit { top: calc(12px + 3vh); right: calc(14px + 3vw); }
+body.tv .cinema-chrome { top: calc(12px + 3vh); right: calc(14px + 3vw); gap: 14px; }
 body.tv footer.site { padding: 26px var(--tvpad) calc(40px + 3vh); font-size: 15px; }
 
 /* The search page's own field: one big row, sized for a remote. */
