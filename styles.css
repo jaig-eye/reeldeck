@@ -356,6 +356,11 @@ body::before {
 .rail-arrow.left { left: 0; }
 .rail-arrow.right { right: 0; background: linear-gradient(270deg, rgba(0,0,0,.5), transparent); }
 @media (hover: hover) { .rail-wrap:hover .rail-arrow { opacity: 1; } }
+/* An arrow that cannot move anything is worse than no arrow: on a short row the left one
+   landed on top of the first item. display:none, not opacity, so it stops hit-testing. */
+.rail-wrap.no-scroll .rail-arrow,
+.rail-wrap.at-start .rail-arrow.left,
+.rail-wrap.at-end .rail-arrow.right { display: none; }
 .rail-arrow svg { width: 30px; height: 30px; }
 .rail-arrow:hover { color: var(--accent); }
 
@@ -396,8 +401,12 @@ body::before {
    column, lapped only at its trailing edge, and bright enough to read as deliberate.
    Faint grey digits half-hidden behind artwork just looked like a rendering fault. */
 .rank-num {
+  /* ONE size, and the overlap derived from it. Three hand-tuned pixel margins that had
+     to be kept in agreement is how the numeral ended up sitting in the gap BETWEEN two
+     cards, belonging to neither. At half a glyph the poster clearly owns its number. */
+  --rank-size: 128px;
   display: flex; align-items: flex-end; flex: none;
-  margin-right: -18px;
+  margin-right: calc(var(--rank-size) * -0.52);
   /* A filled dark numeral measured 1.25:1 against the page -- invisible, which is what
      made it read as a smudge rather than a design. Outlined and lifted to ~2.6:1 it is
      clearly deliberate without competing with the artwork it sits behind. */
@@ -405,7 +414,7 @@ body::before {
   transition: color .2s ease;
 }
 .rank-num svg {
-  width: 128px; height: 128px; display: block;
+  width: var(--rank-size); height: var(--rank-size); display: block;
   /* Hollow, not solid: stroking the glyph's own contour is what gives the outlined
      numeral its shape. Phosphor ships these as filled paths, so the fill has to go. */
   fill: none; stroke: currentColor; stroke-width: 7;
@@ -414,7 +423,7 @@ body::before {
   paint-order: stroke;
 }
 /* 10 is two glyphs: tuck them so the pair reads as one numeral, not two icons. */
-.rank-num svg + svg { margin-left: -40px; }
+.rank-num svg + svg { margin-left: calc(var(--rank-size) * -0.31); }
 .rank-item:hover .rank-num, .rank-item:focus-within .rank-num { color: var(--accent); }
 .rank-item .poster { width: 126px; flex: none; aspect-ratio: 2/3; }
 .rank-item:hover .rank-num { color: var(--surface-2); }
@@ -426,9 +435,7 @@ body::before {
   .bb-ovw { -webkit-line-clamp: 2; margin-bottom: 16px; }
   .bb-cta .btn.lg { padding: 12px 18px; font-size: 14px; }
   .bb-dots { bottom: 5%; }   /* clear of .bb-info, which sits at 13% on mobile */
-  .rank-num svg { width: 86px; height: 86px; }
-  .rank-num svg + svg { margin-left: -27px; }
-  .rank-num { margin-right: -12px; }
+  .rank-num { --rank-size: 86px; }
   .rank-rail .track { grid-auto-columns: 176px; }
   .rank-item .poster { width: 94px; }
   .rail-arrow { display: none; }
@@ -1234,9 +1241,7 @@ body.tv .rail .track {
 body.tv .rank-rail .track { grid-auto-columns: calc(var(--tile) * 1.48); }
 /* font-size did nothing once the digits became SVG, so on TV they had NO size rule at
    all and fell back to the desktop 128px. */
-body.tv .rank-num svg { width: calc(var(--tile) * 0.92); height: calc(var(--tile) * 0.92); }
-body.tv .rank-num svg + svg { margin-left: calc(var(--tile) * -0.29); }
-body.tv .rank-num { margin-right: calc(var(--tile) * -0.13); }
+body.tv .rank-num { --rank-size: calc(var(--tile) * 0.92); }
 body.tv .rank-item .poster { width: calc(var(--tile) * 0.75); }
 body.tv .cast-track {
   grid-auto-columns: calc(var(--tile) * 0.72); gap: clamp(12px, 1.8vh, 22px);
@@ -1717,6 +1722,12 @@ body:not(.tv) nav.main a.active::after {
   body:not(.tv) .rail-wrap {
     -webkit-mask-image: linear-gradient(90deg, #000 0, #000 92%, transparent 100%);
     mask-image: linear-gradient(90deg, #000 0, #000 92%, transparent 100%);
+  }
+  /* The fade says "there is more this way". With the last card already fully on screen
+     it says nothing and just dims the artwork, which read as the row being cut off. */
+  body:not(.tv) .rail-wrap.at-end,
+  body:not(.tv) .rail-wrap.no-scroll {
+    -webkit-mask-image: none; mask-image: none;
   }
 }
 

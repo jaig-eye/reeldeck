@@ -93,32 +93,25 @@
   // Autoplay: the WebView is started with setMediaPlaybackRequiresUserGesture(false)
   // (Capacitor's Bridge does it) and the player iframe carries allow="autoplay", so a
   // mirror that asks to autoplay is permitted to. Whether it ASKS is per-provider:
-  //   verified   - all but two, each read from the provider's own docs page or its own
-  //                shipped player bundle. Note the CASE: MIRROR, MIRROR and MIRROR
-  //                parse the literal string 'autoPlay=true' and ignore 'autoplay=1'.
-  //   unverified - MIRROR and MIRROR publish nothing we could confirm, so no
-  //                parameter is invented for them. An unknown query parameter would be
-  //                ignored, but so would our claim to know it.
-  // Caveat worth knowing: MIRROR's own docs say click-free autoplay works on custom
+  // Each row's autoplay parameter was read from that provider's own docs page or its
+  // own shipped player bundle; where a provider publishes nothing we could confirm, no
+  // parameter is invented for it, because an unknown query parameter would be ignored
+  // and so would our claim to know it. Case matters for several of them. The per-row
+  // detail lives with the rows, in the Worker.
+  // Caveat worth knowing: at least one family documents click-free autoplay on custom
   // domains only, so on their public hosts a play button still appears first.
   // Ad-free tiers commonly ignore autoplay on purpose, and no parameter overrides a
   // browser's own block on unmuted autoplay — this raises the odds, it is not a promise.
-  const DEFAULT_SOURCES = [
-    { name: 'MIRROR',   movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1',           tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
-    { name: 'MIRROR',    movie: 'https://mirror.invalid/embed/movie/{id}?autoPlay=true',    tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoPlay=true&nextEpisode=true&episodeSelector=true' },
-    { name: 'MIRROR',    movie: 'https://mirror.invalid/movie/{id}?color=%23{color}',    tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?color=%23{color}&nextEpisode=true&autoplayNextEpisode=true&episodeSelector=true' },
-    { name: 'MIRROR',   movie: 'https://mirror.invalid/player/{id}?autoPlay=true',                         tv: 'https://mirror.invalid/player/{id}/{season}/{episode}?autoPlay=true' },
-    { name: 'MIRROR',  movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1',       tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
-    { name: 'MIRROR',  movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1',       tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
-    { name: 'MIRROR', movie: 'https://mirror.invalid/?video_id={id}&tmdb=1',              tv: 'https://mirror.invalid/?video_id={id}&tmdb=1&s={season}&e={episode}' },
-    { name: 'MIRROR',       movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1',               tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
-    { name: 'MIRROR',    movie: 'https://mirror.invalid/movie/{id}',                            tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}' },
-    { name: 'MIRROR',  movie: 'https://mirror.invalid/embed/movie/{id}',             tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}' },
-    { name: 'MIRROR',    movie: 'https://mirror.invalid/movie/{id}?autoPlay=true',                            tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?autoPlay=true' },
-    { name: 'MIRROR',  movie: 'https://mirror.invalid/movie/{id}?autoplay=true',                          tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?autoplay=true' },
-    { name: 'MIRROR',     movie: 'https://mirror.invalid/movie/{id}?autoplay=true',                tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?autoplay=true' },
-    { name: 'MIRROR',     movie: 'https://mirror.invalid/movie/{id}?autoplay=true',  tv: 'https://mirror.invalid/tv/{id}?s={season}&e={episode}&autoplay=true' }
-  ];
+  // EMPTY ON PURPOSE. The mirror list used to live here, which meant it shipped inside
+  // the 327KB app.js served to every visitor and inside the APK -- nine hosts, greppable
+  // in one command, and a private repository would not have changed that by one byte.
+  // It is fetched from the Worker now (see refreshSources) and cached locally.
+  //
+  // This is not secrecy against a determined user: the browser must be told a URL to
+  // load the frame, so DevTools still shows the fetched list and the iframe's src. What
+  // it removes is the passive copy sitting in a public repository, a public bundle and a
+  // downloadable APK.
+  const DEFAULT_SOURCES = [];
 
   const DEFAULTS = {
     brand:    'Reeldeck',
@@ -174,24 +167,80 @@
 
   let cfg = loadConfig();
 
+  const SRC_KEY = 'reeldeck.sources.v1';
+
+  /**
+   * Validate a mirror table that arrived over the network.
+   *
+   * These strings become an iframe's src, so a spoofed or compromised response would
+   * otherwise be arbitrary-frame injection into the app. https only, strings only, a
+   * length cap, and a template has to contain {id} to be a template at all.
+   */
+  function sanitizeSources(list) {
+    if (!Array.isArray(list)) return [];
+    const ok = (u) => typeof u === 'string' && u.length <= 400 &&
+                      /^https:\/\/[a-z0-9.-]+\//i.test(u) && u.indexOf('{id}') >= 0;
+    return list.filter(s => s && typeof s === 'object' &&
+                            typeof s.name === 'string' && s.name.length <= 40 &&
+                            ok(s.movie) && ok(s.tv))
+               .slice(0, 40)
+               .map(s => ({
+                 name: s.name, movie: s.movie, tv: s.tv,
+                 tracked: s.tracked ? 1 : 0,
+                 // Appended to a URL as `&<resume>=<seconds>`, so it is letters only.
+                 resume: (typeof s.resume === 'string' && /^[a-zA-Z]{1,24}$/.test(s.resume)) ? s.resume : ''
+               }));
+  }
+
+  function cachedSources() {
+    try {
+      const c = JSON.parse(localStorage.getItem(SRC_KEY) || 'null');
+      return c && Array.isArray(c.sources) ? c : null;
+    } catch (e) { return null; }
+  }
+
+  /**
+   * Refresh the mirror table from the Worker.
+   *
+   * Runs after the first paint and never blocks it: an existing install already has the
+   * table in its own config, so only a fresh install actually depends on this call. When
+   * the revision has not moved, nothing is written -- a refetch must never trample a
+   * mirror the user added or reordered themselves.
+   */
+  async function refreshSources() {
+    const r = await syncCall('/v1/sources', {});
+    if (r.err || !r.d) return;
+    const list = sanitizeSources(r.d.sources);
+    if (!list.length) return;
+    const rev = +r.d.rev || 0;
+    const had = cachedSources();
+    try { localStorage.setItem(SRC_KEY, JSON.stringify({ rev: rev, sources: list })); } catch (e) {}
+    if (had && had.rev === rev && (cfg.sources || []).length) return;   // nothing new to apply
+    // Keep anything the user added; refresh ours by name; append rows added since.
+    const mine = (cfg.sources || []).filter(s => !list.some(d => d.name === s.name) && !s.tracked);
+    cfg.sources = list.concat(mine);
+    saveConfig();
+    if (location.hash.indexOf('#/watch/') === 0) route();
+  }
+
   function loadConfig() {
     let c;
     try { c = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}')); }
     catch (e) { c = Object.assign({}, DEFAULTS); }
-    // deep-copy sources so editing them never mutates DEFAULT_SOURCES
-    c.sources = (Array.isArray(c.sources) ? c.sources : DEFAULT_SOURCES).map(s => Object.assign({}, s));
+    // The table is no longer compiled in, so the fallback chain is: what this install
+    // already stored, then whatever the last refresh cached, then nothing at all. An
+    // existing install therefore keeps working without the network; only a fresh one
+    // waits on refreshSources.
+    const cached = cachedSources();
+    const base = Array.isArray(c.sources) && c.sources.length ? c.sources
+               : (cached ? cached.sources : DEFAULT_SOURCES);
+    c.sources = base.map(s => Object.assign({}, s));
     // Sources are snapshotted into localStorage on first run, so a shipped fix to a
     // provider's URL (an autoplay parameter, a moved domain) would never reach anyone
     // who already has the app. Refresh the entries we ship by name and leave anything
     // the user added themselves alone.
-    c.sources = c.sources.map(s => {
-      const std = DEFAULT_SOURCES.find(d => d.name === s.name);
-      return std ? Object.assign({}, s, { movie: std.movie, tv: std.tv }) : s;
-    });
-    // ...and pick up providers added in a later release.
-    DEFAULT_SOURCES.forEach(d => {
-      if (!c.sources.some(s => s.name === d.name)) c.sources.push(Object.assign({}, d));
-    });
+    // Refreshing shipped rows by name is refreshSources' job now -- it is the only
+    // thing that knows what the current table looks like.
     // Same trap as the source table: a stored empty string is still a stored value,
     // so Object.assign lets it win over a default that arrived in a later release.
     // Anyone who installed before the permanent alias existed has apkShortUrl: '',
@@ -321,7 +370,7 @@
   // query covers everything else.
   const IS_STANDALONE = !!(window.navigator.standalone) ||
                         (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-  const APP_VERSION = '1.0.30';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.31';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -457,6 +506,49 @@
   const runtimeSoon = debounce((card) => runtimeFor(card), 350);
   function debounce(fn, ms) { let t; return function () { clearTimeout(t); const a = arguments, c = this; t = setTimeout(() => fn.apply(c, a), ms); }; }
 
+  /**
+   * Tell a rail's chrome what the rail can actually do.
+   *
+   * The arrows and the edge fade used to be unconditional, so a row that fitted on
+   * screen still drew both arrows -- the left one over its own first item -- and the
+   * fade still dimmed a last card that was already fully visible.
+   */
+  function railChrome(track) {
+    const wrap = track.parentElement;
+    if (!wrap) return;
+    const max = track.scrollWidth - track.clientWidth;
+    const none = max <= 2;                       // nothing to scroll to at all
+    wrap.classList.toggle('no-scroll', none);
+    wrap.classList.toggle('at-start', none || track.scrollLeft <= 2);
+    wrap.classList.toggle('at-end', none || track.scrollLeft >= max - 2);
+  }
+  const RAILS = '.rail-wrap > .track, .rail-wrap > .ep-strip, .rail-wrap > .season-pills, .ep-strip, .season-pills';
+  function wireRailChrome() {
+    document.querySelectorAll(RAILS).forEach(t => {
+      if (t.__railWired) { railChrome(t); return; }
+      t.__railWired = 1;
+      t.addEventListener('scroll', () => railChrome(t), { passive: true });
+      // A rail is usually empty on first paint and fills in when the request lands, so
+      // one measurement at render time would be a measurement of nothing.
+      // ResizeObserver on the track is NOT enough on its own: the track is the scroll
+      // container, so its border box stays the same width when cards are added inside it
+      // -- only scrollWidth changes, which RO does not report. It is kept for real size
+      // changes (rotation, window resize) and the measurement is re-taken below.
+      if (window.ResizeObserver) {
+        try { new ResizeObserver(() => railChrome(t)).observe(t); } catch (e) {}
+      }
+      // Measured three times on purpose. The first can land in the same tick as the
+      // insertion, before layout, where clientWidth is still 0 and the rail latches
+      // "nothing to scroll" for good. rAF is after layout; the late one catches a rail
+      // whose width settles with its images.
+      railChrome(t);
+      requestAnimationFrame(() => railChrome(t));
+      setTimeout(() => railChrome(t), 600);
+    });
+  }
+  const wireRailChromeSoon = debounce(wireRailChrome, 60);
+  window.addEventListener('resize', wireRailChromeSoon, { passive: true });
+
   let toastTimer;
   // role="status" so the confirmation is actually announced — on TV the toast is the
   // only feedback the hero's Save button gives.
@@ -558,9 +650,10 @@
      A cross-origin player cannot be scripted, so there is no reading currentTime
      off the <video> inside a mirror. Two tiers instead:
 
-       provider - the mirror POSTS its own position to the parent. MIRROR documents
-                  MEDIA_DATA / PLAYER_EVENT with currentTime + duration; others use
-                  the same shape. Exact, and the only real answer available.
+       provider - the mirror POSTS its own position to the parent. Several document a
+                  MEDIA_DATA / PLAYER_EVENT message carrying currentTime + duration,
+                  and the rest that report at all use the same shape. Exact, and the
+                  only real answer available.
        elapsed  - nobody posted, so we count wall-clock seconds the player was open.
                   Enough to say "you were here" and to draw a bar; never shown as an
                   exact timestamp, and never allowed to overwrite a provider value.
@@ -810,11 +903,11 @@
      one provider that documents the API, then grown AT RUNTIME: the first time a
      mirror sends us a usable position it is promoted for good on this device. That
      way the badge reflects what actually happened here rather than a claim. */
-  // Every entry here was confirmed against a FIRST-PARTY source: the provider's own
-  // docs page or, where there is no docs page, its own shipped player bundle. Nothing
-  // is seeded on resemblance to another provider. MIRROR and MIRROR publish
-  // nothing we could confirm and are deliberately absent -- they can still earn the
-  // badge at runtime the first time they report a real position.
+  // The seed arrives with the rows, and every flagged row was confirmed against a
+  // FIRST-PARTY source: the provider's own docs page or, failing that, its own shipped
+  // player bundle. Nothing is flagged on resemblance to another provider, and the ones
+  // that publish nothing we could confirm are deliberately unflagged -- they can still
+  // earn the badge at runtime the first time they report a real position.
   /* ============================================================
      CROSS-DEVICE SYNC
      ------------------------------------------------------------
@@ -2282,17 +2375,17 @@
     if (IS_TV) { tvInvalidate(); tvFocusEl(back.querySelector('[data-au="google"]')); }
   }
 
-  const TRACK_SEED = {
-    'MIRROR': 1, 'MIRROR': 1, 'MIRROR': 1, 'MIRROR': 1,   // mirror/docs PLAYER_EVENT
-    'MIRROR': 1,                                                // its own VideoPlayer bundle
-    'MIRROR': 1,                                                // mirror.to/docs
-    'MIRROR': 1,                                               // mirror.invalid/embed docs
-    'MIRROR': 1, 'MIRROR': 1, 'MIRROR': 1,                  // MEDIA_DATA / PLAYER_EVENT
-    'MIRROR': 1, 'MIRROR': 1
-  };
+  // Derived from the fetched rows rather than written out here: a hard-coded map of
+  // mirror names would have put every provider's name back into the public bundle, which
+  // is most of what moving the URLs out was for. Each row carries its own `tracked` flag.
+  function trackSeed() {
+    const seed = {};
+    (cfg.sources || []).forEach(s => { if (s && s.tracked && s.name) seed[s.name] = 1; });
+    return seed;
+  }
   function trackedAll() {
     let t; try { t = JSON.parse(localStorage.getItem(TRACK_KEY) || 'null'); } catch (e) { t = null; }
-    return Object.assign({}, TRACK_SEED, (t && typeof t === 'object' && !Array.isArray(t)) ? t : {});
+    return Object.assign({}, trackSeed(), (t && typeof t === 'object' && !Array.isArray(t)) ? t : {});
   }
   function isTracked(name) { return !!(name && trackedAll()[name]); }
   function markTracked(name) {
@@ -2314,19 +2407,19 @@
   /**
    * Pull { t, d } in SECONDS out of whatever shape a mirror posts.
    *
-   * Confirmed shapes, all from first-party sources:
-   *   PLAYER_EVENT  data.currentTime / data.duration          MIRROR, MIRROR, MIRROR,
-   *                                                           MIRROR, MIRROR, MIRROR
-   *   PLAYER_EVENT  data.player_progress / player_duration    the whole MIRROR family
-   *   MEDIA_DATA    data.progress.watched / .duration         MIRROR
-   *   MEDIA_DATA    data[<id>].progress.watched / .duration   MIRROR, MIRROR, MIRROR
+   * Confirmed shapes, all from first-party sources (which mirror emits which is
+   * recorded in the Worker, beside the rows):
+   *   PLAYER_EVENT  data.currentTime / data.duration
+   *   PLAYER_EVENT  data.player_progress / data.player_duration
+   *   MEDIA_DATA    data.progress.watched / .duration
+   *   MEDIA_DATA    data[<id>].progress.watched / .duration
    *
    * Two traps this deliberately avoids:
-   *  - MIRROR's TV MEDIA_DATA carries progress.watched/TOTAL counting EPISODES, not
+   *  - One family's TV MEDIA_DATA carries progress.watched/TOTAL counting EPISODES, not
    *    seconds. Requiring a `duration` (never `total`) rejects it, and the real
    *    per-episode seconds are picked up from show_progress instead.
-   *  - MIRROR's and MIRROR' PLAYER_EVENT `progress` is a PERCENTAGE. It is never
-   *    read as a position; only currentTime is.
+   *  - Some players' PLAYER_EVENT `progress` is a PERCENTAGE. It is never read as a
+   *    position; only currentTime is.
    */
   function readPosition(msg) {
     const body = (msg && msg.data) || msg;
@@ -4191,8 +4284,8 @@
 
   // The two mirrors that document a start-position parameter. Everything else simply
   // starts from the beginning -- there is no generic way to seek a cross-origin player.
-  const RESUME_PARAM = { 'MIRROR': 'startAt', 'MIRROR': 'startAt', 'MIRROR': 'startAt',
-                         'MIRROR': 'startAt', 'MIRROR': 'progress' };
+  // The resume parameter now rides on the row itself, for the same reason the URLs do:
+  // a map keyed by provider name would put every provider's name back in the bundle.
 
   function buildSourceUrl(src, type, id, imdb, season, episode, resumeAt) {
     let tpl = (type === 'tv' ? src.tv : src.movie) || src.movie || src.tv || '';
@@ -4205,7 +4298,8 @@
     // Hand the mirror our saved position so it opens where the viewer stopped rather
     // than at 0:00. Only where the provider documents the parameter, and never for
     // something already finished.
-    const rp = src && RESUME_PARAM[src.name];
+    const rp = src && typeof src.resume === 'string' && /^[a-zA-Z]{1,24}$/.test(src.resume)
+      ? src.resume : null;
     if (rp && resumeAt > 30) {
       tpl += (tpl.indexOf('?') >= 0 ? '&' : '?') + rp + '=' + Math.floor(resumeAt);
     }
@@ -4999,8 +5093,20 @@ ${IS_TV ? '' : `
   function boot() {
     buildHeader();
     route();
+    // Every view builds its rails asynchronously, so watch for them rather than trying
+    // to find a single point after which they all exist.
+    if (window.MutationObserver) {
+      try {
+        new MutationObserver(wireRailChromeSoon)
+          .observe(document.getElementById('view') || document.body, { childList: true, subtree: true });
+      } catch (e) {}
+    }
+    wireRailChromeSoon();
     wireSync();
     maybeSplash();
+    // After the first paint, never before it: an existing install already has the table
+    // and must not wait on a network call to render.
+    refreshSources().catch(() => {});
   }
 
   // PWA: register service worker so the app is installable ("Add to Home Screen").

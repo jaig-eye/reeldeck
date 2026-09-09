@@ -124,6 +124,50 @@ function json(obj, status = 200) {
    unauthenticated caller) get the hard limit; reads get the loose one.
    --------------------------------------------------------------------------- */
 const HITS = new Map();
+/**
+ * The playback mirrors.
+ *
+ * Moved here from the client so the list is not published. Bump SOURCES_REV whenever a
+ * row changes: the client stores the rev it last saw and only rewrites its local copy
+ * when the number moves, so a user's own added mirrors are never trampled by a refetch.
+ *
+ * Per-provider notes, kept here rather than in the client because the client is
+ * published: its comments ship byte-for-byte inside the bundle every visitor downloads.
+ *
+ *   autoplay   MIRROR, MIRROR and MIRROR parse the literal 'autoPlay=true' and
+ *              ignore 'autoplay=1'. MIRROR and MIRROR publish nothing we could
+ *              confirm, so they carry no parameter and no `tracked` flag. MIRROR's docs
+ *              say click-free autoplay works on custom domains only, so on their public
+ *              hosts a play button still appears first.
+ *
+ *   progress   PLAYER_EVENT currentTime/duration     MIRROR, MIRROR, MIRROR,
+ *                                                    MIRROR, MIRROR, MIRROR
+ *              PLAYER_EVENT player_progress/_duration the whole MIRROR family
+ *              MEDIA_DATA   progress.watched/duration MIRROR
+ *              MEDIA_DATA   data[id].progress...      MIRROR, MIRROR, MIRROR
+ *              Traps: MIRROR's TV MEDIA_DATA counts EPISODES in `watched`/`total`;
+ *              MIRROR's and MIRROR' PLAYER_EVENT `progress` is a PERCENTAGE.
+ *
+ *   resume     Only where the provider documents the parameter.
+ */
+const SOURCES_REV = 1;
+const SOURCES = [
+  { tracked: 1, resume: 'startAt', name: 'MIRROR', movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1', tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
+  { tracked: 1, resume: 'progress', name: 'MIRROR', movie: 'https://mirror.invalid/embed/movie/{id}?autoPlay=true', tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoPlay=true&nextEpisode=true&episodeSelector=true' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/movie/{id}?color=%23{color}', tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?color=%23{color}&nextEpisode=true&autoplayNextEpisode=true&episodeSelector=true' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/player/{id}?autoPlay=true', tv: 'https://mirror.invalid/player/{id}/{season}/{episode}?autoPlay=true' },
+  { tracked: 1, resume: 'startAt', name: 'MIRROR', movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1', tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
+  { tracked: 1, resume: 'startAt', name: 'MIRROR', movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1', tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
+  { name: 'MIRROR', movie: 'https://mirror.invalid/?video_id={id}&tmdb=1', tv: 'https://mirror.invalid/?video_id={id}&tmdb=1&s={season}&e={episode}' },
+  { tracked: 1, resume: 'startAt', name: 'MIRROR', movie: 'https://mirror.invalid/embed/movie/{id}?autoplay=1', tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}?autoplay=1' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/movie/{id}', tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}' },
+  { name: 'MIRROR', movie: 'https://mirror.invalid/embed/movie/{id}', tv: 'https://mirror.invalid/embed/tv/{id}/{season}/{episode}' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/movie/{id}?autoPlay=true', tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?autoPlay=true' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/movie/{id}?autoplay=true', tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?autoplay=true' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/movie/{id}?autoplay=true', tv: 'https://mirror.invalid/tv/{id}/{season}/{episode}?autoplay=true' },
+  { tracked: 1, name: 'MIRROR', movie: 'https://mirror.invalid/movie/{id}?autoplay=true', tv: 'https://mirror.invalid/tv/{id}?s={season}&e={episode}&autoplay=true' }
+];
+
 function throttle(request, bucket, limit) {
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   // Bucketed per endpoint CLASS, not per IP alone. A single counter would let
@@ -352,6 +396,16 @@ export default {
     }
 
     try {
+      // ---- playback mirrors -----------------------------------------------
+      // Served from here rather than compiled into the client, so the list is not
+      // sitting in a public repository, in the bundle every visitor downloads, or in
+      // the APK. It is not a secret from anyone running the app -- the browser is told
+      // these URLs in order to load the frame -- it is simply not published.
+      if (path === '/v1/sources') {
+        if (!throttle(request, 'rw', 60)) return json({ error: 'slow down' }, 429);
+        return json({ sources: SOURCES, rev: SOURCES_REV });
+      }
+
       // ---- sync -----------------------------------------------------------
       if (path === '/v1/pull') {
         if (!throttle(request, 'rw', 60)) return json({ error: 'slow down' }, 429);
