@@ -380,7 +380,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.35';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.36';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -3046,11 +3046,6 @@
       html += '</div>';
       view().innerHTML = html;
       wireBillboard();
-      // "New episode" on the Recently watched tiles: whatever the cache already knows
-      // paints now; anything stale is fetched and painted when it lands.
-      newEpPaint();
-      newEpScan(histByTitle().filter(r => r.type === 'tv').slice(0, 14).map(r => r.id))
-        .then(ch => { if (ch && routeIs(my)) newEpPaint(); });
     } catch (e) { if (routeIs(my)) errorState(e); }
   }
 
@@ -3316,9 +3311,10 @@
     const all = newEpAll();
     all[d.id] = { s: le.season_number || 0, e: le.episode_number || 0, date: le.air_date || '',
                   next: ne.air_date || '', ns: ne.season_number || 0, ne: ne.episode_number || 0, at: now() };
-    // Sixty shows is more than any watchlist; beyond that, drop the stalest.
+    // Every series card in view is checked now, so a browsing session touches a few
+    // hundred shows; beyond that, drop the stalest.
     const keys = Object.keys(all);
-    if (keys.length > 60) keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - 60).forEach(k => { delete all[k]; });
+    if (keys.length > 300) keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - 300).forEach(k => { delete all[k]; });
     newEpSave(all);
   }
   /**
@@ -3359,6 +3355,35 @@
     const st = newEpState(id);
     if (!st) return '';
     return `<span class="newep" title="S${st.s} \u00b7 E${st.e} aired ${esc(shortDate(st.date))}">New episode</span>`;
+  }
+  /**
+   * Badge every series card in the document, whichever view put it there.
+   *
+   * One observer on the view container, debounced: views render after awaits, grids
+   * append pages, and a rail arrives when its request lands -- an explicit call from
+   * each of those was the kind of list that silently loses an entry. Painting inserts
+   * badges, which is itself a mutation; the second pass finds nothing to fetch and
+   * stops. The scan is capped per pass (newEpScan), so a long grid fills in over a
+   * few sweeps rather than in one burst.
+   */
+  let newEpSweepT = 0;
+  function newEpSweep() {
+    clearTimeout(newEpSweepT);
+    newEpSweepT = setTimeout(() => {
+      newEpPaint();
+      const ids = [];
+      document.querySelectorAll('.card[data-nav*="/tv/"]').forEach(c => {
+        const m = /\/tv\/(\d+)/.exec(c.dataset.nav || '');
+        if (m) ids.push(m[1]);
+      });
+      const my = routeSeq;
+      newEpScan(ids).then(ch => { if (ch && routeIs(my)) newEpPaint(); });
+    }, 350);
+  }
+  function newEpWatch() {
+    const host = view();
+    if (!host || !window.MutationObserver) return;
+    new MutationObserver(newEpSweep).observe(host, { childList: true, subtree: true });
   }
   /** Put a badge on every series card on screen that has one coming. Idempotent. */
   function newEpPaint(root) {
@@ -4572,11 +4597,6 @@
         </div>`;
     html += histSectionHTML();
     view().innerHTML = html;
-    // "New episode" on the series here. What the cache knows paints at once; the rest
-    // is fetched (cached six hours) and painted when it lands.
-    newEpPaint();
-    newEpScan(list.filter(i => i.type === 'tv').map(i => i.id))
-      .then(ch => { if (ch && routeIs(my)) newEpPaint(); });
     const hc = $('#hist-clear');
     // History and progress are one idea to a viewer, so Clear takes both -- leaving
     // progress bars behind with no history to explain them reads as a bug.
@@ -5357,6 +5377,7 @@ ${IS_TV ? '' : `
    */
   function boot() {
     buildHeader();
+    newEpWatch();
     route();
     // Every view builds its rails asynchronously, so watch for them rather than trying
     // to find a single point after which they all exist.

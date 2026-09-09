@@ -289,10 +289,14 @@ body::before {
 .bb-bg { position: absolute; inset: 0; background-size: cover; background-position: center 18%; }
 .bb-slide.on .bb-bg { animation: bbzoom 20s ease-out both; }
 @keyframes bbzoom { from { transform: scale(1.1); } to { transform: scale(1); } }
-/* Three layers: the left band under the title, the bottom band under the buttons, and
-   a top band under the header bar, so the bar itself can be transparent. */
 .bb-scrim { position: absolute; inset: 0; background:
-  linear-gradient(180deg, rgba(6,8,12,.62) 0%, rgba(6,8,12,.30) 9%, transparent 22%),
+  linear-gradient(90deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.6) 34%, rgba(6,8,12,.05) 62%, transparent 100%),
+  linear-gradient(0deg, transparent 0%, rgba(6,8,12,.62) 20%, rgba(6,8,12,.28) 42%, transparent 64%); }
+/* TV only: the bar over the hero is fully transparent there (no band, no line), so the
+   darkening the nav needs on a bright backdrop is a third scrim layer on the image
+   itself, fading down over its top fifth instead of stopping where a bar would. */
+body.tv .bb-scrim { background:
+  linear-gradient(180deg, rgba(0,0,0,.62) 0%, rgba(0,0,0,.30) 9%, transparent 22%),
   linear-gradient(90deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.6) 34%, rgba(6,8,12,.05) 62%, transparent 100%),
   linear-gradient(0deg, transparent 0%, rgba(6,8,12,.62) 20%, rgba(6,8,12,.28) 42%, transparent 64%); }
 .bb-info { position: absolute; left: 0; bottom: 9%; z-index: 2; max-width: min(620px, 84vw); padding: 0 clamp(18px, 5vw, 56px); }
@@ -844,7 +848,11 @@ body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34p
 /* Change episode without leaving playback. One horizontal row, like the server room
    below it, so on a remote it is a single D-pad row rather than a trip back out. */
 .ep-strip {
-  display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 2px 2px 12px;
+  display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden;
+  /* A scroller clips at its padding box, so the focus ring needs room INSIDE it: pad
+     for the ring and pull the padding back off with a negative margin, the way the
+     rails do. 2px of padding sliced the keyboard ring; on TV the glow with it. */
+  padding: 8px 8px 12px; margin: -6px -8px 0;
   scrollbar-width: none;
 }
 .ep-strip::-webkit-scrollbar { height: 0; display: none; }
@@ -886,7 +894,10 @@ body.tv .epx-now { left: 8px; bottom: 8px; padding: 3px 9px 3px 7px; font-size: 
 body.tv .epx-now svg { width: 11px; height: 11px; }
 @media (hover: hover) { .epx:hover .epx-t { color: var(--accent); } }
 
-body.tv .ep-strip { scroll-behavior: auto; gap: clamp(12px, 1.6vw, 20px); }
+body.tv .ep-strip {
+  scroll-behavior: auto; gap: clamp(12px, 1.6vw, 20px);
+  padding: 18px 14px 18px; margin: -16px -14px -6px;    /* the TV ring glows 16px past the tile */
+}
 body.tv .epx { width: clamp(190px, 20vw, 280px); }
 body.tv .epx-t { font-size: clamp(13px, 2.1vh, 16px); }
 body.tv .pl-title { font-size: clamp(18px, 3vh, 26px); }
@@ -1590,11 +1601,7 @@ body:not(.tv) .grid { animation: rd-rise var(--dur-enter) var(--ease-enter) both
    cropped. Over the hero it is a gradient that fades to nothing; once the page
    scrolls it becomes real chrome with a hairline. */
 header.top {
-  /* Transparent, not a scrim of its own: a bar-shaped gradient ended at the bar's
-     bottom edge and read as a band laid across the artwork. The darkening the nav
-     needs over a bright backdrop now belongs to the billboard (.bb-scrim's top layer),
-     which fades into the image instead of stopping where the bar does. */
-  background: transparent;
+  background: linear-gradient(180deg, rgba(6,8,12,.82) 0%, rgba(6,8,12,.45) 55%, transparent 100%);
   backdrop-filter: none; -webkit-backdrop-filter: none;
   border-bottom: 1px solid transparent;
   transition: background var(--dur-ui) var(--ease-ui),
@@ -2427,11 +2434,14 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
 /* "New episode" on a series card: bottom-left, above the progress bar, clear of the
    rating (top-left), the type badge (top-right) and the bookmark. */
 .card .poster .newep {
-  position: absolute; left: 8px; bottom: 10px; z-index: 3;
-  padding: 3px 8px; border-radius: 99px;
-  background: var(--accent); color: var(--accent-ink);
-  font-size: 10px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
-  box-shadow: 0 2px 8px rgba(0,0,0,.45); pointer-events: none;
+  /* The same quiet pill the "Playing" marker wears: dark, accent text, small. A solid
+     accent block on every airing show turned a rail into a row of warning labels. */
+  position: absolute; left: 6px; bottom: 9px; z-index: 3;
+  padding: 2px 7px; border-radius: 99px;
+  background: rgba(8,10,14,.78); color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  font-size: 9.5px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase;
+  pointer-events: none;
 }
 .pill.next-ep { color: var(--accent); }
 .pill.next-ep svg { width: 14px; height: 14px; }
@@ -2466,7 +2476,7 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
 }
 
 /* 10-foot sizes for the newer badges, matching .rate / .typebadge above. */
-body.tv .card .poster .newep { font-size: 12px; padding: 4px 10px; left: 10px; bottom: 12px; }
+body.tv .card .poster .newep { font-size: 11px; padding: 3px 9px; left: 8px; bottom: 11px; }
 body.tv .pill.next-ep svg { width: 16px; height: 16px; }
 /* "Because you watched <a long series name>" must not wrap under the See-all link. */
 .rail .rail-head h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
