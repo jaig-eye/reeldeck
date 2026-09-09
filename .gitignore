@@ -26,3 +26,9 @@ android/local.properties
 *.keystore
 *.b64
 keystore.properties
+
+# The Worker is deployed by pasting it into the Cloudflare dashboard, so the copy here
+# is a convenience -- and it holds the mirror table. Keeping it out of the repository is
+# the entire point of having moved that table off the client: publishing it here would
+# put the URLs straight back on raw.githubusercontent.com.
+worker/
