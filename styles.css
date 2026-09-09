@@ -1858,6 +1858,10 @@ header.top.scrolled::after {
   display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: clamp(28px, 4vw, 64px);
   align-items: start;
 }
+/* min-width: 0 is what makes the cast row a SCROLLER. A grid item's minimum width is its
+   min-content size, so the prose column grew to the full width of the cast row, the row
+   never overflowed, and it ran under the facts column with nothing to scroll. */
+.dv-main { min-width: 0; }
 .dv-main h3 { margin: 0 0 12px; }
 /* A measure, not a full-width paragraph: 100+ characters a line is where prose
    stops being readable and starts being wallpaper. */
@@ -2480,3 +2484,25 @@ body.tv .card .poster .newep { font-size: 11px; padding: 3px 9px; left: 8px; bot
 body.tv .pill.next-ep svg { width: 16px; height: 16px; }
 /* "Because you watched <a long series name>" must not wrap under the See-all link. */
 .rail .rail-head h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The cast row is a rail like the others: arrows on a pointer, a fade where there is
+   more, a glide on the remote. Same masks as the poster rails, on the scroller. */
+@media (hover: hover) {
+  body:not(.tv) .rail-wrap > .cast-track {
+    --fade: 56px;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+  }
+  body:not(.tv) .rail-wrap.at-start > .cast-track {
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+  }
+  body:not(.tv) .rail-wrap.at-end > .cast-track {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 var(--fade), #000 100%);
+  }
+  body:not(.tv) .rail-wrap.no-scroll > .cast-track,
+  body:not(.tv) .rail-wrap.at-start.at-end > .cast-track { -webkit-mask-image: none; mask-image: none; }
+}
+.rail-wrap > .cast-track { scroll-snap-type: x proximity; }
+.rail-wrap > .cast-track > .person { scroll-snap-align: start; }

@@ -383,7 +383,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '1.0.39';   // bump with each release (matches package.json)
+  const APP_VERSION = '1.0.40';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -535,7 +535,7 @@
     wrap.classList.toggle('at-start', none || track.scrollLeft <= 2);
     wrap.classList.toggle('at-end', none || track.scrollLeft >= max - 2);
   }
-  const RAILS = '.rail-wrap > .track, .rail-wrap > .ep-strip, .rail-wrap > .season-pills, .ep-strip, .season-pills';
+  const RAILS = '.rail-wrap > .track, .rail-wrap > .ep-strip, .rail-wrap > .season-pills, .rail-wrap > .cast-track, .ep-strip, .season-pills';
   function wireRailChrome() {
     document.querySelectorAll(RAILS).forEach(t => {
       if (t.__railWired) { railChrome(t); return; }
@@ -3501,11 +3501,15 @@
       const cast = (credits.cast || []).slice(0, 14);
       const castBlock = cast.length ? `
         <h3 class="dv-sub">Cast</h3>
-        <div class="cast-track">
+        <div class="rail-wrap">
+          <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll cast left">${ICON.back}</button>
+          <div class="cast-track">
           ${cast.map(c => `<div class="person" data-nav="#/person/${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}${c.character ? ' as ' + esc(c.character) : ''}">
             <img loading="lazy" decoding="async" src="${img(c.profile_path, 'w185')}" alt="" onerror="this.src='${PLACEHOLDER}'">
             <div class="n">${esc(c.name)}</div><div class="c">${esc(c.character || '')}</div>
           </div>`).join('')}
+          </div>
+          <button class="rail-arrow right" data-rail="1" tabindex="-1" aria-label="Scroll cast right">${ICON.chevR}</button>
         </div>` : '';
 
       // Body: prose on the left at a readable measure, reference material on the
@@ -5269,7 +5273,7 @@ ${IS_TV ? '' : `
     if (oe) { e.preventDefault(); openExternal(oe.dataset.openext); return; }
     const ra = e.target.closest('[data-rail]');
     if (ra) {
-      const track = ra.parentElement.querySelector('.track, .ep-strip, .season-pills');
+      const track = ra.parentElement.querySelector('.track, .ep-strip, .season-pills, .cast-track');
       if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: 'smooth' });
       return;
     }
