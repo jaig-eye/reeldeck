@@ -45,6 +45,11 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version-bump guard below diffs against github.event.before. With the
+          # default depth of 1 that commit is not in the clone, the diff fails, and the
+          # guard printed "No app code changed" on every push -- it had never once fired.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -94,7 +99,13 @@ jobs:
             echo "No previous commit to compare against - skipping."
             exit 0
           fi
-          CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- app.js styles.css sw.js || true)
+          # A diff that cannot run is a FAILURE, not "nothing changed": that is exactly
+          # how a shallow clone turned this guard into a no-op.
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "::error::previous commit $BEFORE is not in the clone; cannot verify the version bump."
+            exit 1
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- app.js styles.css sw.js)
           if [ -z "$CHANGED" ]; then
             echo "No app code changed."
             exit 0
