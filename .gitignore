@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+release/
+dist-electron/
+www/
+dist-webos/
+Reeldeck.apk
+
+# Android (Capacitor) build outputs & machine-specific config
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+
+# OS / IDE
+.DS_Store
+.idea/
+*.iml
+*.log
+
+# Signing key material. The Android release key must NEVER be committed: it is what
+# lets an update install over an existing app, and anyone holding it can sign an APK
+# that replaces yours. It lives outside the repo and reaches CI as a secret.
+*.jks
+*.keystore
+*.b64
+keystore.properties
+
+
+# Smoke-test screenshots and reports, and debug APKs built in the container.
+docker/out/

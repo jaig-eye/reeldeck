@@ -1,0 +1,19 @@
+# The web and smoke images copy a handful of named files; everything else is noise that
+# would otherwise be tarred up and sent to the daemon on every build (node_modules and
+# release/ alone are several hundred MB).
+node_modules
+release
+dist-electron
+www
+android
+electron
+worker
+build
+docker/out
+.git
+.github
+*.apk
+*.jks
+*.keystore
+*.b64
+keystore.properties

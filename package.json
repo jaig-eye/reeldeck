@@ -1,0 +1,112 @@
+{
+  "name": "reeldeck",
+  "productName": "Reeldeck",
+  "version": "3.2.1",
+  "description": "A clean, ad-free movie & TV browser (TMDB) — desktop build for per-app VPN routing.",
+  "author": {
+    "name": "jaig-eye",
+    "email": "jaig-eye@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node scripts/serve.js",
+    "check:versions": "node scripts/check-versions.js",
+    "test:guards": "electron scripts/test-guards.js",
+    "icons": "node scripts/gen-icons.js && npx --yes @capacitor/assets generate --android --iconBackgroundColor #000000 --iconBackgroundColorDark #000000",
+    "web:build": "node scripts/build-web.js",
+    "apk": "node scripts/build-web.js && npx cap copy android && cd android && gradlew.bat assembleDebug",
+    "apk:open": "node scripts/build-web.js && npx cap copy android && npx cap open android",
+    "dist": "electron-builder --win nsis portable",
+    "dist:portable": "electron-builder --win portable",
+    "dist:web": "electron-builder --win nsis-web --publish never",
+    "dist:mac": "electron-builder --mac",
+    "dist:dir": "electron-builder --win dir",
+    "docker:web": "docker compose up --build web",
+    "docker:smoke": "docker compose build web smoke && docker compose up -d web && docker compose run --rm smoke",
+    "android:check": "docker compose run --rm android check",
+    "android:apk": "node scripts/build-web.js && npx cap copy android && docker compose run --rm android apk",
+    "compat": "node scripts/compat-css.js",
+    "webos:ipk": "node scripts/webos-icons.js && ares-package webos -o dist-webos"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@webos-tools/cli": "3.2.6",
+    "electron": "^35.2.1",
+    "electron-builder": "^25.1.8",
+    "sharp": "^0.35.4"
+  },
+  "build": {
+    "afterPack": "scripts/mac-adhoc-sign.js",
+    "appId": "com.reeldeck.app",
+    "productName": "Reeldeck",
+    "files": [
+      "electron/**",
+      "index.html",
+      "app.js",
+      "styles.css",
+      "stage.css",
+      "compat.css",
+      "sw.js",
+      "manifest.webmanifest",
+      "assets/**",
+      "scripts/web-files.js"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.entertainment",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "include": "build/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    },
+    "nsisWeb": {
+      "artifactName": "${productName}-Web-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "releaseType": "draft"
+    }
+  },
+  "dependencies": {
+    "@capacitor/app": "^6.0.3",
+    "@ghostery/adblocker-electron": "^2.18.2",
+    "electron-updater": "^6.8.9",
+    "qrcode-generator": "^2.0.4"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "com.reeldeck.app",
+  "version": "3.2.1",
+  "vendor": "Reeldeck",
+  "type": "web",
+  "main": "index.html",
+  "title": "Reeldeck",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgColor": "#0b0d12",
+  "iconColor": "#0b0d12",
+  "resolution": "1280x720",
+  "disableBackHistoryAPI": true,
+  "requiredACG": []
+}

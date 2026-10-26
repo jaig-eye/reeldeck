@@ -1,0 +1,159 @@
+name: Publish web app
+
+# Hosts the app at https://<owner>.github.io/<repo>/ so it can be INSTALLED on an
+# iPhone or iPad. That is the only route Apple offers here: iOS cannot install an APK,
+# there is no App Store build, and "Add to Home Screen" needs a URL to install FROM.
+# Until this existed an iPhone had no path at all -- tinyurl.com/reeldeck serves an
+# Android package, which Safari downloads and can then do nothing with.
+#
+# It also gives Android and desktop users a try-before-you-install link, and serves the
+# app over HTTPS, which is what makes crypto.subtle available -- so password sign-in
+# works here and cannot work over a plain-http LAN address.
+
+on:
+  push:
+    branches: [main]
+    # Only when something the site actually serves has changed. The Android, Electron
+    # and worker sources are not part of the web build.
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'styles.css'
+      - 'stage.css'
+      - 'compat.css'
+      - 'scripts/compat-css.js'
+      - 'sw.js'
+      - 'manifest.webmanifest'
+      - 'assets/**'
+      - 'scripts/build-web.js'
+      - 'scripts/web-files.js'
+      - 'scripts/check-versions.js'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy midway; queue instead. A half-applied Pages deploy would
+# serve a mixed set of assets.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version-bump guard below diffs against github.event.before. With the
+          # default depth of 1 that commit is not in the clone, the diff fails, and the
+          # guard printed "No app code changed" on every push -- it had never once fired.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The same script the APK build uses, so what is hosted is byte-identical to
+      # what is bundled: index.html, app.js, styles.css, sw.js, the manifest, assets.
+      # Note it copies an explicit allowlist -- electron/, scripts/ and worker/ are
+      # NOT published, which matters because worker/ is server code.
+      - name: Build the web bundle
+        run: node scripts/build-web.js
+
+      # A PWA served from a project page lives under /<repo>/. Everything in this app
+      # is already relative -- manifest start_url and scope are "./", the service
+      # worker precaches "./" paths, and sw.js is registered by relative path -- so no
+      # rewriting is needed. This step only proves that stays true.
+      - name: Check nothing depends on being served from the domain root
+        run: |
+          if grep -rnE '(src|href)="/[^/]' www/index.html; then
+            echo "::error::Root-absolute path in index.html would 404 under /<repo>/"
+            exit 1
+          fi
+          node -e "
+            // read+parse, NOT require: node resolves .webmanifest as JavaScript and
+            // throws on the first ':' in the object, which would fail every deploy.
+            const m = JSON.parse(require('fs').readFileSync('www/manifest.webmanifest', 'utf8'));
+            for (const k of ['start_url','scope']) {
+              if (!String(m[k]).startsWith('./')) {
+                console.error('::error::manifest.' + k + ' must be relative, got ' + m[k]);
+                process.exit(1);
+              }
+            }
+            console.log('manifest start_url/scope are relative — OK');
+          "
+
+      # Jekyll would otherwise ignore files and folders beginning with an underscore.
+      # A code change without a version bump is invisible until someone complains.
+      # index.html asks for app.js?v=N and sw.js caches that exact URL first-of-all, so
+      # if the code changes while N does not, Pages serves the new file and every
+      # INSTALLED app keeps serving the old one from its cache -- for ever, because
+      # nothing ever invalidates it. The document itself is network-first, so a bumped N
+      # propagates immediately; an un-bumped one never does.
+      - name: A code change must carry a version bump
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "No previous commit to compare against - skipping."
+            exit 0
+          fi
+          # A diff that cannot run is a FAILURE, not "nothing changed": that is exactly
+          # how a shallow clone turned this guard into a no-op.
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "::error::previous commit $BEFORE is not in the clone; cannot verify the version bump."
+            exit 1
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}" -- app.js styles.css sw.js)
+          if [ -z "$CHANGED" ]; then
+            echo "No app code changed."
+            exit 0
+          fi
+          echo "Changed: $CHANGED"
+          OLDV=$(git show "$BEFORE:index.html" 2>/dev/null | grep -o 'app\.js?v=[0-9]*' | head -1 || true)
+          NEWV=$(grep -o 'app\.js?v=[0-9]*' index.html | head -1)
+          echo "cache-busting query  before=$OLDV  now=$NEWV"
+          if [ "$OLDV" = "$NEWV" ]; then
+            echo "::error::app code changed but the ?v= cache-busting query did not. Installed PWAs would keep serving the old app.js for ever. Bump APP_VERSION, sw.js CACHE, and the ?v= in index.html together."
+            exit 1
+          fi
+          echo "Version moved - installed apps will pick this up."
+
+      # The diff above only proves app.js?v moved. This proves every ?v, the sw.js CACHE name
+      # and its shell URLs moved WITH it (a styles-only bump used to pass), and that
+      # APP_VERSION / package.json / build.gradle agree.
+      - name: Every version number agrees
+        run: node scripts/check-versions.js
+
+      # The LG app runs on Chromium 79 and leans on compat.css; a stylesheet edit without
+      # `npm run compat` would leave it a version behind.
+      - name: compat.css matches the stylesheets
+        run: node scripts/compat-css.js --check
+
+      - name: Disable Jekyll processing
+        run: touch www/.nojekyll
+
+      # NO enablement: true. Creating a Pages site is an admin-scoped API call and the
+      # workflow's built-in GITHUB_TOKEN cannot make it -- it fails with
+      # "Resource not accessible by integration", which is what happened the first time
+      # this ran. Pages has to be switched on once, by hand:
+      #     Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+      # After that this step just reads the existing configuration and every later
+      # deploy is automatic.
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Where it landed
+        run: echo "Published to ${{ steps.deploy.outputs.page_url }}"

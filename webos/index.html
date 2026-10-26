@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reeldeck</title>
+  <!--
+    The LG app is a launcher for the hosted web app (LG's "hosted web app" pattern): every
+    release reaches the TV through the web publish, with nothing to reinstall. tv=1 and
+    webos=1 switch on the TV layout and the webOS remote; app.js also recognises the webOS
+    browser by itself. appinfo.json's disableBackHistoryAPI hands the Back key to app.js.
+  -->
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0d12; color: #eef1f6; font-family: sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    img { width: 120px; height: 120px; margin-bottom: 28px; }
+    p { margin: 0; font-size: 26px; opacity: .8; }
+    button { margin-top: 28px; font-size: 24px; padding: 14px 34px; border-radius: 999px; border: 0; background: #f5c518; color: #12151d; }
+  </style>
+</head>
+<body>
+  <img src="largeIcon.png" alt="">
+  <p id="msg">Loading Reeldeck&hellip;</p>
+  <script>
+    var APP = 'https://jaig-eye.github.io/reeldeck/?tv=1&webos=1';
+    function go() { window.location.replace(APP); }
+    // Offline at launch: say so and offer a retry, rather than a blank screen.
+    if (navigator.onLine === false) {
+      document.getElementById('msg').textContent = 'No connection. Check the TV is online.';
+      var b = document.createElement('button');
+      b.textContent = 'Try again';
+      b.onclick = function () { location.reload(); };
+      document.body.appendChild(b);
+      b.focus();
+    } else {
+      go();
+    }
+  </script>
+</body>
+</html>

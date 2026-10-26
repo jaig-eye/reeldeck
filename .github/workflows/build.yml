@@ -1,0 +1,262 @@
+name: Build Electron App
+
+# Builds Windows (.exe: nsis + portable) and macOS (.dmg + .zip) installers.
+# The macOS half MUST run on a macOS runner: a .dmg cannot be cross-built on
+# Windows/Linux (it needs hdiutil, plus Apple codesign/notarytool for signing).
+# electron-builder output dir for this project is "release/", so artifacts are
+# uploaded from release/ (not dist/).
+
+on:
+  push:
+    tags:
+      - 'v*'            # push a tag like v1.0.0 to trigger a release build
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+# Needed so the built-in GITHUB_TOKEN can create the Release and upload assets
+# (the web-installer payload the stub downloads).
+permissions:
+  contents: write
+
+jobs:
+  # ONE draft release, created before anything is built, that every job uploads into and
+  # nobody can see until `publish` says so. Two electron-builder jobs used to each race
+  # to CREATE a public release: the first to finish published a release holding only its
+  # own files, and a desktop that checked for updates in the minutes before the Windows
+  # files arrived found no latest.yml (404). The TV saw the same thing as a release with
+  # no APK. Drafts are invisible to /releases/latest and to electron-updater.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.id }}
+    steps:
+      # Before anything is built or a draft exists: a tag whose numbers disagree would ship
+      # an Android update loop (APP_VERSION behind package.json) or a stale PWA (?v not moved).
+      - uses: actions/checkout@v7
+      - name: Versions agree with the tag and with each other
+        run: node scripts/check-versions.js "${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}"
+      - name: compat.css matches the stylesheets
+        run: node scripts/compat-css.js --check
+
+      - name: Create (or reuse) the draft release for this tag
+        id: draft
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          R: ${{ github.repository }}
+        run: |
+          set -e
+          # A re-run must land in the same draft, not open a second one.
+          ID=$(gh api "repos/$R/releases" --paginate -q ".[] | select(.draft and .tag_name==\"$TAG\") | .id" | head -1)
+          if [ -z "$ID" ]; then
+            ID=$(gh api --method POST "repos/$R/releases" -f tag_name="$TAG" -f name="$TAG" -F draft=true -F prerelease=false -q .id)
+            echo "created draft $ID for $TAG"
+          else
+            echo "reusing draft $ID for $TAG"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false          # a Windows failure must not cancel the macOS job
+      matrix:
+        include:
+          - os: windows-latest
+            # nsis-web = the tiny web-installer stub + its payload; portable = full single exe.
+            # --publish always uploads them (incl. the .nsis.7z the stub fetches) to the GitHub Release.
+            build_cmd: npx electron-builder --win nsis-web portable --publish always
+          - os: macos-latest     # Apple Silicon (arm64); billed at 10x on private repos
+            build_cmd: npx electron-builder --mac --publish always
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7        # current major (v7.0.1, verified Aug 2026)
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7      # current major (v7.0.0, verified Aug 2026)
+        with:
+          node-version: 22               # active LTS; 20 is also fine
+          cache: npm                     # cache ~/.npm, keyed on package-lock.json
+
+      - name: Install dependencies
+        run: npm ci                      # clean, lockfile-exact install
+
+      - name: Build installer (OS-specific)
+        run: ${{ matrix.build_cmd }}
+        env:
+          # Only consumed if you later switch to --publish; harmless otherwise.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7   # current major (v7.0.1, verified Aug 2026)
+        with:
+          # UNIQUE per matrix job: v4+ artifacts are immutable, so a shared name
+          # would make the second job's upload fail.
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest*.yml
+
+  # Android APK — the SAME universal apk installs on phones and Android/Google TV.
+  # Runs independently (a flaky mac build never blocks the apk) and, on a tag,
+  # attaches Reeldeck.apk to the release so Downloader can fetch it from
+  # github.com/<owner>/<repo>/releases/latest/download/Reeldeck.apk
+  android:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets + sync Capacitor
+        run: |
+          node scripts/build-web.js
+          npx cap sync android
+
+      # Without a stable key each runner generates its own debug keystore, so every
+      # release is signed differently and Android refuses to install one over the
+      # last ("App not installed"). Decoded from a secret so the key never lives in
+      # the repository. If the secret is absent the build still succeeds -- it just
+      # produces an APK that cannot update an existing install, which is the old
+      # behaviour and is flagged in the log rather than failing the release.
+      - name: Restore signing key
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/reeldeck.jks"
+            echo "keystore=$RUNNER_TEMP/reeldeck.jks" >> "$GITHUB_OUTPUT"
+            echo "Signing with the shared release key."
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set - this APK will NOT be able to update an existing install."
+          fi
+
+      - name: Build release APK
+        env:
+          RELEASE_KEYSTORE: ${{ steps.signing.outputs.keystore }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          # Optional: only needed if the key has its OWN password. Left unset, Gradle
+          # falls back to the store password, which is what keytool uses when you
+          # accept its offer to reuse it.
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x android/gradlew
+          # RELEASE, not debug. A debug build carries android:debuggable="true", which
+          # (a) makes Play Protect treat the sideload as suspect, and (b) lets any local
+          # process read the app's private data -- including the account uid held in
+          # WebView localStorage, which is this app's bearer credential.
+          cd android && ./gradlew assembleRelease --no-daemon
+
+      # assembleRelease emits app-release-unsigned.apk when no keystore was supplied.
+      # Publishing that would ship an APK nobody can install, which is precisely what the
+      # signing setup exists to prevent -- so fail here instead of at the user's TV.
+      - name: Verify the APK is signed, then name it
+        run: |
+          OUT=android/app/build/outputs/apk/release
+          if [ ! -f "$OUT/app-release.apk" ]; then
+            echo "::error::No signed APK. assembleRelease produced:"; ls -la "$OUT" || true
+            echo "::error::ANDROID_KEYSTORE_BASE64 / _PASSWORD / _KEY_ALIAS must be set."
+            exit 1
+          fi
+          cp "$OUT/app-release.apk" Reeldeck.apk
+          # Print the certificate on every release so the fingerprint is in the log and a
+          # key change can never pass unnoticed again.
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -1 || true)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs --verbose Reeldeck.apk
+          else
+            unzip -p Reeldeck.apk META-INF/CERT.RSA > cert.rsa \
+              && keytool -printcert -file cert.rsa | grep -Ei 'Owner|SHA256'
+          fi
+          # The binary manifest's string pool is UTF-16, so "debuggable" never appears as
+          # contiguous bytes: a plain grep misses it, and so does plain `strings`, which
+          # wants four printable bytes in a row. `strings -e l` reads 16-bit
+          # little-endian, which is what the pool actually is -- verified to match against
+          # a known debuggable APK. Both encodings are tested because aapt2 chooses per
+          # pool, and a guard that silently stops matching is worse than no guard.
+          if { unzip -p Reeldeck.apk AndroidManifest.xml | strings -e l
+               unzip -p Reeldeck.apk AndroidManifest.xml | strings
+             } | grep -qi debuggable; then
+            echo "::error::This APK is still debuggable - it must be a release build."
+            exit 1
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          if-no-files-found: error
+          retention-days: 7
+          path: Reeldeck.apk
+
+      # Straight into the draft by REST, not through an action that would create its own
+      # release. Replace rather than duplicate, so a re-run leaves one Reeldeck.apk.
+      - name: Attach the APK to the draft release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ID: ${{ needs.prepare.outputs.release_id }}
+          R: ${{ github.repository }}
+        run: |
+          set -e
+          [ -n "$ID" ] || { echo "::error::no draft release id from prepare"; exit 1; }
+          for a in $(gh api "repos/$R/releases/$ID/assets" --paginate -q '.[] | select(.name=="Reeldeck.apk") | .id'); do
+            gh api --method DELETE "repos/$R/releases/assets/$a"
+          done
+          curl -sSf -X POST \
+               -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Content-Type: application/vnd.android.package-archive" \
+               --data-binary @Reeldeck.apk \
+               "https://uploads.github.com/repos/$R/releases/$ID/assets?name=Reeldeck.apk" > /dev/null
+          echo "Reeldeck.apk attached to draft $ID"
+
+  # The only step that makes a release visible. It runs after EVERY builder has finished
+  # and refuses unless the set is complete, so a failed builder leaves a draft behind
+  # (visible in the Releases tab, offered to nobody) instead of a broken public release.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [prepare, build, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the asset set, then publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ID: ${{ needs.prepare.outputs.release_id }}
+          TAG: ${{ github.ref_name }}
+          R: ${{ github.repository }}
+        run: |
+          set -e
+          NAMES=$(gh api "repos/$R/releases/$ID/assets" --paginate -q '.[].name')
+          COUNT=$(printf '%s\n' "$NAMES" | grep -c . || true)
+          echo "assets on draft $ID:"; printf '  %s\n' $NAMES
+          for need in latest.yml latest-mac.yml Reeldeck.apk; do
+            printf '%s\n' "$NAMES" | grep -qx "$need" || { echo "::error::$need is missing - $TAG stays a draft."; exit 1; }
+          done
+          [ "$COUNT" -ge 13 ] || { echo "::error::only $COUNT assets - $TAG stays a draft."; exit 1; }
+          gh api --method PATCH "repos/$R/releases/$ID" -F draft=false > /dev/null
+          echo "published $TAG with $COUNT assets"

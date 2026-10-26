@@ -1,0 +1,58 @@
+# Reeldeck in containers. Nothing here is needed to USE the app; it is the workshop.
+#
+#   docker compose up web                      serve the built app   http://localhost:8080
+#   docker compose run --rm smoke              real-browser smoke test + screenshots -> docker/out/
+#   docker compose run --rm android            compile the Android layer (run before tagging)
+#   docker compose run --rm android apk        debug APK -> docker/out/Reeldeck-debug.apk
+#
+# npm run docker:web | docker:smoke | android:check | android:apk   wrap the same things.
+
+name: reeldeck
+
+services:
+  web:
+    build: { context: ., dockerfile: docker/web/Dockerfile }
+    ports: ["8080:80"]
+
+  smoke:
+    build: { context: ., dockerfile: docker/smoke/Dockerfile }
+    depends_on:
+      web: { condition: service_healthy }
+    environment:
+      BASE: http://web:80
+      OUT: /out
+      # SHOTS=0 skips screenshots (faster); ONLY=tv limits the run to one profile.
+      SHOTS: ${SHOTS:-1}
+      ONLY: ${ONLY:-}
+    volumes:
+      - ./docker/out:/out
+      # Mounted rather than baked in, so editing the script does not need a rebuild.
+      - ./docker/smoke/smoke.js:/smoke/smoke.js:ro
+    # Chromium wants more shared memory than Docker's 64 MB default.
+    shm_size: 1gb
+    profiles: [tools]
+
+  android:
+    build: { context: ., dockerfile: docker/android/Dockerfile }
+    volumes:
+      - .:/repo
+      - ./docker/android/local.properties:/repo/android/local.properties:ro
+      # Linux build state stays in volumes, never in the Windows checkout: Gradle's
+      # caches record absolute paths, and sharing them with a host build corrupts both.
+      - gradle-cache:/gradle-cache
+      - android-dotgradle:/repo/android/.gradle
+      - android-root-build:/repo/android/build
+      - android-app-build:/repo/android/app/build
+      - android-cordova-build:/repo/android/capacitor-cordova-android-plugins/build
+      - cap-android-build:/repo/node_modules/@capacitor/android/capacitor/build
+      - cap-app-build:/repo/node_modules/@capacitor/app/android/build
+    profiles: [tools]
+
+volumes:
+  gradle-cache:
+  android-dotgradle:
+  android-root-build:
+  android-app-build:
+  android-cordova-build:
+  cap-android-build:
+  cap-app-build:
