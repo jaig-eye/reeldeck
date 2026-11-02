@@ -9,6 +9,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.content.pm.SigningInfo;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
@@ -19,16 +20,26 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.webkit.DownloadListener;
+import android.webkit.GeolocationPermissions;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
+import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
+import android.webkit.WebHistoryItem;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 
 import androidx.core.content.FileProvider;
 import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.ServiceWorkerClientCompat;
+import androidx.webkit.ServiceWorkerControllerCompat;
 import androidx.webkit.WebMessageCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebChromeClient;
 import com.getcapacitor.BridgeWebViewClient;
 
 import java.io.File;
@@ -138,7 +149,138 @@ public class MainActivity extends BridgeActivity {
                 }
                 return super.shouldOverrideUrlLoading(view, request);
             }
+
+            // shouldOverrideUrlLoading is never called for a POST, so a frame submitting
+            // <form method=post target=_top> to an ad host took the whole app off localhost
+            // with no check above seeing it. Caught here, after the fact: stop the load, and
+            // if the ad page already made it into history, step back off it (or, with nothing
+            // to step back to, reload the app). Same-document hash routes never land here.
+            @Override
+            public void onPageStarted(final WebView view, String url, Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                if (isAppUrl(parse(url))) return;
+                view.stopLoading();
+                WebHistoryItem cur = view.copyBackForwardList().getCurrentItem();
+                if (cur != null && isAppUrl(parse(cur.getUrl()))) return;   // never committed
+                // Posted: navigating from inside the navigation callback re-enters it.
+                view.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (view.canGoBack()) view.goBack();
+                        else view.loadUrl(getBridge().getAppUrl());
+                    }
+                });
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                // Ads, trackers and malware domains, for every frame. super is not optional:
+                // Capacitor serves the app's own files from here, and localhost is on
+                // AdBlocklist's never-block list so the app itself can never be refused.
+                if (AdBlocklist.isBlocked(request.getUrl())) return AdBlocklist.blockedResponse();
+                return super.shouldInterceptRequest(view, request);
+            }
         });
+
+        // A mirror's own service worker fetches through a separate client and would walk
+        // straight past the filter above. Capacitor installs no service-worker client, so
+        // returning null for everything else keeps exactly today's behaviour (network).
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)
+                && WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)) {
+            try {
+                ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(new ServiceWorkerClientCompat() {
+                    @Override
+                    public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                        return AdBlocklist.isBlocked(request.getUrl()) ? AdBlocklist.blockedResponse() : null;
+                    }
+                });
+            } catch (RuntimeException e) {
+                // Reported but unavailable on this WebView build: frames still get the main filter.
+            }
+        }
+        AdBlocklist.refreshAsync(this);
+
+        // Capacitor's chrome client, with the player held out of the parts that reach
+        // past the page. Installed here, still inside onCreate: its constructor registers
+        // ActivityResult launchers, which the activity refuses once it is STARTED.
+        webView.setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
+            // alert/confirm/prompt become NATIVE AlertDialogs over the whole app, from any
+            // frame -- on a TV, a full-screen "Your device is infected, press OK" that the
+            // remote cannot get past. Only the app's own document may raise one; anything
+            // else is cancelled unseen. Returning true is what stops WebView from showing
+            // its own default dialog instead.
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                if (isAppUrl(parse(url))) return super.onJsAlert(view, url, message, result);
+                result.cancel();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                if (isAppUrl(parse(url))) return super.onJsConfirm(view, url, message, result);
+                result.cancel();
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message, String defaultValue,
+                                      JsPromptResult result) {
+                if (isAppUrl(parse(url))) return super.onJsPrompt(view, url, message, defaultValue, result);
+                result.cancel();
+                return true;
+            }
+
+            // CONFIRMED, not cancelled, for a frame: cancel means "stay on this page", which
+            // would let a mirror veto the app swapping its src for the next mirror and pin
+            // the ad page in place. confirm lets the navigation go ahead, silently.
+            @Override
+            public boolean onJsBeforeUnload(WebView view, String url, String message, JsResult result) {
+                if (isAppUrl(parse(url))) return super.onJsBeforeUnload(view, url, message, result);
+                result.confirm();
+                return true;
+            }
+
+            // Capacitor grants every resource that is not camera or mic without asking:
+            // MIDI_SYSEX, and PROTECTED_MEDIA_ID -- a stable per-device DRM identifier, a
+            // fingerprint as good as a serial number. None of it is for a third-party frame.
+            // Trade-off: denying PROTECTED_MEDIA_ID also denies Widevine to the frames; the
+            // mirrors play plain HLS today, so a mirror that switches to DRM will fail to
+            // play here rather than be handed the device id.
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                if (isAppUrl(request.getOrigin())) { super.onPermissionRequest(request); return; }
+                request.deny();
+            }
+
+            // Capacitor would raise Android's location permission prompt on a frame's behalf.
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                if (isAppUrl(parse(origin))) { super.onGeolocationPermissionsShowPrompt(origin, callback); return; }
+                callback.invoke(origin, false, false);
+            }
+
+            // A frame's <input type=file capture accept=image/*> opened the CAMERA at once
+            // (no CAMERA permission in the manifest, so Capacitor has nothing to ask first),
+            // and a plain one the system picker -- whatever was chosen went to the ad. The
+            // callback names no origin, so this goes by state: the app's one file input is
+            // Settings > Import (.json), which never captures and never shares the screen
+            // with a player. Where the bridge is absent (WebView < 88) playerOpen stays
+            // false and only the capture half holds.
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> filePathCallback,
+                                             FileChooserParams params) {
+                if (!playerOpen && params != null && !params.isCaptureEnabled()) {
+                    return super.onShowFileChooser(view, filePathCallback, params);
+                }
+                filePathCallback.onReceiveValue(null);
+                return true;
+            }
+        });
+    }
+
+    private static Uri parse(String url) {
+        return url == null ? null : Uri.parse(url);
     }
 
     /**
@@ -243,6 +385,8 @@ public class MainActivity extends BridgeActivity {
                                 playerOpen = data.endsWith("1");
                                 return;
                             }
+                            // The sites of our configured servers, kept off the ad list.
+                            if (data.startsWith("exempt:")) { AdBlocklist.setExempt(data.substring(7)); return; }
                             // Asked for after we hand it a media key: focus is in the
                             // embed by then, so a real key press reaches the player's
                             // own handler.
@@ -405,9 +549,32 @@ public class MainActivity extends BridgeActivity {
         leftForeground = true;
     }
 
+    // Capacitor never pauses the WebView: its Bridge only does when the Cordova "KeepRunning"
+    // preference is false, and it defaults to true. Without it the page stayed "visible"
+    // behind the home screen, and a mirror kept streaming (and its ads kept loading) into a
+    // TV nobody was watching. onStop/onStart, NOT onPause/onResume: a paused WebView reads
+    // as document.hidden, and the TV's quick-settings panel, a phone's installer dialog or
+    // the other split-screen pane all pause the app while the film is still on screen --
+    // hidden there stalled the video and armed app.js's background unload. Not
+    // pauseTimers(): that is process-wide and would stall the web layer's view of an update.
+    @Override
+    public void onStop() {
+        super.onStop();
+        WebView wv = bridgeWebView;
+        if (wv != null) wv.onPause();
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        WebView wv = bridgeWebView;
+        if (wv != null) wv.onResume();
+    }
+
     @Override
     public void onResume() {   // PUBLIC: BridgeActivity declares it public, and Java
         super.onResume();      // forbids an override from narrowing that to protected.
+        AdBlocklist.refreshAsync(this);   // a TV app can stay open for weeks; re-checks hourly at most
         final String url = pendingInstallUrl;
         if (url == null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

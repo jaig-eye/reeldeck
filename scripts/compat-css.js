@@ -6,6 +6,10 @@
  * not have, and each fails quietly but badly there:
  *   inset          the Stage's layers, scrims and overlays collapse to 0x0
  *   color-mix()    the declaration is dropped: scrims and tints vanish
+ *                  (a fallback here can only be ONE colour, worked out with the default
+ *                  Midnight theme, so anything that must follow the theme on webOS is written
+ *                  as rgba(var(--bg-rgb / --veil-rgb / --accent-rgb), a) instead, which 79
+ *                  supports natively; the output names every mix that still depends on it)
  *   flex gap       79 knows gap for grid only: flex items touch
  *   aspect-ratio   boxes whose content is absolutely placed (the player) are 0px tall
  *
@@ -120,9 +124,18 @@ function rootVars(rules) {
   rules.filter((r) => !r.ctx.length && r.sel === ':root').forEach((r) => r.decls.forEach((d) => {
     if (d.prop.indexOf('--') === 0 && !(d.prop in vars)) vars[d.prop] = d.val;
   }));
-  // Set at run time by the house lights (app.js ambientSet); a neutral stand-in here.
-  if (!vars['--ambient']) vars['--ambient'] = 'rgb(80, 110, 150)';
   return vars;
+}
+// Each theme's variables: the defaults with its :root[data-theme="..."] block laid over them.
+function themeVars(rules, base) {
+  const themes = {};
+  rules.forEach((r) => {
+    const m = !r.ctx.length && /^:root\[data-theme="?([\w-]+)"?\]$/.exec(r.sel);
+    if (!m) return;
+    const v = themes[m[1]] || (themes[m[1]] = Object.assign({}, base));
+    r.decls.forEach((d) => { if (d.prop.indexOf('--') === 0) v[d.prop] = d.val; });
+  });
+  return themes;
 }
 function parseColor(s, vars, depth) {
   s = s.trim();
@@ -213,6 +226,8 @@ function flexGapOf(rule) {
 function build() {
   const rules = SOURCES.flatMap((f) => parse(fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n?/g, '\n')));
   const vars = rootVars(rules);
+  const themes = themeVars(rules, vars);
+  const themed = [];          // selectors whose fallback is right in Midnight only
   const wrap = (ctx, inner) => ctx.reduceRight((acc, c) => c + ' {\n' + acc.replace(/^/gm, '  ') + '\n}', inner);
   const sections = { inset: [], mix: [], logical: [], gap: [] };
   let skippedMix = 0;
@@ -227,6 +242,7 @@ function build() {
       if (/color-mix\(/i.test(d.val)) {
         const v = resolveMixes(d.val, vars);
         if (v) mixes.push(`${d.prop}: ${v}${d.imp};`); else skippedMix++;
+        if (v && Object.keys(themes).some((t) => resolveMixes(d.val, themes[t]) !== v) && themed.indexOf(r.sel) < 0) themed.push(r.sel);
       }
       const lm = /^(margin|padding)-inline$/.exec(d.prop);
       if (lm) { const v = topSplit(d.val, ' '); logical.push(`${lm[1]}-left: ${v[0]}${d.imp}; ${lm[1]}-right: ${v[1] || v[0]}${d.imp};`); }
@@ -262,6 +278,8 @@ function build() {
   return head
     + '\n/* inset -> top/right/bottom/left */\n' + block('@supports not (inset: 0)', sections.inset)
     + '\n/* color-mix() -> the colour it makes with the default (Midnight) theme */\n'
+    + (themed.length ? `/* Midnight's colour in every theme, because the mix depends on the theme: ${themed.join('; ')}.
+   Write one of these as rgba(var(--x-rgb), a) if it has to follow the theme on webOS. */\n` : '')
     + block('@supports not (color: color-mix(in srgb, red 50%, blue))', sections.mix)
     + '\n/* margin-inline / padding-inline -> left and right */\n' + block('@supports not (margin-inline: 0)', sections.logical)
     + '\n/* flex gap -> margins between the children (html.no-flexgap: app.js measures it) */\n' + sections.gap.join('\n') + '\n'
@@ -275,7 +293,7 @@ if (process.argv.includes('--check')) {
   if (have !== css) { console.error('compat.css is out of date: run npm run compat'); process.exit(1); }
   console.log('compat.css is up to date');
 } else {
-  fs.writeFileSync(OUT, css);
+  fs.writeFileSync(OUT, css.replace(/\n/g, '\r\n'));   // the repo's text files are CRLF
   const count = (re) => (css.match(re) || []).length;
   console.log(`compat.css written: ${count(/top: /g)} inset, ${count(/rgba\(/g)} colour, ${count(/html\.no-flexgap/g)} flex-gap fallbacks`);
 }

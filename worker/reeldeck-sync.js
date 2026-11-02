@@ -268,6 +268,42 @@ async function mirrorHealth(env, ctx) {
 const ACCESS_TTL = 90 * 86400;            // seconds
 const ACCESS_RENEW_AFTER = 86400;         // re-issue once a token is a day old
 const ACCESS_FAIL_MAX = 10, ACCESS_FAIL_WINDOW = 900;
+// Wrong codes from EVERYWHERE, summed. The per-address limit alone is no limit: one IPv6
+// connection owns a /64 (2^64 addresses) and proxies are cheap, while a four-digit code
+// has 10,000 values. Past either cap the door closes for everyone ('busy') until the
+// window ends -- devices already in keep working (their tokens renew through /check),
+// so the worst an attacker can do is stop NEW devices signing in for a while.
+const ACCESS_GLOBAL = [['ag:h', 30, 3600], ['ag:d', 60, 86400]];
+/** The address a lockout counts against: an IPv6 caller by its /64, which is what one
+ *  subscriber is handed, an IPv4 caller by its whole address. */
+function lockoutAddr(request) {
+  const ip = String(request.headers.get('CF-Connecting-IP') || 'unknown').toLowerCase();
+  if (ip.indexOf(':') < 0) return ip;
+  const [head, tail] = ip.split('::');
+  const h = head ? head.split(':') : [], t = tail !== undefined && tail ? tail.split(':') : [];
+  const full = tail === undefined ? h : h.concat(Array(Math.max(0, 8 - h.length - t.length)).fill('0'), t);
+  return full.slice(0, 4).map((x) => (x || '0').replace(/^0+(?=.)/, '')).join(':') + '::/64';
+}
+/** INCR first, compare after: a read-then-increment let parallel guesses all read the
+ *  same count and slip past the cap together. */
+// Each counter change is ONE Lua script, which Redis runs atomically. Two REST calls
+// (SET NX EX, then INCR; DECR, then DEL) left a gap: a key expiring or deleted between
+// them came back from INCR with NO expiry, and on the shared ag:h/ag:d keys that is a
+// permanent 'busy' for every sign-in. TTL < 0 also re-arms a key some older build left
+// without an expiry, so a stuck counter heals on its next bump.
+const BUMP_LUA = "local n = redis.call('INCR', KEYS[1]) " +
+  "if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return n";
+// A key that expired meanwhile comes back from DECR as -1 with no expiry, so anything at
+// or below 0 is deleted in the same step.
+const UNBUMP_LUA = "local n = redis.call('DECR', KEYS[1]) " +
+  "if n <= 0 then redis.call('DEL', KEYS[1]) end return n";
+async function bump(env, key, ttl) {
+  return redis(env, 'EVAL', BUMP_LUA, 1, key, ttl);
+}
+/** Give a reserved slot back. */
+async function unbump(env, key) {
+  return redis(env, 'EVAL', UNBUMP_LUA, 1, key);
+}
 let _accKey = null;
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -275,7 +311,9 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 function accessCodes(env) {
   const m = new Map();
   String(env.ACCESS_CODES || '').split(/[\s,;]+/).filter(Boolean).forEach((item) => {
-    const x = /^([^=:]{1,40})[=:](\d{4})$/.exec(item);
+    // 4 to 8 digits. Four is the old default; every extra digit makes guessing ten times
+    // slower against the same caps, so new codes should be 8.
+    const x = /^([^=:]{1,40})[=:](\d{4,8})$/.exec(item);
     if (x) m.set(x[1].trim().toLowerCase(), x[2]);
   });
   return m;
@@ -368,19 +406,25 @@ export default {
       if (path === '/v1/access/enter') {
         if (!throttle(request, 'access', 12)) return json({ error: 'slow down' }, 429);
         if (!accessReady(env)) return json({ error: 'access not configured' }, 500);
-        if (typeof body.code !== 'string' || !/^\d{4}$/.test(body.code)) return json({ error: 'bad code' }, 400);
-        // Per-address limit on wrong codes, kept in Redis so it holds across isolates.
-        const fkey = 'af:' + (await sha256b64('reeldeck:af:v1:' + (request.headers.get('CF-Connecting-IP') || 'unknown')));
-        if ((parseInt(await redis(env, 'GET', fkey), 10) || 0) >= ACCESS_FAIL_MAX) return json({ error: 'locked out' }, 429);
+        if (typeof body.code !== 'string' || !/^\d{4,8}$/.test(body.code)) return json({ error: 'bad code' }, 400);
+        // Every attempt RESERVES a slot in each counter before the code is looked at, and
+        // a right code gives its slots back. Kept in Redis so the caps hold across isolates.
+        const fkey = 'af:' + (await sha256b64('reeldeck:af:v1:' + lockoutAddr(request)));
+        if (await bump(env, fkey, ACCESS_FAIL_WINDOW) > ACCESS_FAIL_MAX) return json({ error: 'locked out' }, 429);
+        let full = false;
+        for (const [key, max, ttl] of ACCESS_GLOBAL) { if (await bump(env, key, ttl) > max) full = true; }
+        // No code is compared on this path, so it is not a failure of THIS address: keep
+        // the global slots (the door stays shut while the flood lasts) but give the per-
+        // address one back, or a real user retrying through a pause locks themselves out.
+        if (full) { await unbump(env, fkey); return json({ error: 'busy' }, 429); }
         // Compare against every code (no early exit), so timing says nothing.
         let hit = null;
         for (const [name, code] of accessCodes(env)) { if (timingSafeEqual(code, body.code) && !hit) hit = name; }
-        if (!hit) {
-          await redis(env, 'SET', fkey, '0', 'EX', ACCESS_FAIL_WINDOW, 'NX');
-          await redis(env, 'INCR', fkey);
-          return json({ error: 'bad code' }, 401);
-        }
-        await redis(env, 'DEL', fkey);
+        if (!hit) return json({ error: 'bad code' }, 401);
+        // Only this attempt's slot goes back. Deleting the counter let anyone holding one
+        // valid code wipe their misses and guess again, defeating the per-address lockout.
+        await unbump(env, fkey);
+        for (const [key] of ACCESS_GLOBAL) await unbump(env, key);
         const uid = await accountId(hit);
         const t = await mintToken(env, uid, await codeId(env, hit, body.code));
         return json({ ok: true, acc: t.token, exp: t.exp, uid, name: hit });

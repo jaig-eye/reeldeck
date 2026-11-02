@@ -35,6 +35,10 @@
   <script>try{var c=JSON.parse(localStorage.getItem('reeldeck.config.v5')||'{}');if(c&&c.theme){document.documentElement.setAttribute('data-theme',c.theme);}}catch(e){}</script>
 </head>
 <body>
+  <div id="house-light" aria-hidden="true"></div>
+  <a class="skip" href="#view">Skip to content</a>
+  <!-- the live region exists before its first message, so the first toast is announced -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <header class="top"></header>
   <main><div id="view"></div></main>
   <footer class="site">

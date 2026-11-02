@@ -429,6 +429,23 @@
    * the sandbox buys nothing there and some mirrors refuse to run inside one.
    */
   const HOST_BLOCKS_POPUPS = IS_DESKTOP || IS_NATIVE;
+  /**
+   * Permissions Policy denials for the frames we do not control (the player, the trailer).
+   *
+   * Almost every powerful feature defaults to 'self', so a cross-origin frame lacks it unless
+   * `allow` grants it. The ad-tech family is the exception: Topics, Protected Audience (interest
+   * groups, on-device auctions), Attribution Reporting, Private Aggregation and Shared Storage
+   * default to '*' -- ON inside every mirror and every ad nested in it, sandboxed or not, which
+   * on the two apps (unsandboxed, see frameHTML) is the only fence there is. Denied by name.
+   * NOT denied, though also '*': storage-access. It only ever lets a frame ask for ITS OWN
+   * unpartitioned cookies, never ours, and a Cloudflare-challenged mirror may need it to keep its
+   * clearance cookie -- denying it would turn the challenge into a loop.
+   * A token the engine does not know is skipped with a console warning and the rest of the list
+   * still applies, so this cannot break the frame: webOS 6 (Chromium 79) predates every one of
+   * these and just ignores them.
+   */
+  const FRAME_DENY = "browsing-topics 'none'; join-ad-interest-group 'none'; run-ad-auction 'none'; " +
+    "attribution-reporting 'none'; private-aggregation 'none'; shared-storage 'none'; shared-storage-select-url 'none'";
   function playerGuardOn() {
     const v = cfg.playerGuard;
     return (v === null || v === undefined) ? !HOST_BLOCKS_POPUPS : !!v;
@@ -602,12 +619,15 @@
   async function fillRuntime(type, id) {
     const slots = document.querySelectorAll('.ch-rt[data-rt="' + type + ':' + id + '"]');
     if (!slots.length) return;
-    let d = itemCache[ck(type, id)];
+    let d = itemGet(ck(type, id));
     if (!d || (d.runtime === undefined && d.episode_run_time === undefined)) {
       const key = type + ':' + id;
       if (rtPending[key]) return;                 // one flight per title
       rtPending[key] = 1;
-      try { d = await tmdb('/' + type + '/' + id); itemCache[ck(type, id)] = d; }
+      // The title page's own request, not a bare /type/id: resting on a card also
+      // prefetches titleData, and titleData shares its in-flight promise, so the two
+      // join into one round trip instead of two.
+      try { d = titleReady(type, id) || await titleData(type, id); d = itemPut(ck(type, id), d); }
       catch (e) { return; }
       finally { delete rtPending[key]; }
     }
@@ -631,7 +651,11 @@
   }
   // Debounced: walking a rail with a remote would otherwise fire a request per card
   // as the ring passes over it.
-  const runtimeSoon = debounce((card) => runtimeFor(card), 350);
+  // The same rest as the title prefetch (450ms on TV, 220ms under a pointer), so both
+  // land on one shared titleData request rather than racing each other.
+  const runtimeSoon = debounce((card) => runtimeFor(card), IS_TV ? 450 : 220);
+  // Reduced motion, asked once. Up here, above its first reader (the hero, the rail arrows).
+  const tvReduceMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
   function debounce(fn, ms) { let t; return function () { clearTimeout(t); const a = arguments, c = this; t = setTimeout(() => fn.apply(c, a), ms); }; }
 
   /**
@@ -651,20 +675,25 @@
     wrap.classList.toggle('at-end', none || track.scrollLeft >= max - 2);
   }
   const RAILS = '.rail-wrap > .track, .rail-wrap > .ep-strip, .rail-wrap > .season-pills, .rail-wrap > .cast-track, .ep-strip, .season-pills';
+  // ONE observer for every rail on screen, emptied and refilled on each wiring pass, so it
+  // only ever holds rails that are in the DOM. One per track, never disconnected, piled up
+  // a new observer per rail per render. It also covers window resizes (a track resizes
+  // with the window), so there is no separate resize listener.
+  const railRO = window.ResizeObserver ? new ResizeObserver((es) => es.forEach((e) => railChrome(e.target))) : null;
   function wireRailChrome() {
+    if (railRO) railRO.disconnect();
     document.querySelectorAll(RAILS).forEach(t => {
-      if (t.__railWired) { railChrome(t); return; }
-      t.__railWired = 1;
-      t.addEventListener('scroll', () => railChrome(t), { passive: true });
-      // A rail is usually empty on first paint and fills in when the request lands, so
-      // one measurement at render time would be a measurement of nothing.
       // ResizeObserver on the track is NOT enough on its own: the track is the scroll
       // container, so its border box stays the same width when cards are added inside it
       // -- only scrollWidth changes, which RO does not report. It is kept for real size
       // changes (rotation, window resize) and the measurement is re-taken below.
-      if (window.ResizeObserver) {
-        try { new ResizeObserver(() => railChrome(t)).observe(t); } catch (e) {}
-      }
+      // observe() also reports once at the start, which re-measures an already-wired rail.
+      if (railRO) { try { railRO.observe(t); } catch (e) {} }
+      if (t.__railWired) { if (!railRO) railChrome(t); return; }
+      t.__railWired = 1;
+      t.addEventListener('scroll', () => railChrome(t), { passive: true });
+      // A rail is usually empty on first paint and fills in when the request lands, so
+      // one measurement at render time would be a measurement of nothing.
       // Measured three times on purpose. The first can land in the same tick as the
       // insertion, before layout, where clientWidth is still 0 and the rail latches
       // "nothing to scroll" for good. rAF is after layout; the late one catches a rail
@@ -675,7 +704,8 @@
     });
   }
   const wireRailChromeSoon = debounce(wireRailChrome, 60);
-  window.addEventListener('resize', wireRailChromeSoon, { passive: true });
+  // Without ResizeObserver (old WebViews), a window resize is the only size signal left.
+  if (!railRO) window.addEventListener('resize', wireRailChromeSoon, { passive: true });
 
   let toastTimer;
   // role="status" so the confirmation is actually announced — on TV the toast is the
@@ -689,15 +719,47 @@
     // Re-homed on every call, not just on creation: the fullscreen element is a top
     // layer, so a toast left on document.body is not painted at all while the player is
     // fullscreened -- and 'Volume 40%' is the only feedback Vol +/-/Mute ever give.
+    // The live region normally ships in index.html, so it exists before its first message:
+    // created and filled in the same tick, the first toast was often never announced.
     const host = overlayHost();
     if (t.parentNode !== host) host.appendChild(t);
     t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+    // Long enough to read: 60ms a character, never under 2.2s; 3.5s on a TV, read from a sofa.
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), Math.max(IS_TV ? 3500 : 2200, 60 * String(msg).length));
   }
 
-  // Cache of items we render so watchlist toggles can find full data by id.
-  const itemCache = {};
+  // Cache of items we render so watchlist toggles, the Stage and a title's first paint can
+  // find what a card knew by id. Capped, oldest out, and SLIM: it used to keep every title
+  // page's whole append_to_response body (credits, videos, similar, images) for the
+  // session, which quietly undid titleCache's cap of six. Only what the readers here use is
+  // copied. Season bodies (the episode lists) are kept apart, four at a time.
+  const ITEM_MAX = 200, SEASON_MAX = 4;
+  const ITEM_KEEP = ['id', 'media_type', 'title', 'name', 'poster_path', 'backdrop_path', 'overview', 'vote_average',
+    'release_date', 'first_air_date', 'date', 'genre_ids', 'genres', 'runtime', 'episode_run_time', 'number_of_seasons',
+    'last_episode_to_air', 'next_episode_to_air', '_imdb', '_logo', '_heroPoster'];
+  const itemCache = new Map(), seasonCache = new Map();
   const ck = (type, id) => type + ':' + id;
+  function itemGet(key) { return itemCache.get(key); }
+  /**
+   * Merge the slim copy of `o` into what `key` already holds and return the stored object.
+   * Merged, not replaced: a rail's list item must not wipe the runtime or logo a title
+   * page or the Stage already found for the same title.
+   */
+  function itemPut(key, o) {
+    if (!o) return o;
+    const s = Object.assign({}, itemCache.get(key));
+    for (let i = 0; i < ITEM_KEEP.length; i++) { const k = ITEM_KEEP[i]; if (k in o) s[k] = o[k]; }
+    if (Array.isArray(o.seasons)) s.seasons = o.seasons.map(x => ({ season_number: x.season_number, episode_count: x.episode_count, name: x.name }));
+    itemCache.delete(key); itemCache.set(key, s);
+    while (itemCache.size > ITEM_MAX) itemCache.delete(itemCache.keys().next().value);
+    return s;
+  }
+  function seasonGet(key) { return seasonCache.get(key) || null; }
+  function seasonPut(key, d) {
+    seasonCache.delete(key); seasonCache.set(key, d);
+    while (seasonCache.size > SEASON_MAX) seasonCache.delete(seasonCache.keys().next().value);
+    return d;
+  }
 
   /* ------------------------------------------------------------
      Icons
@@ -712,6 +774,7 @@
     play: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></svg>',
     bookmark: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z"/></svg>',
     bookmarkFill: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Z"/></svg>',
+    home: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M219.31,108.68l-80-80a16,16,0,0,0-22.62,0l-80,80A15.87,15.87,0,0,0,32,120v96a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V160h32v56a8,8,0,0,0,8,8h64a8,8,0,0,0,8-8V120A15.87,15.87,0,0,0,219.31,108.68ZM208,208H160V152a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8v56H48V120l80-80,80,80Z"/></svg>',
     search: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>',
     gear: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,80a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Zm109.94-52.79a8,8,0,0,0-3.89-5.4l-29.83-17-.12-33.62a8,8,0,0,0-2.83-6.08,111.91,111.91,0,0,0-36.72-20.67,8,8,0,0,0-6.46.59L128,41.85,97.88,25a8,8,0,0,0-6.47-.6A112.1,112.1,0,0,0,54.73,45.15a8,8,0,0,0-2.83,6.07l-.15,33.65-29.83,17a8,8,0,0,0-3.89,5.4,106.47,106.47,0,0,0,0,41.56,8,8,0,0,0,3.89,5.4l29.83,17,.12,33.62a8,8,0,0,0,2.83,6.08,111.91,111.91,0,0,0,36.72,20.67,8,8,0,0,0,6.46-.59L128,214.15,158.12,231a7.91,7.91,0,0,0,3.9,1,8.09,8.09,0,0,0,2.57-.42,112.1,112.1,0,0,0,36.68-20.73,8,8,0,0,0,2.83-6.07l.15-33.65,29.83-17a8,8,0,0,0,3.89-5.4A106.47,106.47,0,0,0,237.94,107.21Zm-15,34.91-28.57,16.25a8,8,0,0,0-3,3c-.58,1-1.19,2.06-1.81,3.06a7.94,7.94,0,0,0-1.22,4.21l-.15,32.25a95.89,95.89,0,0,1-25.37,14.3L134,199.13a8,8,0,0,0-3.91-1h-.19c-1.21,0-2.43,0-3.64,0a8.08,8.08,0,0,0-4.1,1l-28.84,16.1A96,96,0,0,1,67.88,201l-.11-32.2a8,8,0,0,0-1.22-4.22c-.62-1-1.23-2-1.8-3.06a8.09,8.09,0,0,0-3-3.06l-28.6-16.29a90.49,90.49,0,0,1,0-28.26L61.67,97.63a8,8,0,0,0,3-3c.58-1,1.19-2.06,1.81-3.06a7.94,7.94,0,0,0,1.22-4.21l.15-32.25a95.89,95.89,0,0,1,25.37-14.3L122,56.87a8,8,0,0,0,4.1,1c1.21,0,2.43,0,3.64,0a8.08,8.08,0,0,0,4.1-1l28.84-16.1A96,96,0,0,1,188.12,55l.11,32.2a8,8,0,0,0,1.22,4.22c.62,1,1.23,2,1.8,3.06a8.09,8.09,0,0,0,3,3.06l28.6,16.29A90.49,90.49,0,0,1,222.9,142.12Z"/></svg>',
     star: '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M234.29,114.85l-45,38.83L203,211.75a16.4,16.4,0,0,1-24.5,17.82L128,198.49,77.47,229.57A16.4,16.4,0,0,1,53,211.75l13.76-58.07-45-38.83A16.46,16.46,0,0,1,31.08,86l59-4.76,22.76-55.08a16.36,16.36,0,0,1,30.27,0l22.75,55.08,59,4.76a16.46,16.46,0,0,1,9.37,28.86Z"/></svg>',
@@ -1571,7 +1634,7 @@
      is the lock screen, the cached server list is wiped, and the Worker refuses the list and
      sync -- it reads the account from the token, never from anything the device says. */
   const ACCESS_KEY = 'reeldeck.access.v1';
-  const LK_HINT = 'Four digits. Your code is your account.';
+  const LK_HINT = 'Type your code, then Enter. Your code is your account.';
   let accessNeed = false;
   function accessTok() {
     try { const a = JSON.parse(localStorage.getItem(ACCESS_KEY) || 'null'); return (a && typeof a.t === 'string' && a.t) ? a : null; }
@@ -1619,26 +1682,35 @@
     back.setAttribute('role', 'dialog');
     back.setAttribute('aria-modal', 'true');
     back.setAttribute('aria-labelledby', 'lk-h');
-    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'clr'];
+    // Codes are 4 to 8 digits, so the pad cannot submit on a fixed count: Enter does it,
+    // and only Enter. Submitting on the eighth digit spent a lockout attempt on every code
+    // typed a digit too long, and the client cannot know which lengths exist. Enter
+    // replaced Clear; Delete stays.
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
     back.innerHTML =
       '<div class="lock">' +
         '<div class="splash-brand"><span class="brand-mark" aria-hidden="true"></span>' +
           '<span class="splash-word">' + esc(cfg.brand || 'Reeldeck') + '</span></div>' +
         '<h2 id="lk-h">Enter your code</h2>' +
-        '<div class="lk-dots" id="lk-dots" role="img" aria-label="0 of 4 digits entered">' +
+        '<div class="lk-dots" id="lk-dots" role="img" aria-label="No digits entered">' +
           '<i></i><i></i><i></i><i></i></div>' +
         '<p class="lk-msg" id="lk-msg" role="status" aria-live="polite">' + LK_HINT + '</p>' +
         '<div class="lk-pad">' + keys.map((k) =>
           '<button class="lk-key' + (k.length > 1 ? ' lk-fn' : '') + '" data-k="' + k + '">' +
-          (k === 'del' ? 'Delete' : k === 'clr' ? 'Clear' : k) + '</button>').join('') + '</div>' +
+          (k === 'del' ? 'Delete' : k === 'ok' ? 'Enter' : k) + '</button>').join('') + '</div>' +
       '</div>';
     document.body.appendChild(back);
     document.body.classList.add('lock-on');
     let digits = '', busy = false;
     const dots = back.querySelector('#lk-dots'), msg = back.querySelector('#lk-msg');
+    // Four slots to start with, one more per digit past four: the dots never say how long
+    // the code is, only how much has been typed.
     const paint = () => {
+      const want = Math.max(4, digits.length);
+      while (dots.children.length < want) dots.appendChild(document.createElement('i'));
+      while (dots.children.length > want) dots.removeChild(dots.lastChild);
       [].slice.call(dots.children).forEach((d, i) => d.classList.toggle('on', i < digits.length));
-      dots.setAttribute('aria-label', digits.length + ' of 4 digits entered');
+      dots.setAttribute('aria-label', digits.length ? digits.length + ' digits entered' : 'No digits entered');
     };
     const say = (t, bad) => { msg.textContent = t; msg.classList.toggle('bad', !!bad); };
     const submit = async () => {
@@ -1661,28 +1733,50 @@
       back.classList.remove('shake'); void back.offsetWidth; back.classList.add('shake');
       say(r.err === 'bad code' ? 'That code didn’t work. Try again.'
         : r.err === 'locked out' ? 'Too many tries. Wait 15 minutes and try again.'
-        : r.err === 'busy' ? 'Too many wrong codes lately. Try again in a few minutes.'
+        : r.err === 'busy' ? 'New sign-ins are paused after too many wrong codes. Try again later.'
         : r.err === 'slow down' ? 'Slow down a moment, then try again.'
         : 'Can’t reach the server. Check your connection.', true);
     };
     const press = (k) => {
       if (busy) return;
+      if (k === 'ok') {
+        if (digits.length >= 4) submit(); else say('Codes are at least four digits.', true);
+        return;
+      }
       if (k === 'del') digits = digits.slice(0, -1);
-      else if (k === 'clr') digits = '';
-      else if (/^\d$/.test(k) && digits.length < 4) digits += k;
+      else if (/^\d$/.test(k) && digits.length < 8) digits += k;
       paint();
-      if (digits.length === 4) submit(); else say(LK_HINT);
+      say(LK_HINT);
     };
-    back.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) press(b.dataset.k); });
+    // Typed on real keys (a keyboard, a remote's number keys), the code is finished with
+    // Enter/OK -- which, on a focused pad key, is that key's own click. So the ring moves to
+    // the pad's Enter: left on '5', the next OK typed another 5 instead of submitting.
+    // Same after a mouse click on a digit (detail > 0; a keyboard's own click has 0), which
+    // focuses that digit: a keyboard Enter next would type it again.
+    back.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-k]'); if (!b) return;
+      press(b.dataset.k);
+      if (!IS_TV && e.detail > 0 && b.dataset.k !== 'ok') toEnter();
+    });
+    const okKey = back.querySelector('[data-k="ok"]');
+    const toEnter = () => {
+      if (!okKey || document.activeElement === okKey) return;
+      if (IS_TV) tvFocusEl(okKey); else try { okKey.focus({ preventScroll: true }); } catch (err) {}
+    };
     // A real keyboard, or the number keys on a remote.
     back._keys = (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (/^\d$/.test(e.key)) { e.preventDefault(); press(e.key); }
-      else if (e.key === 'Backspace') { e.preventDefault(); press('del'); }
+      if (/^\d$/.test(e.key)) { e.preventDefault(); press(e.key); toEnter(); }
+      else if (e.key === 'Backspace') { e.preventDefault(); press('del'); toEnter(); }
+      // Enter on a focused pad key is that key's own click (OK on a remote), so only an Enter
+      // aimed at nothing on the pad submits; otherwise "5" + OK would type 5 and submit at once.
+      else if (e.key === 'Enter' && !(e.target && e.target.closest && e.target.closest('[data-k]'))) { e.preventDefault(); press('ok'); }
     };
     document.addEventListener('keydown', back._keys);
+    // A remote starts mid-pad on 5, a short walk to any digit. A keyboard types its digits
+    // and needs Enter, so off TV focus starts on the pad's Enter, never on a digit.
     if (IS_TV) { tvInvalidate(); tvFocusEl(back.querySelector('[data-k="5"]')); }
-    else { const f = back.querySelector('[data-k="5"]'); if (f) try { f.focus(); } catch (e) {} }
+    else if (okKey) try { okKey.focus(); } catch (e) {}
   }
 
   /** All four stores in ONE try. On any failure nothing advances and nothing is
@@ -2363,6 +2457,81 @@
     watchNow = null;
   }
 
+  /**
+   * Put the player away when the app has been out of sight for a while.
+   *
+   * Hidden, the clock above stops, but the mirror may not: a TV sent to its home screen or a
+   * locked phone could keep streaming video -- and loading ads -- for as long as the app
+   * stayed alive. After BG_UNLOAD_MS hidden without a break, the
+   * watch page is rebuilt on its poster, whose Play reads "Resume <time>" from the saved
+   * position (watchView's resumeAt, so only a position good enough to seek to is offered).
+   * Coming back sooner changes nothing. Checked again on the way back in as well, because a
+   * suspended WebView may not have run the timer at all.
+   *
+   * The Android app only (IS_NATIVE: there is no iOS build). There the activity has no PiP and
+   * MainActivity.onStop has paused the WebView, so a hidden page is one nobody can be watching.
+   * In a browser tab or the desktop window, hidden is not unwatched: the player's `allow` grants
+   * picture-in-picture and airplay precisely so the film keeps going in a PiP window or on a TV
+   * while the page is out of sight, and the parent cannot see into the cross-origin frame to tell
+   * (document.pictureInPictureElement covers only our own document). Unloading there would kill
+   * the PiP window or the cast mid-film.
+   */
+  const BG_UNLOAD_MS = 5 * 60000;
+  let bgHiddenAt = 0, bgTimer = 0, bgUnloaded = false;
+  if (IS_NATIVE) document.addEventListener('visibilitychange', () => {
+    clearTimeout(bgTimer); bgTimer = 0;
+    if (document.hidden) {
+      bgHiddenAt = Date.now();
+      if (document.getElementById('player-iframe')) bgTimer = setTimeout(bgUnload, BG_UNLOAD_MS);
+      return;
+    }
+    const away = bgHiddenAt ? Date.now() - bgHiddenAt : 0;
+    bgHiddenAt = 0;
+    if (away >= BG_UNLOAD_MS) bgUnload();
+    if (bgUnloaded) { bgUnloaded = false; toast('The player was stopped while Reeldeck was in the background'); }
+  });
+  function bgUnload() {
+    bgTimer = 0;
+    // Only the player this was armed for, or one that replaced it (Next-episode autoplay):
+    // anywhere else -- the viewer left, or never pressed Play -- there is nothing to put away.
+    if (!document.getElementById('player-iframe') || parseHash().parts[0] !== 'watch') return;
+    // Bank the position BEFORE route() ends the sitting. A mirror's own reports are already
+    // saved as they arrive; a silent mirror's estimate is written here, by watchTick's rules
+    // (never over a report from this sitting; a leftover only after its two minutes). The
+    // hidden handler in watchBegin has already banked the visible seconds into .base and
+    // stopped the interval -- `_t` is 0 then -- so only a still-running clock adds any.
+    const w = watchNow;
+    if (w) {
+      const cur = progGet(w.type, w.id, w.season, w.episode);
+      const stale = !!(cur && cur.src === 'provider');
+      if (!(stale && w.gotProvider)) {
+        const t = w.base + (w._t ? Math.round((Date.now() - w.started) / 1000) : 0);
+        progRecord(Object.assign({}, w, { t: t, d: (stale && cur.d > 0) ? cur.d : (w.runtime || 0), src: 'elapsed',
+          takeover: stale && (w.ticks || 0) >= SILENT_TICKS }));
+      }
+    }
+    // ?restart=1 would have the rebuilt page ignore the position just saved. Dropped in place
+    // (no new history entry), and in navSeen too, or the next Back would miscount the depth.
+    const raw = location.hash.slice(1), qi = raw.indexOf('?');
+    if (qi >= 0) {
+      const q = new URLSearchParams(raw.slice(qi + 1));
+      if (q.has('restart')) {
+        q.delete('restart');
+        const old = location.hash, qs = q.toString(), h = '#' + raw.slice(0, qi) + (qs ? '?' + qs : '');
+        try { history.replaceState(history.state, '', h); } catch (e) {}
+        if (navSeen[navDepth] === old) navSeen[navDepth] = location.hash;
+      }
+    }
+    // The poster again: watchView gates on !watchLive. route() does the rest of the tidying
+    // it does for any navigation -- the countdown and prompt (watchEnd), cinema, real
+    // fullscreen and the phone's landscape turn (exitCinema), the TV pointer and the dock,
+    // the native media-key claim. routeKey is cleared so this does not count as the same
+    // page keeping its place: the ring lands on Play (TV_LANDING), not near the vanished frame.
+    watchLive = false; watchArm = false; resumeCinema = 0; routeKey = null;
+    bgUnloaded = true;
+    route();
+  }
+
   /* ------------------------------------------------------------
      Card + rail + grid builders
      ------------------------------------------------------------ */
@@ -2387,7 +2556,7 @@
 
   function cardHTML(item, forcedType, mixed) {
     const type = forcedType || item.media_type || (item.first_air_date || item.name && !item.title ? 'tv' : 'movie');
-    itemCache[ck(type, item.id)] = item;
+    itemPut(ck(type, item.id), item);
     const title = item.title || item.name || 'Untitled';
     // `date` is what toggleWatch persists, so watchlist cards read that too — without
     // it every saved title showed a bare dash where its year should be.
@@ -2400,7 +2569,7 @@
              onerror="this.src='${PLACEHOLDER}'">
         ${rating ? `<span class="rate">${ICON.star} ${rating}</span>` : ''}
         ${(forcedType && !mixed) ? '' : `<span class="typebadge">${type === 'tv' ? 'TV' : 'Movie'}</span>`}
-        <button class="wl ${on ? 'on' : ''}" data-wl="${item.id}" data-type="${type}"${IS_TV ? ' tabindex="-1" aria-hidden="true"' : ''} aria-pressed="${on}" title="${on ? 'Remove from' : 'Add to'} watchlist" aria-label="${on ? 'Remove from' : 'Add to'} watchlist">
+        <button class="wl ${on ? 'on' : ''}" data-wl="${item.id}" data-type="${type}"${IS_TV ? ' tabindex="-1" aria-hidden="true"' : ''} aria-pressed="${on}" data-wl-name="${esc(title)}" title="${esc(wlLabel(on, title))}" aria-label="${esc(wlLabel(on, title))}">
           ${on ? ICON.bookmarkFill : ICON.bookmark}
         </button>
         <div class="card-hover">
@@ -2583,7 +2752,7 @@
         <button class="rail-arrow left" data-rail="-1" tabindex="-1" aria-label="Scroll left">${ICON.back}</button>
         <div class="track">${items.map((it, i) => {
           const type = it.media_type || (it.first_air_date ? 'tv' : 'movie');
-          itemCache[ck(type, it.id)] = it;
+          itemPut(ck(type, it.id), it);
           return `<div class="rank-item card" data-nav="#/${type}/${it.id}" tabindex="0" role="button" aria-label="Number ${i + 1}, ${esc(it.title || it.name)}">
             <span class="rank-num" aria-hidden="true">${rankNum(i + 1)}</span>
             <div class="poster">
@@ -2597,16 +2766,19 @@
     </section>`;
   }
 
+  // Skeletons are decoration: aria-hidden, so a screen reader is not walked through a
+  // dozen empty boxes, plus one sr-only status that says what they mean.
+  const SK_SAY = '<span class="sr-only" role="status">Loading…</span>';
   function skeletonRow() {
-    let s = '<div class="rail"><div class="sk line" style="width:180px;height:20px;margin:0 0 14px"></div><div class="track">';
+    let s = '<div class="rail" aria-hidden="true"><div class="sk line" style="width:180px;height:20px;margin:0 0 14px"></div><div class="track">';
     for (let i = 0; i < 7; i++) s += '<div style="width:165px;flex:none"><div class="sk poster"></div></div>';
-    return s + '</div></div>';
+    return s + '</div></div>' + SK_SAY;
   }
 
   function skeletonGrid(n) {
-    let s = '<div class="grid">';
+    let s = '<div class="grid" aria-hidden="true">';
     for (let i = 0; i < (n || 12); i++) s += '<div><div class="sk poster"></div><div class="sk line" style="width:80%"></div><div class="sk line" style="width:50%"></div></div>';
-    return s + '</div>';
+    return s + '</div>' + SK_SAY;
   }
 
   /* ------------------------------------------------------------
@@ -2644,7 +2816,10 @@
     if (item._heroPoster !== undefined && item._logo !== undefined) return item._logo;
     try {
       const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
-      const d = await tmdb('/' + type + '/' + item.id + '/images', { include_image_language: 'en,null', language: 'en' });
+      // 'null,en' and NO language: with language=en (or the en-US tmdb() adds when the key is
+      // absent) TMDB filters the language-less posters out, so the textless one never came
+      // back. The key is present but empty, which tmdb() leaves out of the URL.
+      const d = await tmdb('/' + type + '/' + item.id + '/images', { include_image_language: 'null,en', language: '' });
       const logos = (d.logos || []).filter(l => l.file_path && (l.iso_639_1 === 'en' || l.iso_639_1 === null));
       logos.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
       // The same response lists posters, and the ones with NO language are textless --
@@ -2668,9 +2843,16 @@
     const rating = it.vote_average ? it.vote_average.toFixed(1) : null;
     const on = isInWatch(it.id, type);
     const ov = (it.overview || '').slice(0, 200);
-    return `<div class="bb-slide ${i === 0 ? 'on' : ''}" data-i="${i}" data-key="${type}:${it.id}" data-amb="${esc(it.poster_path || '')}">
+    // The phone's poster art. Never the titled poster under a logo: that printed the name
+    // twice. No textless poster then means the backdrop instead (bb-noart, styles.css).
+    const art = it._heroPoster || (it._logo ? '' : it.poster_path);
+    // Only the first slide's poster loads now. The phone stacks every slide at inset:0, so
+    // loading=lazy deferred none of them: five w780s (~18MB decoded) for a carousel that
+    // stops at the first touch. show() promotes data-src for the slide and the next one.
+    const artAttr = i === 0 ? 'src' : 'data-src';
+    return `<div class="bb-slide ${i === 0 ? 'on' : ''}${art ? '' : ' bb-noart'}" data-i="${i}" data-key="${type}:${it.id}" data-amb="${esc(it.poster_path || '')}">
       <div class="bb-bg" style="background-image:url('${img(it.backdrop_path, 'w1280')}')"></div>
-      ${(it._heroPoster || it.poster_path) ? `<img class="bb-poster" alt="" loading="lazy" decoding="async" src="${img(it._heroPoster || it.poster_path, 'w780')}">` : ''}
+      ${art ? `<img class="bb-poster" alt="" decoding="async" ${artAttr}="${img(art, 'w780')}">` : ''}
       <div class="bb-scrim"></div>
       <div class="bb-info">
         ${it._logo
@@ -2725,6 +2907,11 @@
         });
       });
       dots.forEach((d, i) => { d.classList.toggle('on', i === idx); d.setAttribute('aria-current', i === idx ? 'true' : 'false'); });
+      // This slide's poster and the next one's (so the next advance has it decoded).
+      [slides[idx], slides[(idx + 1) % slides.length]].forEach((s) => {
+        const p = s.querySelector('img.bb-poster[data-src]');
+        if (p) { p.src = p.getAttribute('data-src'); p.removeAttribute('data-src'); }
+      });
       ambientFrom(slides[idx].dataset.amb);   // the room follows the hero
       stageChipSet(slides[idx]);
       tvInvalidate();   // a different slide's buttons are focusable now
@@ -2865,12 +3052,11 @@
     if (n < 0) {
       // A row's list carries no logo and sometimes no backdrop or story; Continue watching
       // carries only what history kept. Fill in what the hero needs (cached after the first).
-      let it = itemCache[ck(type, id)];
+      let it = itemGet(ck(type, id));
       try {
         if (!it || !it.backdrop_path || !it.overview) {
           const d = await titleData(type, id);   // the title page's request: a click after this is instant
-          it = Object.assign(it || {}, d);
-          itemCache[ck(type, id)] = it;
+          it = itemPut(ck(type, id), d);
         } else titleData(type, id).catch(() => {});
         it.media_type = it.media_type || type;
         await heroLogo(it);
@@ -2942,7 +3128,7 @@
       const heroItems = trendItems.filter(x => x.backdrop_path).slice(0, 5);
       if (!staged) await Promise.all(heroItems.map(heroLogo));     // each sets its own _logo / _heroPoster
       if (!routeIs(my)) return;   // the user has navigated away — this response is stale
-      heroItems.forEach((h) => { itemCache[ck(h.media_type, h.id)] = h; });
+      heroItems.forEach((h) => { itemPut(ck(h.media_type, h.id), h); });
       // History rows behind Continue watching, by "type:id", for the stage's title fallback.
       if (staged) stageHist = new Map(histByTitle().map(r => [r.type + ':' + r.id, r]));
       let html = staged ? '' : buildBillboard(heroItems);
@@ -2980,8 +3166,13 @@
       if (IS_TV || touchy) {
         try {
           if (!localStorage.getItem('reeldeck.hint.holdok')) {
-            localStorage.setItem('reeldeck.hint.holdok', '1');
-            setTimeout(() => { if (routeIs(my) && !document.getElementById('lock')) toast(IS_TV ? 'Tip: hold OK on a title for more options' : 'Tip: press and hold a poster for options'); }, 2500);
+            // Marked seen only when it is actually shown: Home re-rendering inside the 2.5s
+            // (a second route on boot) used to burn the flag and the tip never appeared.
+            setTimeout(() => {
+              if (!routeIs(my) || document.getElementById('lock')) return;
+              try { localStorage.setItem('reeldeck.hint.holdok', '1'); } catch (e) {}
+              toast(IS_TV ? 'Tip: hold OK on a title for more options' : 'Tip: press and hold a poster for options');
+            }, 2500);
           }
         } catch (e) {}
       }
@@ -3068,7 +3259,7 @@
 
     const toolbar = q ? `
       <div class="toolbar"><div class="field" style="flex:1">
-        <label>Search results for</label>
+        <span class="field-lbl">Search results for</span>
         <div style="font-size:20px;font-weight:800">“${esc(q)}”</div>
       </div>
       <button class="btn sm" data-nav="#/${isTV ? 'tv' : 'movies'}">Clear search</button></div>` : `
@@ -3091,8 +3282,8 @@
               `<button class="chip ${(params.rt || '') === v ? 'on' : ''}" data-rt="${v}" aria-pressed="${(params.rt || '') === v}">${l}</button>`).join('')}
           </div>
         </div>
-        <div class="field genres-field"><label>Genres</label>
-          <div class="chips" id="f-genres">
+        <div class="field genres-field"><label id="f-genres-l">Genres</label>
+          <div class="chips" id="f-genres" role="group" aria-labelledby="f-genres-l">
             ${gl.map(g => `<button class="chip ${selGenres.includes(String(g.id)) ? 'on' : ''}" data-genre="${g.id}" aria-pressed="${selGenres.includes(String(g.id))}">${esc(g.name)}</button>`).join('')}
           </div>
         </div>
@@ -3306,8 +3497,13 @@
   }
   /* ---- House lights --------------------------------------------------------------
      The page takes its colour from the title on screen. One poster, drawn once onto a
-     24x36 canvas, gives a dominant hue; CSS does the rest through --ambient. TMDB sends
+     24x36 canvas, gives a dominant hue; CSS does the rest through --amb-rgb. TMDB sends
      Access-Control-Allow-Origin: * on images, which is what makes the canvas readable.
+
+     --amb-rgb is a plain "r, g, b" triplet: unregistered (no @property) and never
+     transitioned, so a change is one style recalc, not 1.6s of whole-document restyle per
+     hero slide. CSS reads rgba(var(--amb-rgb), a) and falls back to the accent; the wash
+     itself (#house-light) fades by opacity only.
 
      Hue buckets rather than a plain average: the average of any poster is mud. Each
      pixel votes for its hue, weighted by how saturated and how mid-toned it is, and the
@@ -3315,9 +3511,12 @@
      saturation where it reads as coloured light rather than as neon or as grey. */
   const ambientCache = Object.create(null);
   let ambientSeq = 0;
-  function ambientSet(css) {
+  let ambientNow = '';
+  function ambientSet(rgb) {
+    if (rgb === ambientNow) return;              // the same title again: no restyle at all
+    ambientNow = rgb;
     const st = document.documentElement.style;
-    if (css) st.setProperty('--ambient', css); else st.removeProperty('--ambient');
+    if (rgb) st.setProperty('--amb-rgb', rgb); else st.removeProperty('--amb-rgb');
   }
   function ambientPick(data) {
     const B = 12, bins = [];
@@ -3341,7 +3540,7 @@
     // Into the band: lift the dark, settle the bright.
     const mx = Math.max(r, g, b) || 1, k = mx < 150 ? 150 / mx : mx > 215 ? 215 / mx : 1;
     r = Math.min(255, r * k); g = Math.min(255, g * k); b = Math.min(255, b * k);
-    return 'rgb(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
+    return Math.round(r) + ', ' + Math.round(g) + ', ' + Math.round(b);
   }
   function ambientFrom(path) {
     const mine = ++ambientSeq;
@@ -3438,11 +3637,18 @@
      free, since it fetches the same object anyway. */
   const NEWEP_KEY = 'reeldeck.newep.v1';
   const NEWEP_TTL = 6 * 3600000;
+  // Read once and kept, like artAll: a sweep asks for it once per series card, and parsing
+  // the stored copy each time (it grows to several KB) was main-thread work on every
+  // re-render. newEpSave writes through, so the memo and storage never disagree.
+  let newEpMem = null;
   function newEpAll() {
-    try { const o = JSON.parse(localStorage.getItem(NEWEP_KEY) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
-    catch (e) { return {}; }
+    if (!newEpMem) {
+      try { const o = JSON.parse(localStorage.getItem(NEWEP_KEY) || '{}'); newEpMem = (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
+      catch (e) { newEpMem = {}; }
+    }
+    return newEpMem;
   }
-  function newEpSave(o) { try { localStorage.setItem(NEWEP_KEY, JSON.stringify(o)); } catch (e) {} }
+  function newEpSave(o) { newEpMem = o; try { localStorage.setItem(NEWEP_KEY, JSON.stringify(o)); } catch (e) {} }
   /** Record what a fetched /tv/{id} object says about its latest and next episode. */
   function newEpNote(d) {
     if (!d || !d.id) return;
@@ -3522,7 +3728,18 @@
   function newEpWatch() {
     const host = view();
     if (!host || !window.MutationObserver) return;
-    new MutationObserver(newEpSweep).observe(host, { childList: true, subtree: true });
+    // Our own output is not a reason to sweep again: a runtime slot being filled, or the
+    // badges a paint inserts, never bring a new card with them.
+    // Only an added element that is not one of those can carry a card.
+    const ours = (n) => n.classList.contains('ch-rt') || n.classList.contains('newep') || n.classList.contains('ch-new');
+    new MutationObserver((rs) => {
+      for (let i = 0; i < rs.length; i++) {
+        const added = rs[i].addedNodes;
+        for (let j = 0; j < added.length; j++) {
+          if (added[j].nodeType === 1 && !ours(added[j])) { newEpSweep(); return; }
+        }
+      }
+    }).observe(host, { childList: true, subtree: true });
   }
   /** Put a badge on every series card on screen that has one coming. Idempotent. */
   function newEpPaint(root) {
@@ -3629,7 +3846,7 @@
     const isTV = type === 'tv';
     // Already here (fetched while the card was being looked at)? Then the page paints in one go.
     // Otherwise the hero is painted from the card at once, or a skeleton when nothing is known.
-    const ready = titleReady(type, id), known = itemCache[ck(type, id)];
+    const ready = titleReady(type, id), known = itemGet(ck(type, id));
     if (!ready) {
       view().innerHTML = (known && known.backdrop_path)
         ? titlePreviewHTML(type, known)
@@ -3640,8 +3857,8 @@
       const d = ready || await titleData(type, id);
       const credits = d.credits || {}, videos = d.videos || {}, similar = d.similar || {},
             ext = d.external_ids || {}, imgs = d.images || {};
-      itemCache[ck(type, d.id)] = d;
       d._imdb = ext.imdb_id;
+      itemPut(ck(type, d.id), d);
       // Age rating: the region's own, else the US one. Films carry one per release type;
       // theatrical (3) or digital (4) is the rating people recognise.
       const cert = (() => {
@@ -4108,7 +4325,7 @@
     const episode = Math.max(1, parseInt(params.e, 10) || 1);
     view().innerHTML = `<div class="player-shell"><div class="sk" style="height:60vh;border-radius:16px"></div></div>`;
 
-    let d = itemCache[ck(type, id)];
+    let d = itemGet(ck(type, id));
     let imdb = d && d._imdb;
     try {
       if (!d || d._imdb === undefined) {
@@ -4116,7 +4333,7 @@
           tmdb('/' + type + '/' + id),
           tmdb('/' + type + '/' + id + '/external_ids').catch(() => ({}))
         ]);
-        d = det; d._imdb = ext.imdb_id; imdb = ext.imdb_id; itemCache[ck(type, id)] = d;
+        d = det; d._imdb = ext.imdb_id; imdb = ext.imdb_id; itemPut(ck(type, id), d);
       }
     } catch (e) { /* still render shell */ d = d || { id }; }
     // Left while this was loading? Then nothing below may run: it would mount the player
@@ -4149,9 +4366,9 @@
     let seasonData = null;
     if (isTV) {
       const sk = 'season:' + id + ':' + season;
-      seasonData = itemCache[sk] || null;
+      seasonData = seasonGet(sk);
       if (!seasonData) {
-        try { seasonData = await tmdb('/tv/' + id + '/season/' + season); itemCache[sk] = seasonData; }
+        try { seasonData = seasonPut(sk, await tmdb('/tv/' + id + '/season/' + season)); }
         catch (e) { seasonData = null; }   // header degrades to S/E, strip is omitted
       }
       if (!routeIs(my)) return;
@@ -4206,13 +4423,14 @@
         <h3>No playback source configured</h3>
         <p>Add a source in <b>Settings → Playback sources</b>, or paste a URL template below.
            Placeholders: <code>{id}</code> <code>{imdb}</code> <code>{season}</code> <code>{episode}</code></p>
-        <input id="quick-src" placeholder="${isTV ? 'https://host/embed/tv/{id}/{season}/{episode}' : 'https://host/embed/movie/{id}'}">
+        <input id="quick-src" aria-label="Player address to try" placeholder="${isTV ? 'https://host/embed/tv/{id}/{season}/{episode}' : 'https://host/embed/movie/{id}'}">
         <button class="btn primary" id="quick-add">Save source &amp; play</button>
       </div></div>`;
     } else {
       // A function because the frame may be built later, on Play, and for whichever mirror is
       // selected by then (the server room works while the poster is up).
       frameHTML = (s) => {
+      nativeExempt();
       const url = buildSourceUrl(s, type, id, imdb, season, episode, resumeAt);
       // In a browser the frame is ALWAYS sandboxed, and `allow-downloads` is never in
       // the list -- so an embed cannot start a download whatever else is switched on.
@@ -4228,9 +4446,12 @@
       //   allow-top-navigation            let a frame replace our page with an ad
       // Also never granted: allow-modals (alert/confirm -- the "your PC is infected" scam),
       // allow-downloads, allow-top-navigation-to-custom-protocols (links that make the OS
-      // open another program). Everything a player legitimately needs is granted either way.
-      const BASE_SB = 'allow-same-origin allow-scripts allow-forms allow-presentation ' +
-                      'allow-orientation-lock allow-pointer-lock';
+      // open another program), allow-pointer-lock (a video player never captures the mouse; an
+      // ad that does traps the cursor) and allow-orientation-lock (our own landscape turn is
+      // screen.orientation.lock / the native layer, called from THIS document by
+      // cinemaLandscape -- a frame's sandbox has no say over it). Everything a player
+      // legitimately needs is granted either way.
+      const BASE_SB = 'allow-same-origin allow-scripts allow-forms allow-presentation';
       const POPUP_SB = ' allow-popups';
       const sandbox = HOST_BLOCKS_POPUPS
         ? ''                                            // host-level blocking instead
@@ -4248,7 +4469,8 @@
       // the mirrors render, which is why they vanished over AirPlay. Our own Theater and
       // Fullscreen buttons call requestFullscreen on .player-frame, in OUR document, so
       // they are unaffected by the frame's policy and keep every overlay working.
-      return `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay" ${sandbox} referrerpolicy="origin"></iframe>`;
+      // FRAME_DENY: the ad-tech features that would otherwise be on in here (see its comment).
+      return `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay; ${FRAME_DENY}" ${sandbox} referrerpolicy="origin"></iframe>`;
       };
       const art = d && (d.backdrop_path || d.poster_path);
       const goLabel = resumeAt > 30 ? 'Resume ' + fmtClock(resumeAt) : 'Play';
@@ -4331,7 +4553,7 @@
     // sits beside it on a wide window (stage.css) and below it otherwise. TV: the dock instead.
     const sideOpen = !IS_TV && !!window.matchMedia && matchMedia('(min-width: 1200px)').matches;
     view().innerHTML = `
-      <div class="player-shell${IS_TV ? '' : ' pl-split'}">
+      <div class="player-shell${IS_TV ? '' : ' pl-split'}${epStrip ? '' : ' pl-solo'}">
         ${IS_TV ? '' : '<div class="pl-main">'}
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
           <button class="icon-btn" data-nav="#/${type}/${id}" data-back title="Back to details" aria-label="Back to details">${ICON.back}</button>
@@ -4385,7 +4607,9 @@
     // only: scrollIntoView would move the page as well.
     if (sideOpen) {
       const eps = $('.pl-side .pl-eps'), onEp = eps && eps.querySelector('.epx.on');
-      if (onEp) eps.scrollTop = onEp.getBoundingClientRect().top - eps.getBoundingClientRect().top - 12;
+      // The season picker is sticky at the top of this list, so land below it, not under it.
+      const pick = eps && eps.querySelector('.pl-season'), cover = pick ? pick.offsetHeight : 0;
+      if (onEp) eps.scrollTop = Math.max(0, onEp.getBoundingClientRect().top - eps.getBoundingClientRect().top - cover - 12);
     }
 
     // Switch mirror IN PLACE — swap the iframe src instead of re-rendering the whole
@@ -4506,10 +4730,10 @@
       const mine = ++seasonSeq, myRoute = routeSeq;
       const box = $('#ep-strip'); if (!box) return;
       const key = 'season:' + id + ':' + n;
-      let sd = itemCache[key];
+      let sd = seasonGet(key);
       if (!sd) {
         box.style.opacity = '.5';
-        try { sd = await tmdb('/tv/' + id + '/season/' + n); itemCache[key] = sd; }
+        try { sd = seasonPut(key, await tmdb('/tv/' + id + '/season/' + n)); }
         catch (err) { sd = null; }
       }
       if (mine !== seasonSeq || !routeIs(myRoute) || !document.contains(box)) return;
@@ -4795,6 +5019,19 @@
   // Tell the native layer whether a player is on screen, so it only claims the
   // remote's MEDIA keys where they mean something.
   function nativeSetPlayer(on) { nativeSend('player:' + (on ? '1' : '0')); }
+  // The APK blocks ad/tracker domains from a list it refreshes weekly, and nothing else
+  // checks that list against OUR servers: a server's site on it would be a blank frame on
+  // Android only. So the sites of every configured server are exempted, sent again each
+  // time a frame is built (the table can change underneath). Only our own page can use
+  // this bridge, so a framed page cannot exempt itself.
+  function nativeExempt() {
+    if (!NATIVE_TAP) return;
+    const hosts = new Set();
+    (cfg.sources || []).forEach((s) => [s && s.movie, s && s.tv].forEach((t) => {
+      try { const h = new URL(String(t || '').replace(/\{[a-z]+\}/g, '0')).hostname; if (h) hosts.add(h.toLowerCase()); } catch (e) {}
+    }));
+    nativeSend('exempt:' + Array.from(hosts).slice(0, 64).join(','));
+  }
 
   // A tap that lands inside the player moves DOM focus INTO the cross-origin iframe.
   // Every key listener we have is on OUR document, and key events raised in another
@@ -5177,7 +5414,12 @@
       ? `<div class="grid">${list.map(i => cardHTML(i, i.type, true)).join('')}</div>`
       : all.length ? `<div class="center-note">Nothing on your watchlist matches that.
           <div class="note-cta"><button class="btn primary" data-nav="#/watchlist">Show everything</button></div></div>`
-      : `<div class="center-note">Nothing saved yet \u2014 use the bookmark on any title to keep it here.
+      // Touch screens hide the poster's bookmark (styles.css), so there the copy names what
+      // they do have: the title page's Watchlist button, and a long-press. Left-aligned
+      // under the left-aligned heading (.wl-empty), not a lone centred sentence.
+      : `<div class="center-note wl-empty">${!IS_TV && window.matchMedia && matchMedia('(hover: none)').matches
+            ? 'Nothing saved yet. Use the Watchlist button on a title page, or long-press a poster.'
+            : 'Nothing saved yet \u2014 use the bookmark on any title to keep it here.'}
           <div class="note-cta"><button class="btn primary" data-nav="#/movies">Browse movies</button><button class="btn" data-nav="#/tv">Browse shows</button></div>
         </div>`;
     html += histSectionHTML();
@@ -5185,11 +5427,11 @@
     const hc = $('#hist-clear');
     // History and progress are one idea to a viewer, so Clear takes both -- leaving
     // progress bars behind with no history to explain them reads as a bug.
-    if (hc) hc.onclick = () => {
-      if (confirm('Clear your watch history and all resume positions?')) {
-        histClear(); progClear(); route(); toast('History cleared'); syncFlush('clear');
-      }
-    };
+    if (hc) hc.onclick = () => confirmSheet({
+      title: 'Clear history?', body: 'Your watch history and every resume position on this device will be removed.',
+      yes: 'Clear history',
+      onYes: () => { histClear(); progClear(); route(); toast('History cleared'); syncFlush('clear'); }
+    });
   }
 
   /* ---------- Install on TV / other devices ---------- */
@@ -5246,7 +5488,7 @@
           <p class="muted" id="ga-auto">${autoLine}</p>
 ${IS_TV ? '' : `
           <p class="muted" style="font-size:12.5px;margin-top:4px">Want your own memorable link instead? Paste one (e.g. a custom <b>tinyurl.com</b> alias) and save — it replaces the address above and updates the QR.</p>
-          <div class="ga-url"><input id="ga-short" placeholder="https://tinyurl.com/your-alias" value="${esc(manual)}"><button class="btn sm primary" id="ga-save">Save</button></div>`}
+          <div class="ga-url"><input id="ga-short" aria-label="Your short link" placeholder="https://tinyurl.com/your-alias" value="${esc(manual)}"><button class="btn sm primary" id="ga-save">Save</button></div>`}
           <p class="muted" style="font-size:12.5px;margin-top:10px">Even easier: the Downloader app supports numeric <b>codes</b> — register your link at <b>aftv.news</b> and you get a short number to punch in.</p>
         </div>
         <div class="ga-card">
@@ -5346,31 +5588,38 @@ ${IS_TV ? '' : `
     if (av) av.innerHTML = acctFaceHTML();
   }
 
-  function closeAcct() {
-    const m = $('#acct-menu');
-    // Standard menu-button behaviour: if focus was IN the menu, it returns to the button.
-    // It also means a modal opened from the menu records the button as its opener, so
-    // Back from Settings lands somewhere visible instead of on <body>.
-    const had = !!(m && m.contains(document.activeElement));
-    if (m) m.remove();
-    const b = $('#acct-btn'); if (b) b.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('keydown', closeAcct._esc || (() => {}));
-    if (had && b) { if (IS_TV) tvFocusEl(b); else { try { b.focus(); } catch (e) {} } }
-  }
   // The account button opens the Account page (accountView, #/account). It used to open a
-  // pop-out menu of Settings, Install on TV, Reload and Sign out: those are its tabs now.
+  // pop-out menu of Settings, Install on TV, Reload and Sign out: those are its tabs now,
+  // and the menu's code is gone with it (it also wrote a stale aria-expanded onto what is
+  // now a plain navigation button).
 
   /* ---------- Error state ---------- */
   function errorState(e, sel) {
     const msg = (e && e.message) || 'Something went wrong';
+    // role=alert on the message only (a button inside an alert is read as part of it).
     const html = `<div class="center-note">
       <div class="cn-warn">${ICON.warn}</div>
-      <div style="font-weight:700;color:var(--text);margin-bottom:6px">Couldn't load data</div>
-      <div>${esc(msg)}</div>
+      <div role="alert">
+        <div style="font-weight:700;color:var(--text);margin-bottom:6px">Couldn't load data</div>
+        <div>${esc(msg)}</div>
+      </div>
       ${e && e.path ? `<div class="muted" style="font-size:12px;margin-top:8px;opacity:.7">${esc(e.path)}${e.status ? ' · ' + e.status : ''}</div>` : ''}
-      <button class="btn sm" style="margin-top:16px" onclick="location.reload()">Retry</button>
+      <button class="btn sm" style="margin-top:16px" data-retry>Retry</button>
     </div>`;
-    (sel ? $(sel) : view()).innerHTML = html;
+    const box = sel ? $(sel) : view();
+    if (!box) return;
+    box.innerHTML = html;
+    // Retry draws this screen again, fresh. A full reload threw away the whole app (and on
+    // a TV, its boot) for what is usually one dropped request. No argument: a truthy one
+    // is read by route() as a saved place to restore.
+    const btn = box.querySelector('[data-retry]');
+    btn.onclick = () => route();
+    // Focus it when the error IS the screen, or when focus has nowhere else to be -- a
+    // failed search under the field must not pull focus out of it mid-typing.
+    const a = document.activeElement;
+    if (!sel || !a || a === document.body || !document.contains(a)) {
+      if (IS_TV) tvFocusEl(btn); else try { btn.focus({ preventScroll: true }); } catch (err) {}
+    }
   }
 
   /* ============================================================
@@ -5382,7 +5631,7 @@ ${IS_TV ? '' : `
     back.innerHTML = `<div class="modal wide">
       <div class="mh"><h3>Trailer</h3><button class="icon-btn" data-close aria-label="Close">${ICON.x}</button></div>
       <div class="video-wrap">
-        <iframe id="trailer-iframe" title="Trailer" src="https://www.youtube-nocookie.com/embed/${esc(key)}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+        <iframe id="trailer-iframe" title="Trailer" src="https://www.youtube-nocookie.com/embed/${esc(key)}?autoplay=1" allow="autoplay; encrypted-media; fullscreen; ${FRAME_DENY}" allowfullscreen></iframe>
       </div>
     </div>`;
     modalMount(back);
@@ -5498,7 +5747,11 @@ ${IS_TV ? '' : `
     const kb = $('#set-keys');
     if (kb) kb.onclick = openShortcuts;
     const rs = $('#set-reset');
-    if (rs) rs.onclick = () => { if (confirm('Reset settings to defaults?\n\nThis also removes any mirrors you added and restores the built-in list. Your watchlist and history are kept.')) { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); const rst = syncState(); rst.themeAt = now(); saveSyncState(rst); syncFlush('reset'); route(); toast('Settings reset'); } };
+    if (rs) rs.onclick = () => confirmSheet({
+      title: 'Reset settings?', yes: 'Reset settings',
+      body: 'Settings go back to their defaults. This also removes any mirrors you added and restores the built-in list. Your watchlist and history are kept.',
+      onYes: () => { cfg = Object.assign({}, DEFAULTS); cfg.sources = DEFAULT_SOURCES.map(x => Object.assign({}, x)); saveConfig(); const rst = syncState(); rst.themeAt = now(); saveSyncState(rst); syncFlush('reset'); route(); toast('Settings reset'); }
+    });
     if (IS_TV) tvInvalidate();
   }
 
@@ -5506,7 +5759,13 @@ ${IS_TV ? '' : `
   // cursor, and the Back handler closes the modal and returns before reaching it.
   function modalCursorReset() { if (document.body.classList.contains('cursor-on')) cursorOff(); }
 
-  function modalMount(back) {
+  // Everything behind an open modal. aria-modal alone does not stop Tab: keyboard users
+  // could reach and press cards behind a "Clear history?" sheet. inert does (ignored, harmlessly,
+  // on Chromium 79, where the TV's spatial nav already keeps itself inside .modal-back).
+  const pageInert = (on) => document.querySelectorAll('main, header.top, .bottom-nav, footer.site')
+    .forEach((n) => { if ('inert' in n) n.inert = on; });
+  // initial: the element to focus first, when the caller knows better than the default pick.
+  function modalMount(back, initial) {
     // NOT <body>. The account menu removes the focused item before opening Settings,
     // so activeElement has already fallen back to <body> by the time we get here -- and
     // body satisfies every test in closeModal below, so it took tvFocusEl(body): a
@@ -5525,6 +5784,7 @@ ${IS_TV ? '' : `
       if (heading) dlg.setAttribute('aria-labelledby', heading.id);
     }
     document.body.appendChild(back);
+    pageInert(true);
     back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-close]')) closeModal(back); });
     // Keep a handle so closeModal can always unhook this. It used to be removed only
     // when the user pressed Escape, so closing via the backdrop or the X button left a
@@ -5536,10 +5796,41 @@ ${IS_TV ? '' : `
     // querySelector with a selector LIST returns the first match in document order, not
     // the first selector's match — so the header's ✕ won every time and the first OK
     // press closed the dialog the user had just opened. Try the selectors in priority.
-    const f = back.querySelector('[data-theme-pick]')
+    const f = initial || back.querySelector('[data-theme-pick]')
       || back.querySelector('.mb button, .mb [href], .mb input, .mb select, .mb [tabindex="0"]')
       || back.querySelector('button, [href], input, select, [tabindex="0"]');
     if (f) { if (IS_TV) tvFocusEl(f); else try { f.focus(); } catch (e) {} }
+  }
+  /**
+   * "Are you sure?" in our own UI, never window.confirm(). The desktop app runs with
+   * disableDialogs and the TV build refuses dialogs, so a native confirm() there is either
+   * silently false or a box no remote can reach. The quick-actions sheet's big rows: two
+   * focusable buttons in every state, and Back / Escape / the backdrop all mean Cancel
+   * (closeModal), which runs nothing. The ring starts on Cancel -- one stray OK must not
+   * wipe anything.
+   */
+  function confirmSheet(o) {
+    const back = document.createElement('div');
+    back.className = 'modal-back qa-back';
+    back.innerHTML = `<div class="modal qa">
+      <div class="mh"><h3>${esc(o.title)}</h3></div>
+      <div class="mb qa-list">
+        ${o.body ? `<p class="muted" id="cf-body" style="margin:2px 6px 8px;line-height:1.45">${esc(o.body)}</p>` : ''}
+        <button class="qa-item danger" data-cf="yes">${ICON.check}<span>${esc(o.yes || 'OK')}</span></button>
+        <button class="qa-item" data-cf="no">${ICON.x}<span>Cancel</span></button>
+      </div>
+    </div>`;
+    // Every caller is a wipe, so Yes wears the danger colour (.qa-item.danger) and does not
+    // read as a second Cancel. Cancel is handed to modalMount as the first focus, so focus
+    // is set once, not on Yes and then moved.
+    modalMount(back, back.querySelector('[data-cf="no"]'));
+    const dlg = back.querySelector('.modal'), p = back.querySelector('.qa-list p');
+    if (dlg) { dlg.setAttribute('role', 'alertdialog'); if (p) dlg.setAttribute('aria-describedby', p.id); }
+    back.querySelector('.qa-list').onclick = (ev) => {
+      const b = ev.target.closest('[data-cf]'); if (!b) return;
+      closeModal(back);                          // first: onYes may re-render under it
+      if (b.dataset.cf === 'yes') o.onYes();
+    };
   }
   function closeModal(back) {
     if (!back || !back.parentNode) return;
@@ -5547,6 +5838,9 @@ ${IS_TV ? '' : `
     if (back._esc) { document.removeEventListener('keydown', back._esc); back._esc = null; }
     const opener = back._opener;
     back.parentNode.removeChild(back);
+    // Before the focus below: focus() into an inert subtree fails silently. Only once the
+    // last modal is gone -- a confirm sheet can sit on top of another one.
+    if (!document.querySelector('.modal-back')) pageInert(false);
     // Put the ring back exactly where it was before the modal opened.
     if (opener && opener.focus && document.contains(opener)) {
       if (IS_TV) tvFocusEl(opener); else try { opener.focus(); } catch (e) {}
@@ -5629,8 +5923,6 @@ ${IS_TV ? '' : `
     // cinema/player classes would leave `overflow: hidden` and their document
     // listeners on every subsequent page with no way back but a reload.
     document.querySelectorAll('.modal-back').forEach(closeModal);
-    // The account menu is an overlay too; left mounted it would sit over the new page.
-    closeAcct();
     const resume = resumeCinema; resumeCinema = 0;            // set only by "next episode"; consumed here
     cinemaCarry = IS_TV && parts[0] === 'watch' && document.body.classList.contains('cinema-on');
     if (document.body.classList.contains('cinema-on') || document.body.classList.contains('player-focused')) exitCinema();
@@ -5649,25 +5941,66 @@ ${IS_TV ? '' : `
     routeKey = viewKey; routePageKey = pageKey;
     if (IS_TV) tvFocusFirst(true, sameSection, restore);  // re-establish focus once the new view has rendered
     else if (restore) placeRestoreSoon(restore);
-    const sec = parts[0] || 'home';
-    setActiveNav(parts[0] === 'tv' ? 'tv' : parts[0] === 'movies' ? 'movies' : parts[0] === 'watchlist' ? 'watchlist' : parts[0] === 'search' ? 'search' : parts[0] === 'account' ? 'account' : 'home');
+    // A film or a watch page belongs to its section as much as a series page does: the
+    // header used to light TV Shows on a series and nothing at all on a film or the player.
+    const p0 = parts[0] || '';
+    const sec = p0 === 'tv' || p0 === 'tv-shows' ? 'tv'
+      : p0 === 'movies' || p0 === 'movie' ? 'movies'
+      : p0 === 'watch' ? (parts[1] === 'tv' ? 'tv' : 'movies')
+      : p0 === 'watchlist' || p0 === 'search' || p0 === 'account' ? p0 : 'home';
+    setActiveNav(sec);
 
-    if (!parts.length) return homeView();
-    switch (parts[0]) {
-      case 'movies': return discoverView('movie', params);
+    const my = routeSeq;
+    let shown;
+    if (!parts.length) shown = homeView();
+    else switch (parts[0]) {
+      case 'movies': shown = discoverView('movie', params); break;
       case 'tv':
       case 'tv-shows':
-        if (parts[1]) return detailView('tv', parts[1]);
-        return discoverView('tv', params);
-      case 'movie': return parts[1] ? detailView('movie', parts[1]) : discoverView('movie', params);
-      case 'search': return searchView(params);
-      case 'person': return personView(parts[1]);
-      case 'watch': return watchView(parts[1], parts[2], params, resume);
-      case 'watchlist': return watchlistView(params);
-      case 'account': return accountView(params);
-      case 'get-app': return getAppView();
-      default: return homeView();
+        shown = parts[1] ? detailView('tv', parts[1]) : discoverView('tv', params); break;
+      case 'movie': shown = parts[1] ? detailView('movie', parts[1]) : discoverView('movie', params); break;
+      case 'search': shown = searchView(params); break;
+      case 'person': shown = personView(parts[1]); break;
+      case 'watch': shown = watchView(parts[1], parts[2], params, resume); break;
+      case 'watchlist': shown = watchlistView(params); break;
+      case 'account': shown = accountView(params); break;
+      case 'get-app': shown = getAppView(); break;
+      default: shown = homeView();
     }
+    Promise.resolve(shown).then(() => routeSettle(my), () => routeSettle(my));
+    return shown;
+  }
+
+  /**
+   * After a view has rendered: name the window after it, and (off TV) put keyboard focus
+   * somewhere real. Replacing #view's innerHTML drops focus to <body>, so the next Tab
+   * started again at the header; the window and history entries all read the brand.
+   * TV has its own focus model (tvFocusFirst) and the search view focuses its own field,
+   * so focus is only taken when nothing holds it.
+   */
+  const ROUTE_LABEL = { movies: 'Movies', movie: 'Movies', tv: 'TV Shows', 'tv-shows': 'TV Shows', search: 'Search',
+                        watchlist: 'Watchlist', account: 'Account', 'get-app': 'Get the app' };
+  function routeSettle(my) {
+    if (!routeIs(my)) return;
+    const v = view(); if (!v) return;
+    const parts = parseHash().parts, p0 = parts[0] || '';
+    const txt = (sel) => { const n = v.querySelector(sel); return n ? (n.getAttribute('alt') || n.textContent || '').trim() : ''; };
+    let name = '';
+    if (p0 === 'watch') name = txt('.pl-title');
+    else if ((p0 === 'movie' || p0 === 'tv' || p0 === 'tv-shows' || p0 === 'person') && parts[1]) name = txt('.detail-logo') || txt('h1');
+    if (!name) name = ROUTE_LABEL[p0] || '';
+    document.title = (name ? name + ' · ' : '') + cfg.brand;
+    if (IS_TV || document.querySelector('.modal-back')) return;
+    const a = document.activeElement;
+    if (!a || a === document.body || !document.contains(a)) viewFocus(true);
+  }
+  // #view as a focus target (route changes, the skip link). It is a landmark, not a
+  // control, so it never wears the ring: [tabindex]:focus-visible would otherwise draw
+  // it round the whole page (styles.css also says #view:focus-visible { box-shadow: none }).
+  function viewFocus(noScroll) {
+    const v = view(); if (!v) return;
+    if (!v.hasAttribute('tabindex')) { v.setAttribute('tabindex', '-1'); v.style.outline = 'none'; v.style.boxShadow = 'none'; }
+    try { v.focus({ preventScroll: !!noScroll }); } catch (e) {}
   }
 
   /* ============================================================
@@ -5705,11 +6038,15 @@ ${IS_TV ? '' : `
       const bn = document.createElement('nav');
       bn.className = 'bottom-nav';
       bn.setAttribute('aria-label', 'Primary');
+      // Home is a tab like the others: it used to be reachable only through the 30px brand
+      // in the top corner, and on Home no tab was lit at all (route() passes 'home'). The
+      // last tab says Watchlist, the name of the page it opens, not 'Saved'.
       bn.innerHTML = `
+        <a href="#/" data-nav="#/" data-section="home">${ICON.home}<span>Home</span></a>
         <a href="#/movies" data-nav="#/movies" data-section="movies">${ICON.film}<span>Movies</span></a>
         <a href="#/tv" data-nav="#/tv" data-section="tv">${ICON.tv}<span>TV</span></a>
         <a href="#/search" data-nav="#/search" data-section="search">${ICON.search}<span>Search</span></a>
-        <a href="#/watchlist" data-nav="#/watchlist" data-section="watchlist">${ICON.bookmark}<span>Saved</span></a>`;
+        <a href="#/watchlist" data-nav="#/watchlist" data-section="watchlist">${ICON.bookmark}<span>Watchlist</span></a>`;
       document.body.appendChild(bn);
     }
     // scroll-aware header: transparent over the Home billboard, frosts on scroll
@@ -5739,8 +6076,16 @@ ${IS_TV ? '' : `
     if (wl) {
       e.preventDefault(); e.stopPropagation();
       const id = wl.dataset.wl, type = wl.dataset.type;
-      const item = itemCache[ck(type, id)] || getWatch().find(x => x.id == id && x.type === type) || { id };
+      const item = itemGet(ck(type, id)) || getWatch().find(x => x.id == id && x.type === type) || { id };
       watchReflect(id, type, toggleWatch(item, type));
+      return;
+    }
+    // The skip link (index.html, a.skip href="#view"). Its href would be read by the hash
+    // router as a route called "view" and land on Home; it only has to move focus.
+    const skip = e.target.closest('a.skip');
+    if (skip) {
+      e.preventDefault();
+      viewFocus(false);
       return;
     }
     const tr = e.target.closest('[data-trailer]');
@@ -5762,7 +6107,7 @@ ${IS_TV ? '' : `
     const ra = e.target.closest('[data-rail]');
     if (ra) {
       const track = ra.parentElement.querySelector('.track, .ep-strip, .season-pills, .cast-track');
-      if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: 'smooth' });
+      if (track) track.scrollBy({ left: (+ra.dataset.rail) * track.clientWidth * 0.85, behavior: tvReduceMQ && tvReduceMQ.matches ? 'auto' : 'smooth' });
       return;
     }
     // A resume rail that can only grow is one you stop trusting: a title you abandoned
@@ -5981,12 +6326,18 @@ ${IS_TV ? '' : `
    * the quick-actions sheet: a Continue-watching tile has no bookmark to click, and on a phone
    * the poster's button is display:none, so the sheet cannot lean on the button.
    */
+  // A card's bookmark names its title: eighty buttons all called 'Add to watchlist' told a
+  // screen reader nothing about which one it was on.
+  function wlLabel(on, name) {
+    return name ? (on ? 'Remove ' + name + ' from' : 'Add ' + name + ' to') + ' watchlist' : (on ? 'Remove from' : 'Add to') + ' watchlist';
+  }
   function watchReflect(id, type, nowOn) {
     document.querySelectorAll(`[data-wl="${id}"][data-type="${type}"]`).forEach(b => {
       b.classList.toggle('on', nowOn);
       b.setAttribute('aria-pressed', String(nowOn));
-      b.setAttribute('aria-label', (nowOn ? 'Remove from' : 'Add to') + ' watchlist');
-      b.setAttribute('title', (nowOn ? 'Remove from' : 'Add to') + ' watchlist');
+      const lbl = wlLabel(nowOn, b.getAttribute('data-wl-name') || '');
+      b.setAttribute('aria-label', lbl);
+      b.setAttribute('title', lbl);
       // The billboard's button uses a check/plus pair, not the bookmark pair.
       if (b.closest('.bb-cta')) { b.innerHTML = nowOn ? ICON.check : ICON.plus; return; }
       if (b.id === 'detail-wl') { b.classList.toggle('primary', nowOn); b.innerHTML = (nowOn ? ICON.bookmarkFill : ICON.bookmark) + ' ' + (nowOn ? 'In watchlist' : 'Watchlist'); }
@@ -6007,7 +6358,7 @@ ${IS_TV ? '' : `
     const isWatch = !!m[1], type = m[2], id = m[3];
     const q = {}; new URLSearchParams(m[4] || '').forEach((v, k) => { q[k] = v; });
     const isEp = type === 'tv' && isWatch && q.s && q.e && card.classList.contains('ep');
-    const item = itemCache[ck(type, id)] || {};
+    const item = itemGet(ck(type, id)) || {};
     // The tile's OWN text, never a piece of its aria-label: that label is "Monsters, Inc., 54m
     // left, ..." and splitting it at the comma stored "Monsters" as the title -- and synced it.
     const shown = ((card.querySelector('.cw-t, .ch-title, .et') || {}).textContent || '').trim();
@@ -6101,6 +6452,7 @@ ${IS_TV ? '' : `
   // The hero bleeds edge-to-edge with 100vw, which counts the classic scrollbar the
   // layout box does not have — 5px of horizontal overflow at each edge on any platform
   // that shows one. Measure it and let CSS subtract it.
+  let sbwNow = '';                 // declared ABOVE the boot-time call below (TDZ)
   function syncScrollbarWidth() {
     const cw = document.documentElement.clientWidth;
     // A zero client width means the document is not laid out yet, or is inside a
@@ -6109,7 +6461,10 @@ ${IS_TV ? '' : `
     // scrollbar" -- so the 100vw hero kept its 5px of overflow with nothing to
     // correct it. Record nothing instead and let a later call do the measuring.
     if (!cw) return;
-    document.documentElement.style.setProperty('--sbw', Math.max(0, window.innerWidth - cw) + 'px');
+    const w = Math.max(0, window.innerWidth - cw) + 'px';
+    if (w === sbwNow) return;                    // a root property write restyles the page; skip a no-op
+    sbwNow = w;
+    document.documentElement.style.setProperty('--sbw', w);
   }
   syncScrollbarWidth();
   // At boot the page is empty, so there is no scrollbar to measure yet — recompute when
@@ -6174,16 +6529,22 @@ ${IS_TV ? '' : `
   /** Phones and desktops: wait for the view, then restore -- unless the user scrolls first. */
   function placeRestoreSoon(place) {
     const my = routeSeq, root = view(); if (!root) return;
-    let live = true;
-    const cancel = () => { live = false; };
+    let live = true, timer = 0;
+    // Every way out removes both listeners. They used to be { once } only, so on a mouse-only
+    // desktop the touchstart one never fired and each Back left one more behind, holding its
+    // place. Removed by hand rather than with an AbortSignal: { signal } is Chromium 90+.
+    const done = () => {
+      live = false; mo.disconnect(); clearTimeout(timer);
+      ['wheel', 'touchstart'].forEach(ev => window.removeEventListener(ev, done, { passive: true }));
+    };
     // Not keydown: Alt+Left IS a keydown, and it is how a desktop goes Back.
-    ['wheel', 'touchstart'].forEach(ev => window.addEventListener(ev, cancel, { once: true, passive: true }));
+    ['wheel', 'touchstart'].forEach(ev => window.addEventListener(ev, done, { passive: true }));
     const tryIt = () => (!live || !routeIs(my)) ? true : placeApply(place) !== 'wait';
     // NEVER tried synchronously: at this point the DOM is still the page being left, and
     // applying to it "succeeds". Only a mutation of the view means the new page exists.
-    const mo = new MutationObserver(() => { if (tryIt()) mo.disconnect(); });
+    const mo = new MutationObserver(() => { if (tryIt()) done(); });
     mo.observe(root, { childList: true, subtree: true });
-    setTimeout(() => mo.disconnect(), 8000);
+    timer = setTimeout(done, 8000);
   }
 
   window.addEventListener('hashchange', () => {
@@ -6265,8 +6626,6 @@ ${IS_TV ? '' : `
     const on = updState.s === 'available' || updState.s === 'ready';
     const b = document.getElementById('acct-btn');
     if (b) b.classList.toggle('has-dot', on);
-    const item = document.querySelector('#acct-menu [data-am="settings"]');
-    if (item) item.classList.toggle('has-dot', on);
   }
 
   // Only ever reached from an interactive check: the user pressed a button, so say
@@ -6548,8 +6907,6 @@ ${IS_TV ? '' : `
     if (lk) return lk;
     const dw = document.getElementById('drawer');
     if (dw && dw.classList.contains('open')) return dw;
-    const am = document.getElementById('acct-menu');
-    if (am) return am;
     return document.querySelector('.modal-back') || document;
   }
 
@@ -6629,8 +6986,7 @@ ${IS_TV ? '' : `
   // The CSS reduced-motion block can only override scrolls whose behavior is 'auto';
   // an explicit 'smooth' option wins over it. So the most frequent motion in the whole
   // app — a page scroll on every D-pad press — was the one the preference could not
-  // switch off. Ask directly instead.
-  const tvReduceMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  // switch off. Ask directly instead (tvReduceMQ, declared with debounce near the top).
   function tvNow() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
   function tvScrollGet(el) { return el === window ? (window.scrollY || window.pageYOffset || 0) : el.scrollLeft; }
   function tvScrollSet(el, v) { if (el === window) window.scrollTo(0, v); else el.scrollLeft = v; }
@@ -6665,14 +7021,14 @@ ${IS_TV ? '' : `
   /* ---- The Stage (TV Home) ------------------------------------------------------
      One fixed layer behind the page, made once and kept for the session (stage.css).
      It shows the FOCUSED title: backdrop, title or logo, one line of facts, two of
-     story, and a beam of the poster's colour. tvMark feeds it on every focus change and
+     story; the poster's colour reaches it through --amb-rgb. tvMark feeds it on every focus change and
      tvFocusEl places the row; nothing else drives it. Shown only on TV Home (body.tv.home).
 
      Cheap by design: text swaps at once, the backdrop waits 160ms so holding an arrow
      sweeps past titles without decoding their art, and anything that costs a request
      (a missing overview, the logo, the colour) waits until focus has rested 450ms. */
   let stageEl = null, stageBd = [], stageBdOn = 0, stageWant = '', stageFor = '';
-  let stageBdTimer = 0, stageSwapTimer = 0, stageDwellTimer = 0, stageProbed = false;
+  let stageBdTimer = 0, stageSwapTimer = 0, stageDwellTimer = 0;
   let stageHist = new Map();
   let stageWheeled = false;             // the page moved by wheel or touch since the last D-pad press
   function stageMount() {
@@ -6680,11 +7036,16 @@ ${IS_TV ? '' : `
     stageEl = document.createElement('div');
     stageEl.id = 'stage';
     stageEl.setAttribute('aria-hidden', 'true');
-    stageEl.innerHTML = '<div class="st-bd"></div><div class="st-bd"></div><div class="st-scrim"></div><div class="st-beam"></div>' +
+    stageEl.innerHTML = '<div class="st-bd"></div><div class="st-bd"></div><div class="st-scrim"></div>' +
       '<div class="st-info"><div class="st-kicker st-swap"></div><div class="st-title st-swap"></div>' +
       '<div class="st-meta st-swap"></div><div class="st-line st-swap"></div></div>';
     document.body.insertBefore(stageEl, document.body.firstChild);
     stageBd = [].slice.call(stageEl.querySelectorAll('.st-bd'));
+    // Once a layer has faded out its picture is let go, so one decoded w1280 bitmap stays
+    // resident instead of two. Safe: the next swap always sets a fresh URL before fading in.
+    stageBd.forEach((b) => b.addEventListener('transitionend', (e) => {
+      if (e.target === b && e.propertyName === 'opacity' && !b.classList.contains('on')) b.style.backgroundImage = '';
+    }));
     // A wheel or a finger moves Home or a grid screen by itself (a TV with a mouse, the
     // browser): while it moves, the lane does not hold -- nothing faded, and the stage's text
     // steps away once the page is off the top (st-under). When it stops, stageSnap settles
@@ -6745,7 +7106,7 @@ ${IS_TV ? '' : `
     const type = m[1], id = m[2], key = type + ':' + id;
     const cw = card.classList.contains('cw-card') ? ((card.querySelector('.cw-s') || {}).textContent || '') : '';
     const rank = card.classList.contains('rank-item') ? (/^Number (\d+)/.exec(card.getAttribute('aria-label') || '') || [])[1] : '';
-    return { type: type, id: id, key: key, cw: cw, rank: rank, it: itemCache[ck(type, id)] || null, h: stageHist.get(key) || null };
+    return { type: type, id: id, key: key, cw: cw, rank: rank, it: itemGet(ck(type, id)) || null, h: stageHist.get(key) || null };
   }
 
   function stageText(s) {
@@ -6796,7 +7157,6 @@ ${IS_TV ? '' : `
         next.classList.add('on');
         stageBd[stageBdOn].classList.remove('on');
         stageBdOn = 1 - stageBdOn;
-        stageProbe();
       };
       im.src = url;
     }, 160);
@@ -6830,8 +7190,7 @@ ${IS_TV ? '' : `
     if (!it || !it.overview || !it.backdrop_path) {
       try {
         const d = await full;
-        it = Object.assign(it || {}, d);
-        itemCache[ck(s.type, s.id)] = it;
+        it = itemPut(ck(s.type, s.id), d);
       } catch (e) { /* the stage keeps what it has */ }
       if (stageFor !== s.key || !stageOn()) return;
       s.it = it;
@@ -6839,7 +7198,7 @@ ${IS_TV ? '' : `
     }
     if (!it) return;
     if (!it.media_type) it.media_type = s.type;
-    ambientFrom(it.poster_path);                 // the beam's colour (--ambient)
+    ambientFrom(it.poster_path);                 // the house light's colour (--amb-rgb)
     await heroLogo(it);
     if (stageFor !== s.key || !stageOn()) return;
     stagePaintInfo(s);                           // a no-op unless the text or the logo changed
@@ -6887,14 +7246,6 @@ ${IS_TV ? '' : `
     else if ((tries || 0) < 8) { const my = routeSeq; stagePageTimer = setTimeout(() => { if (routeIs(my) && stageFor === key) stagePage((tries || 0) + 1); }, 400); }
   }
 
-  /** Where the focused card will sit once the glides finish: the beam rises from there. */
-  function stageBeam(left, top, width) {
-    const b = stageEl && stageEl.querySelector('.st-beam'); if (!b) return;
-    const w = Math.round(width * 2.4), h = b.offsetHeight || Math.round(window.innerHeight * 0.44);
-    b.style.width = w + 'px';
-    b.style.transform = 'translate3d(' + Math.round(left + width / 2 - w / 2) + 'px,' + Math.round(top - h + 14) + 'px,0)';
-  }
-
   /**
    * tvFocusEl's placement on Home: the focused card at the start of its row (not centred),
    * and the row's heading at --lane-y (always, not only when off screen). Rows above it
@@ -6907,21 +7258,16 @@ ${IS_TV ? '' : `
     const rail = el.closest('#view > .rows > .rail');
     if (!rail) return false;
     const hs = el.closest('.track');
-    const box = el.querySelector('.poster') || el;
-    const r = box.getBoundingClientRect();
-    let dx = 0;
     if (hs) {
       const er = el.getBoundingClientRect(), hr = hs.getBoundingClientRect();
       const pad = hs.__padL != null ? hs.__padL : (hs.__padL = parseFloat(getComputedStyle(hs).paddingLeft) || 0);
       const maxL = Math.max(0, hs.scrollWidth - hs.clientWidth);
       const left = Math.max(0, Math.min(hs.scrollLeft + (er.left - hr.left) - pad, maxL));
-      dx = left - hs.scrollLeft;
       tvGlide(hs, left);
     }
     const laneY = window.innerHeight * 0.5;      // stage.css --lane-y
     const max = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
     const top = Math.max(0, Math.min(window.scrollY + rail.getBoundingClientRect().top - laneY, max));
-    const dy = top - window.scrollY;
     tvGlide(window, top);
     const rails = rail.parentNode.children;
     let above = true;
@@ -6929,7 +7275,6 @@ ${IS_TV ? '' : `
       if (rails[i] === rail) above = false;
       rails[i].classList.toggle('st-above', above);
     }
-    stageBeam(r.left - dx, r.top - dy, r.width);
     return true;
   }
 
@@ -6992,31 +7337,21 @@ ${IS_TV ? '' : `
     return true;
   }
 
-  // A weak set shows it in the frame rate. Measured once, while the first backdrop drifts:
-  // a median frame over 24ms turns off the drift and the beam (body.stage-lite).
-  function stageProbe() {
-    if (stageProbed || !window.requestAnimationFrame) return;
-    stageProbed = true;
-    const gaps = []; let last = 0;
-    const step = (t) => {
-      if (last) gaps.push(t - last);
-      last = t;
-      if (gaps.length < 40) { requestAnimationFrame(step); return; }
-      gaps.sort((a, b) => a - b);
-      if (gaps[gaps.length >> 1] > 24) document.body.classList.add('stage-lite');
-    };
-    requestAnimationFrame(step);
-  }
-
   /* ---- The side rail (TV) -------------------------------------------------------
      The header, laid out as a column (stage.css). LEFT at the start of any row opens it,
      on the current section; UP/DOWN walk it; RIGHT or BACK return to exactly where you
      were. It is never part of the row model's vertical moves. */
   let tvRailReturn = null;
+  // The rail's top-to-bottom order is the fixed CSS `order` list (stage.css), so it is read
+  // from there rather than from a getBoundingClientRect per item on every press -- that was
+  // a forced layout per key while the panel was still sliding.
+  const RAIL_ORDER = ['#search-btn', '.brand', '[data-section="movies"]', '[data-section="tv"]', '[data-section="watchlist"]', '.acct-btn'];
+  const railRank = (el) => { for (let i = 0; i < RAIL_ORDER.length; i++) if (el.matches(RAIL_ORDER[i])) return i; return RAIL_ORDER.length; };
   function railItems() {
     const hdr = document.querySelector('header.top'); if (!hdr) return [];
     return [].slice.call(hdr.querySelectorAll(TV_FOCUSABLE)).filter(tvVisible)
-      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      .map((el, i) => ({ el: el, k: railRank(el) * 100 + i }))
+      .sort((a, b) => a.k - b.k).map((x) => x.el);
   }
   function railEnter(from) {
     const items = railItems(); if (!items.length) return false;
@@ -7111,7 +7446,10 @@ ${IS_TV ? '' : `
       marks(tvMarked).forEach(m => m.classList.add('tv-row-active'));
     }
     // The side rail opens while it holds the ring; the Stage follows it everywhere else.
-    document.body.classList.toggle('rail-open', !!(tvMarked && tvMarked.closest('header.top')));
+    // Written only when it flips: a body class change restyles the whole page, and most
+    // presses move between two cards with the rail shut.
+    const railOpen = !!(tvMarked && tvMarked.closest('header.top'));
+    if (railOpen !== document.body.classList.contains('rail-open')) document.body.classList.toggle('rail-open', railOpen);
     if (tvMarked) stageFocus(tvMarked);
     // Resting on any card starts its title page loading (titleData; the Stage does the same).
     if (tvMarked) titlePrefetchFrom(tvMarked, 450);
@@ -7196,6 +7534,13 @@ ${IS_TV ? '' : `
         if (r === true) return true;
         if (r === 'wait') return false;
         place = null;                    // unusable -- land the normal way
+      }
+      // The watch gate's Play outranks "keep your place". refreshSources redraws the same
+      // #/watch hash when the mirror table or health changes, which counts as a filter
+      // change, and the restore then put the ring on Back -- so OK went back, not on.
+      if (!place && !document.querySelector('.modal-back')) {
+        const pg = document.getElementById('play-go');
+        if (pg && tvVisible(pg)) { tvFocusEl(pg); return true; }
       }
       if (keepPlace && tvLastPos) {
         const root = document.getElementById('view');
@@ -7409,7 +7754,6 @@ ${IS_TV ? '' : `
     if (document.getElementById('lock')) return true;
     const dw = document.getElementById('drawer');
     if (dw && dw.classList.contains('open')) return true;
-    if (document.getElementById('acct-menu')) return true;
     if (document.querySelector('.modal-back')) return true;
     return false;
   }
@@ -7458,14 +7802,22 @@ ${IS_TV ? '' : `
 
   if (IS_TV) {
     document.body.classList.add('tv');
-    document.documentElement.classList.add('tv');   // stage.css: no ambient transition on TV
     if (IS_WEBOS) document.documentElement.classList.add('webos');   // stage.css: the LG's 1280x720 canvas
     stageMount();
     document.addEventListener('keydown', tvSpatialNav);
     document.addEventListener('focusin', (e) => tvMark(e.target));
     // The cached geometry is only stale when the DOM or the viewport changes.
     if (window.MutationObserver) {
-      const mo = new MutationObserver(tvInvalidate);
+      // ...but not by the Stage's text swaps (#stage is fixed, aria-hidden, holds no
+      // focusables) or a card's runtime slot (.ch-rt, nowrap text): those landed on almost
+      // every press and threw the whole row model away, so each move re-measured the page.
+      // Plain loop, no ?. -- this file ships unbundled to Chromium 79 (webOS).
+      const mo = new MutationObserver((rs) => {
+        for (let i = 0; i < rs.length; i++) {
+          const t = rs[i].target;
+          if (!(stageEl && stageEl.contains(t)) && !(t.classList && t.classList.contains('ch-rt'))) { tvInvalidate(); return; }
+        }
+      });
       mo.observe(document.body, { childList: true, subtree: true });
     }
     window.addEventListener('resize', tvInvalidate);
@@ -7488,7 +7840,6 @@ ${IS_TV ? '' : `
       // dismiss gesture either quits the app (at navDepth 0) or navigates the page
       // underneath while the overlay and its scrim stay mounted on top.
       if (document.getElementById('lock')) { exit(); return; }   // nothing behind the lock
-      if (document.getElementById('acct-menu')) { closeAcct(); return; }
       const modal = document.querySelector('.modal-back');
       if (modal) { closeModal(modal); return; }
       // A running countdown owns the first Back: cancel it and stay in the episode. Back is

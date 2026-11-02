@@ -245,10 +245,10 @@ async function createWindow() {
     backgroundColor: '#0b0d12',
     title: 'Reeldeck',
     autoHideMenuBar: true,
+    // contextIsolation, no Node, sandbox, and disableDialogs: no frame -- the unsandboxed
+    // player above all -- can raise a native alert/confirm/prompt (guards.js).
     webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+      ...guards.WEB_PREFERENCES,
       preload: path.join(__dirname, 'preload.js')
     }
   });

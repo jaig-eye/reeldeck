@@ -15,18 +15,79 @@
    the watch page's side column, and the phone's pinned Play bar and player.
    ============================================================================ */
 
+/* ---- Tokens: the ONE :root block --------------------------------------------------
+   Every value the app is built from, on every device. The colour roles below are
+   Midnight's; each theme restates only its roles, in the :root[data-theme] blocks at the
+   top of styles.css, which outrank this block whatever the load order. */
 :root {
+  /* colour roles */
+  color-scheme: dark;        /* native scrollbars, <select> popups and form controls follow the theme */
+  --bg: #0b0d12; --bg-2: #12151d; --bg-3: #1a1f2b;
+  --surface: #171b24; --surface-2: #1f2431;
+  --border: #262c3a;         /* dividers */
+  --border-strong: #737d92;  /* 3:1 boundaries -- inputs, the lock dots: 4.7:1 on --bg, 3.75:1 on --surface-2 */
+  --text: #eef1f6; --text-soft: #d3d9e4;
+  --muted: #9aa4b6; --muted-2: #838da1;   /* --muted-2 holds 4.5:1 for small text */
+  --accent: #f5c518; --accent-ink: #12151d;
+  /* Badges and chips over artwork sit on the always-dark veil, so they need an accent that
+     survives on dark: Daylight's indigo is 2.88:1 there. */
+  --accent-on-dark: var(--accent);
+  --danger: #ff5470; --good: #4ade80;
+  --scrollbar: #2a3140; --sk-hi: #232a38;
+  --chrome-bg: rgba(11, 13, 18, .72);     /* header and tab bar */
+  --ghost-bg: rgba(255, 255, 255, .06);
+  /* The same colours as comma triplets, for rgba(var(--x-rgb), a). They work natively on
+     webOS's Chromium 79, where color-mix() does not exist and compat.css could only freeze
+     a mix to Midnight's values. --bg-rgb is the page: every fade INTO the page uses it.
+     --veil-rgb is ink for text over artwork: always dark, tinted to the theme, black on
+     the pure-black themes. Text on the veil is --on-veil, the only colour used over art.
+     --amb-rgb is not set here: app.js writes the focused title's colour (ambientSet). */
+  --bg-rgb: 11, 13, 18;
+  --veil-rgb: 6, 8, 12;
+  --accent-rgb: 245, 197, 24;
+  --on-veil: #fff;
+  --house-a: .22;            /* strength of the house light (#house-light); lower on black themes */
+  /* ONE focus ring, shared by the keyboard (:focus-visible) and the remote (.tv-focus) so
+     selection reads the same everywhere. Two-tone on purpose: a band of page colour, then
+     the accent. A plain accent outline disappears on an accent-coloured control (the
+     yellow Play button in a yellow ring), and a 2px outline in a second accent measured
+     2.54:1 on Daylight's white, under WCAG 2.4.11's 3:1. body.tv scales it up. */
+  --ring: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent);
+
+  /* geometry. 100vw INCLUDES the classic scrollbar, so a `width:100vw` hero overhung the
+     layout box and gave every desktop view a horizontal scrollbar: --sbw is measured at
+     boot and on resize (app.js). --sat is the top inset as a property script can read
+     (getComputedStyle cannot see env()). */
+  --sbw: 0px;
+  --sat: env(safe-area-inset-top, 0px);
+  --bleed-w: calc(100vw - var(--sbw));
+  --bleed-ml: calc(-50vw + 50% + (var(--sbw) / 2));
+  --maxw: 1400px;
+  --header-h: 62px;
+
+  /* type: Manrope for the interface; Archivo for titles only, never UI or body, set
+     heavy and narrow. The fallbacks stay in the same genre (tight neo-grotesques) so the
+     hierarchy survives when a webfont does not load. body.tv restates the scale below. */
+  --font: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: "Archivo", "Helvetica Neue", "Arial Narrow", system-ui, sans-serif;
+  --fs-xs: 12px; --fs-sm: 14px; --fs-md: 16px; --fs-lg: 20px; --fs-xl: 28px; --fs-display: clamp(36px, 5vw, 64px);
+
   /* spacing: a 4px base */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
-  /* corners */
-  --r-1: 8px; --r-2: 12px; --r-3: 18px; --r-pill: 999px;
-  /* motion: three durations, one curve */
-  --dur-1: 140ms;          /* focus */
-  --dur-2: 260ms;          /* a row or panel moving */
-  --dur-3: 520ms;          /* the stage changing scene */
+  /* corners: chips, badges, posters / buttons, inputs, sheets, the hero / pills.
+     Circles stay 50%. */
+  --r-sm: 6px; --r-md: 12px; --r-pill: 999px;
+  /* depth: one shadow, for floating overlays only (menus, sheets, toast, Up next, the phone's
+     pinned Play). Everything else is flat: a fill step and a 1px hairline. Daylight restates it. */
+  --elev: 0 12px 32px rgba(0, 0, 0, .45);
+  /* motion: three durations, one curve; only transform and opacity animate */
+  --dur-1: 140ms;            /* focus, hover */
+  --dur-2: 240ms;            /* a row or panel moving */
+  --dur-3: 480ms;            /* the stage changing scene */
   --ease-out: cubic-bezier(.2, .8, .2, 1);
   /* layering */
-  --z-stage: 0; --z-content: 1; --z-rail: 60; --z-overlay: 200;
+  --z-stage: 0; --z-content: 1;
+  --z-sticky: 50; --z-rail: 60; --z-sheet: 200; --z-modal: 300; --z-toast: 400;
 }
 
 /* ---- TV: the 10-foot scale ---------------------------------------------------
@@ -44,12 +105,7 @@ body.tv {
 }
 
 /* ---- TV performance budget -------------------------------------------------- */
-/* No blur anywhere on TV: every backdrop-filter is a full compositing pass, and several
-   (the Up Next pill, the cinema buttons) sat over the playing video. */
-body.tv *, body.tv *::before, body.tv *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
-/* The ambient colour is an inherited custom property: transitioning it on <html> restyled
-   the whole document every frame for 1.6s on each change. On TV it simply changes. */
-html.tv { transition: none; }
+/* (No backdrop-filter exists anywhere any more, so the old TV-wide reset is gone.) */
 body.tv .sk { animation: none; }
 
 /* ---- TV type ------------------------------------------------------------------ */
@@ -64,11 +120,12 @@ body.tv .epx-t { font-size: var(--fs-sm); }
 body.tv .mirror .mn { font-size: var(--fs-lg); }
 body.tv .mirror .ms { font-size: var(--fs-xs); }
 body.tv .srv-now .lbl { font-size: var(--fs-sm); }
-body.tv .am-item { font-size: var(--fs-md); }
-body.tv .card .poster .typebadge { font-size: 13px; }
+/* The glanceable badges were 11-13px, unreadable at three metres. (The type badge and the
+   season count already take --fs-xs; they only needed their TV px overrides gone.) */
+body.tv .card .poster .newep, body.tv .ch-new, body.tv .set-group .hint { font-size: var(--fs-xs); }
 
 /* ---- TV focus: one style --------------------------------------------------------
-   The two-tone ring from styles.css (--ring / --ring-glow) and ONE zoom. There were six
+   The two-tone ring (--ring, no glow) and ONE zoom. There were six
    (1.03, 1.05, 1.06, 1.08, 1.10, 1.15) and three timings, so the selection changed size
    and speed as it crossed from posters to buttons. */
 body.tv .card .poster,
@@ -82,29 +139,46 @@ body.tv .genre-tile.tv-focus, body.tv .genre-tile:focus { transform: scale(var(-
 body.tv .play-go:focus, body.tv .play-go.tv-focus { transform: scale(var(--focus-scale)); }
 /* An offline mirror dims its CONTENT. Fading the tile itself faded its focus ring too,
    which is drawn as the tile's own box-shadow. */
-.mirror.down { opacity: 1; }
 .mirror.down > * { opacity: .55; }
 
 /* ---- TV side rail -------------------------------------------------------------
    The header IS the rail on TV: the same links and buttons, so section highlighting, the
-   account menu and every data-nav keep working. It sits collapsed to icons; when focus
-   enters it (body.rail-open, set by tvMark) it widens and shows labels. */
+   account menu and every data-nav keep working. It sits as icons; when focus enters it
+   (body.rail-open, set by tvMark) a panel slides in behind them and the labels fade up.
+   Nothing in it changes size: the header and its items are always their open width, the
+   panel (::before) moves by transform and the labels and the dim (::after) by opacity, so
+   opening is compositor work only. Animating the header's and six items' widths re-ran
+   layout every frame on a TV chip, which is what made the rail feel finicky. */
 body.tv header.top {
   position: fixed; left: 0; top: 0; bottom: 0; z-index: var(--z-rail);
-  width: var(--rail-w); height: auto; min-height: 0;
+  width: var(--rail-w-open); height: auto; min-height: 0;
   flex-direction: column; align-items: flex-start; justify-content: center; gap: var(--sp-2);
   padding: 0 0 0 16px; border: 0;
-  background: linear-gradient(90deg, rgba(6, 8, 12, .82) 0%, rgba(6, 8, 12, .5) 60%, rgba(6, 8, 12, 0) 100%);
-  transition: width var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out);
-  transform: none; opacity: 1; pointer-events: auto;
+  /* Closed, the rail is icons on whatever the page is: the Stage's scrim and every page start
+     in var(--bg) at the left edge, so the theme's own --muted/--text read there in all seven
+     themes. A fixed dark band here was Midnight in every theme, and a white strip on Daylight. */
+  background: none; transition: none;
+  transform: none; opacity: 1;
+  /* the open-width box must not swallow clicks on the page beside the icons */
+  pointer-events: none;
 }
-body.tv.home header.top:not(.scrolled) { background: linear-gradient(90deg, rgba(6, 8, 12, .82) 0%, rgba(6, 8, 12, .5) 60%, rgba(6, 8, 12, 0) 100%); }
-body.tv.rail-open header.top {
-  width: var(--rail-w-open);
-  /* near-solid while it is open: the backdrop and the page title used to glow through behind
-     the labels and compete with the selection */
-  background: linear-gradient(90deg, rgba(6, 8, 12, .99) 0%, rgba(6, 8, 12, .97) 80%, rgba(6, 8, 12, 0) 100%);
+body.tv header.top > * { pointer-events: auto; }
+/* the panel: solid page colour, so the backdrop and the page title never glow through
+   behind the labels and compete with the selection */
+body.tv header.top::before {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  background: var(--bg); border-right: 1px solid var(--border);
+  transform: translate3d(-100%, 0, 0); transition: transform var(--dur-2) var(--ease-out);
 }
+/* ONE dim for everything beside the panel, #stage included (it is fixed, outside <main>, so
+   fading <main> left the backdrop and .st-info at full strength on Home). It fades both
+   ways; the old rule only existed in the open state, so closing snapped. */
+body.tv header.top::after {
+  content: ''; position: fixed; top: 0; bottom: 0; left: var(--rail-w-open); right: 0; z-index: -1;
+  background: var(--bg); opacity: 0; transition: opacity var(--dur-2) var(--ease-out);
+}
+body.tv.rail-open header.top::before { transform: none; }
+body.tv.rail-open header.top::after { opacity: .7; }
 body.tv header.top nav.main { display: contents !important; }
 body.tv header.top .hdr-gap, body.tv header.top .brand .txt { display: none; }
 /* visual order, top to bottom: Search, Home, Movies, TV Shows, Watchlist, Account */
@@ -121,60 +195,52 @@ body.tv header.top nav.main a,
 body.tv header.top .icon-btn,
 body.tv header.top .acct-btn {
   position: relative; display: flex; align-items: center; justify-content: flex-start; gap: 14px;
-  width: 44px; height: 44px; padding: 0 0 0 11px; margin: 0; box-sizing: border-box; overflow: hidden;
+  width: 200px; height: 44px; padding: 0 0 0 11px; margin: 0; box-sizing: border-box;
   border: 0; border-radius: var(--r-pill); background: transparent; box-shadow: none;
   color: var(--muted); font-size: var(--fs-md); font-weight: 600; white-space: nowrap; transform: none;
-  transition: width var(--dur-2) var(--ease-out), background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out),
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out),
               transform var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 body.tv header.top .acct-btn { padding-left: 7px; }
-body.tv.rail-open header.top .brand,
-body.tv.rail-open header.top nav.main a,
-body.tv.rail-open header.top .icon-btn,
-body.tv.rail-open header.top .acct-btn { width: 200px; }
 body.tv header.top svg { width: 22px; height: 22px; flex: none; }
 body.tv header.top .brand-mark { width: 22px; height: 22px; background-color: currentColor; }
 body.tv header.top .acct-av { width: 30px; height: 30px; flex: none; }
 body.tv header.top .lb { opacity: 0; transform: translate3d(-6px, 0, 0); transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out); }
 body.tv.rail-open header.top .lb { opacity: 1; transform: none; }
-/* Where you are: a gold dot and a gold icon. The LABEL stays as quiet as the others -- a bright
-   label on the current section read as a second selection next to the real one. */
-body.tv header.top nav.main a.active:not(.tv-focus) svg { color: var(--accent); }
-body.tv.home header.top .brand:not(.tv-focus) .brand-mark { color: var(--accent); }
-body.tv header.top nav.main a.active::before, body.tv.home header.top .brand::before {
-  content: ''; position: absolute; left: 2px; top: 19px; width: 6px; height: 6px; border-radius: 3px; background: var(--accent);
+/* Where you are: the house-light bar at the rail's edge (the title's colour, the accent until
+   one is sampled) and a full-ink icon. The LABEL stays as quiet as the others -- a bright
+   label on the current section read as a second selection next to the real one. The accent
+   is kept for the focus ring. [data-section] covers Search, Watchlist and Account too: the
+   old dot only knew the two nav.main links, so those pages marked nothing. */
+body.tv header.top [data-section].active:not(.tv-focus) svg { color: var(--text); }
+body.tv.home header.top .brand:not(.tv-focus) .brand-mark { color: var(--text); }
+body.tv header.top [data-section].active::before, body.tv.home header.top .brand::before {
+  content: ''; position: absolute; left: -12px; top: 12px; width: 3px; height: 20px; border-radius: 2px;
+  background: rgba(var(--amb-rgb, var(--accent-rgb)), 1);
 }
-/* The selection is the one bright thing in the rail: a filled pill, wearing the same gold ring
-   as a focused card, a touch larger, its label heavier. The same in every state. */
+/* The selection is the one bright thing in the rail: a filled pill, wearing the same ring as
+   a focused card, a touch larger, its label heavier. The same in every state. */
 /* nav.main a is named here on purpose: the item rule above (header.top nav.main a) outranks a
    bare .tv-focus, and Movies and TV Shows showed no selection at all unless they were already
    the current section. */
-/* Home: styles.css gave the icon buttons a dark glass for the old top bar over the hero
-   (body.tv.home header.top:not(.scrolled) .icon-btn); in the rail it filled Search and
-   Watchlist and beat the selection. Cancelled here, and outranked in the list below. */
-body.tv.home header.top:not(.scrolled) .icon-btn { background: transparent; }
 body.tv header.top .tv-focus, body.tv header.top :focus,
 body.tv header.top nav.main a.tv-focus, body.tv header.top nav.main a:focus,
 body.tv header.top nav.main a.active.tv-focus, body.tv header.top nav.main a.active:focus,
 body.tv.home header.top:not(.scrolled) .icon-btn.tv-focus, body.tv.home header.top:not(.scrolled) .icon-btn:focus {
   background: var(--text); color: var(--bg); outline: none; font-weight: 800;
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent), 0 8px 22px rgba(0, 0, 0, .55);
+  box-shadow: var(--ring);
   transform: scale(var(--focus-scale)); transform-origin: 0 50%;
 }
 body.tv header.top .tv-focus svg, body.tv header.top :focus svg { color: var(--bg); }
 body.tv header.top .tv-focus .brand-mark { background-color: var(--bg); }
-/* The bar used to slide away when idle; the rail is narrow and always useful. */
-body.tv.chrome-idle header.top { transform: none; opacity: 1; pointer-events: auto; }
 /* content starts to the right of the rail */
 body.tv main { padding-left: calc(var(--rail-w) + var(--tvpad)); padding-top: var(--tv-pad-top); }
 body.tv footer.site { padding-left: calc(var(--rail-w) + var(--tvpad)); }
-body.tv.rail-open main, body.tv.rail-open footer.site { opacity: .3; transition: opacity var(--dur-2) var(--ease-out); }
-body.tv.rail-open .st-info { opacity: .3; }
 
 /* ---- Stage: TV Home ------------------------------------------------------------
-   One fixed layer behind the page. The focused title's backdrop cross-fades in and drifts
-   slowly; a scrim keeps the text and the rows legible; a beam of the poster's colour rises
-   from the focused card. The rows scroll as before, but every move parks the focused row's
+   One fixed layer behind the page. The focused title's backdrop cross-fades in and holds
+   still; a scrim of the page colour keeps the text and the rows legible. The rows scroll
+   as before, but every move parks the focused row's
    heading at --lane-y, and rows above it step out of the way. */
 #stage {
   position: fixed; inset: 0; z-index: var(--z-stage); pointer-events: none; overflow: hidden;
@@ -185,23 +251,19 @@ body.tv.home #stage { opacity: 1; visibility: visible; transition: opacity var(-
 body.tv.home main, body.tv.home footer.site { position: relative; z-index: var(--z-content); }
 body.tv.home footer.site { display: none; }
 
+/* Two layers that cross-fade by opacity alone. No drift: an endless 30s transform kept the
+   compositor busy for as long as the Stage was up, and the inset it needed to hide its
+   edges made each layer a larger bitmap. */
 .st-bd {
-  position: absolute; inset: -3%; background: center / cover no-repeat;
-  opacity: 0; transition: opacity var(--dur-3) var(--ease-out); will-change: opacity, transform;
+  position: absolute; inset: 0; background: center / cover no-repeat;
+  opacity: 0; transition: opacity var(--dur-3) var(--ease-out); will-change: opacity;
 }
-.st-bd.on { opacity: 1; animation: st-drift 30s var(--ease-out) infinite alternate; }
-@keyframes st-drift { from { transform: scale(1) translate3d(0, 0, 0); } to { transform: scale(1.05) translate3d(-1.2%, -.8%, 0); } }
+.st-bd.on { opacity: 1; }
 .st-scrim {
   position: absolute; inset: 0;
   background:
-    linear-gradient(90deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 80%, transparent) 32%, color-mix(in srgb, var(--bg) 14%, transparent) 64%, transparent 80%),
-    linear-gradient(0deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 74%, transparent) 44%, transparent 72%);
-}
-.st-beam {
-  position: absolute; left: 0; top: 0; width: 300px; height: 44vh;
-  background: radial-gradient(60% 100% at 50% 100%, color-mix(in srgb, var(--ambient) 40%, transparent), color-mix(in srgb, var(--ambient) 12%, transparent) 55%, transparent 76%);
-  mix-blend-mode: screen; opacity: .9; will-change: transform;
-  transition: transform var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out);
+    linear-gradient(90deg, var(--bg) 0%, rgba(var(--bg-rgb), .8) 32%, rgba(var(--bg-rgb), .14) 64%, transparent 80%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(var(--bg-rgb), .74) 44%, transparent 72%);
 }
 .st-info {
   position: absolute; left: calc(var(--rail-w) + var(--tvpad)); top: calc(var(--tv-pad-top) + 12px);
@@ -241,7 +303,7 @@ body.tv.home #view > .rows > .rail.st-above { opacity: 0; }
    three lines of story replace the pills and the overview section; three actions replace
    five (the rest are behind More). Episodes or similar titles follow below. */
 body.tv.title-page #stage { opacity: 1; visibility: visible; transition: opacity var(--dur-3) var(--ease-out); }
-body.tv.title-page .st-info, body.tv.title-page .st-beam { opacity: 0; }
+body.tv.title-page .st-info { opacity: 0; }
 body.tv.title-page main, body.tv.title-page footer.site { position: relative; z-index: var(--z-content); }
 body.tv.title-page .detail-hero > .bg, body.tv.title-page .detail-hero > .scrim { display: none; }
 body.tv.title-page .detail-hero { margin: 0 0 var(--sp-5); min-height: 0; }
@@ -260,7 +322,7 @@ body.tv.title-page .dv-cta { margin-top: var(--sp-3); gap: var(--sp-3); }
 
 /* A sheet from the right, on the modal system (focus scope and Back come with it): a title's
    More. (Settings was one too; it is the Account page's tab now.) */
-body.tv .sheet-back { place-items: stretch end; padding: 0; background: rgba(6, 8, 12, .55); }
+body.tv .sheet-back { place-items: stretch end; padding: 0; background: rgba(var(--veil-rgb), .5); }
 body.tv .modal.sheet {
   width: min(460px, 48vw); max-height: none; height: 100%; border-radius: 0; border: 0;
   border-left: 1px solid var(--border); animation: tm-in var(--dur-2) var(--ease-out) both;
@@ -284,12 +346,17 @@ body.tv { --grid-lane: 46vh; }   /* app.js GRID_LANE */
 body.tv.stage-grid #stage { opacity: 1; visibility: visible; transition: opacity var(--dur-3) var(--ease-out); }
 body.tv.stage-grid main, body.tv.stage-grid footer.site { position: relative; z-index: var(--z-content); }
 body.tv.stage-grid footer.site { display: none; }
-body.tv.stage-grid .st-beam { display: none; }
 body.tv.stage-grid .st-info { transition: opacity var(--dur-2) var(--ease-out); }
 body.tv.st-free.st-under .st-info { opacity: 0; }
 body.tv.home .st-info { transition: opacity var(--dur-2) var(--ease-out); }
 body.tv.stage-grid #view { padding-top: calc(var(--grid-lane) - var(--tv-pad-top)); padding-bottom: 46vh; }
 body.tv.stage-grid #view h1, body.tv.stage-grid #view .person-head { display: none; }
+/* Five narrower columns, so a poster parked at the lane ends inside the bottom title-safe
+   margin (four ~180px columns ran its ring past y513 of 540, into overscan), and one line
+   of story, so the overview cannot run down into the focused row's ring. Sized by width
+   only: tiles follow the poster's aspect ratio, and --grid-lane is mirrored by app.js. */
+body.tv.stage-grid .grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+body.tv.stage-grid .st-line { -webkit-line-clamp: 1; }
 body.tv.stage-grid #view .st-flow { transition: opacity var(--dur-2) var(--ease-out); }
 body.tv.stage-grid #view .st-above { opacity: 0; }
 /* the search box: the magnifier inside the field, as on the other platforms */
@@ -305,7 +372,7 @@ body.tv.cinema-on .pl-dock {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 315; max-height: 74vh;
   overflow-x: hidden; overflow-y: auto; scrollbar-width: none;   /* tvFocusEl scrolls it to the focused row */
   padding: var(--sp-5) var(--tvpad) var(--tv-pad-top) calc(var(--tvpad) + 8px); box-sizing: border-box;
-  background: linear-gradient(0deg, rgba(6, 8, 12, .98) 0%, rgba(6, 8, 12, .94) 72%, rgba(6, 8, 12, 0) 100%);
+  background: linear-gradient(0deg, rgb(var(--veil-rgb)) 0%, rgba(var(--veil-rgb), .9) 72%, rgba(var(--veil-rgb), 0) 100%);
   transform: translate3d(0, 104%, 0); transition: transform var(--dur-2) var(--ease-out);
   pointer-events: none;
 }
@@ -341,15 +408,15 @@ body.lock-on #view, body.lock-on header.top, body.lock-on #stage, body.lock-on .
 .lock h2 { margin: 0 0 var(--sp-5); font-size: 26px; font-weight: 800; font-stretch: 85%; letter-spacing: -.01em; text-wrap: balance; }
 .lk-dots { display: flex; justify-content: center; gap: var(--sp-3); margin-bottom: var(--sp-3); }
 .lk-dots i {
-  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border-strong, rgba(244, 239, 228, .35));
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border-strong);
   background: transparent; transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
 }
 .lk-dots i.on { background: var(--accent); border-color: var(--accent); transform: scale(1.12); }
 .lk-msg { min-height: 24px; margin: 0 0 var(--sp-5); font-size: 15px; color: var(--muted); }
-.lk-msg.bad { color: #ff8a7a; }
+.lk-msg.bad { color: var(--danger); }   /* a fixed salmon was 2.1:1 on Daylight */
 .lk-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .lk-key {
-  height: 64px; border: 1px solid var(--border); border-radius: var(--r-2); background: var(--surface-2, var(--surface));
+  height: 64px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2, var(--surface));
   color: var(--text); font: inherit; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer;
   transition: transform var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
@@ -363,12 +430,9 @@ body.tv .lock h2 { font-size: 28px; }
 @keyframes lk-shake { 20% { transform: translate3d(-10px, 0, 0); } 40% { transform: translate3d(8px, 0, 0); } 60% { transform: translate3d(-5px, 0, 0); } 80% { transform: translate3d(3px, 0, 0); } }
 @media (prefers-reduced-motion: reduce) { .lock-back.shake .lock { animation: none; } }
 
-/* weak sets (measured at runtime) and reduced motion: no drift, no beam */
-body.stage-lite .st-bd.on { animation: none; }
-body.stage-lite .st-beam { display: none; }
+/* reduced motion: the scene changes without the cross-fade */
 @media (prefers-reduced-motion: reduce) {
-  .st-bd.on { animation: none; }
-  .st-bd, .st-swap, .st-beam, #stage { transition-duration: 1ms; }
+  .st-bd, .st-swap, #stage { transition-duration: 1ms; }
 }
 
 /* ============================================================================
@@ -389,8 +453,8 @@ body.stage-lite .st-beam { display: none; }
 }
 body.home header.top.past-hero .on-stage:not([hidden]) { display: inline-flex; }
 .on-stage img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: none; }
-.on-stage .os-k { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); flex: none; }
-.on-stage .os-t { font-size: 14px; font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.on-stage .os-k { font-size: var(--fs-xs); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); flex: none; }
+.on-stage .os-t { font-size: var(--fs-sm); font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .on-stage:hover { border-color: var(--accent); }
 .on-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes os-in { from { opacity: 0; transform: translate3d(0, -4px, 0); } to { opacity: 1; transform: none; } }
@@ -407,15 +471,22 @@ body:not(.tv) .dv-over { margin: 2px 0 0; font-size: 17px; line-height: 1.5; col
 @media (min-width: 861px) {
   body:not(.tv) .dv-tabs { display: flex; gap: var(--sp-2); margin: 0 0 var(--sp-5); border-bottom: 1px solid var(--border); }
   body:not(.tv) .dv-tab {
-    height: 48px; padding: 0 18px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 15px; font-weight: 700;
+    height: 48px; padding: 0 18px; border: 0; background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 700;
     cursor: pointer; box-shadow: inset 0 -3px 0 transparent; transition: color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
   }
   body:not(.tv) .dv-tab:hover { color: var(--text); }
-  body:not(.tv) .dv-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -3px 0 var(--accent); }
-  body:not(.tv) .dv-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* the house-light bar: where you are, in the title's own colour (the accent is for actions) */
+  body:not(.tv) .dv-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -3px 0 rgba(var(--amb-rgb, var(--accent-rgb)), 1); }
   body:not(.tv) .dv-panel:not(.on) { display: none; }
 }
 @media (max-width: 860px) { body:not(.tv) .dv-over { display: none; } }
+/* A short window (a 720px laptop): less air over the title and two lines of story, so the
+   tabs and the first row under them are on the first screen. 64px still clears the bar. */
+@media (min-width: 861px) and (max-height: 820px) {
+  body:not(.tv) .dv-stage { padding-top: clamp(64px, 12vh, 140px); gap: 10px; }
+  body:not(.tv) .dv-over { -webkit-line-clamp: 2; }
+  body:not(.tv) .detail-hero { min-height: 0; }   /* its 480px floor was empty art under the buttons */
+}
 /* the Episodes tab already names the section: its heading stays for screen readers only */
 @media (min-width: 861px) {
   body:not(.tv) #seasons .season-head h3 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -429,14 +500,21 @@ body:not(.tv) .dv-over { margin: 2px 0 0; font-size: 17px; line-height: 1.5; col
    the servers sit on ONE grid -- the picture and the episode list share a row, which is what
    makes them the same height. The player is sized to the window's height as well as its
    width, so the picture and its bar fit on one screen. Narrower: the column follows the
-   player, as before. */
+   player, as before.
+   The height fit is in STEPS, not a 100vh calc: every pixel of a vh-sized column resized
+   the cross-origin iframe, so each step of a window drag re-laid out a third-party player
+   and reallocated its video surface (the Windows resize lag). Each step is the width that
+   fits the shortest window in its band -- (height - header - 148px of title row, bar and
+   margins) * 16/9 -- so a height-only drag resizes the picture once per 50px band. */
 @media (min-width: 1200px) {
   body:not(.tv) .player-shell.pl-split {
-    /* 148px: the title row above the picture, the bar below it and the page's own margins */
-    --pl-w: calc((100vh - var(--header-h) - 148px) * 16 / 9);
+    --pl-w: 1172px;            /* 1560 max-width - 360 list - 28 gap: tall windows */
     max-width: 1560px; display: grid; justify-content: center; align-items: start;
     grid-template-columns: minmax(0, var(--pl-w)) 360px; column-gap: 28px;
   }
+  /* A film has no episode list: the picture is centred alone at the same height-bound width
+     (app.js adds .pl-solo when there is no strip), instead of beside an empty 360px column. */
+  body:not(.tv) .player-shell.pl-split.pl-solo { grid-template-columns: minmax(0, var(--pl-w)); }
   body:not(.tv) .pl-split > .pl-main, body:not(.tv) .pl-split > .pl-side { display: contents; }
   body:not(.tv) .pl-split > .pl-main > :first-child { grid-column: 1; grid-row: 1; }
   body:not(.tv) .pl-split > .pl-main > .player-frame { grid-column: 1; grid-row: 2; }
@@ -445,7 +523,7 @@ body:not(.tv) .dv-over { margin: 2px 0 0; font-size: 17px; line-height: 1.5; col
     grid-column: 2; grid-row: 2; align-self: stretch;
     /* no height of its own: the row is the picture's, and the list fills it and scrolls */
     height: 0; min-height: 100%; overflow-y: auto; overscroll-behavior: contain;
-    scrollbar-width: thin; padding: 0 6px 0 2px;
+    scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; padding: 0 6px 0 2px;
   }
   body:not(.tv) .pl-split > .pl-side > .pl-srv { grid-column: 1 / -1; grid-row: 4; margin-top: 26px; }
   body:not(.tv) .pl-split .pl-srv .srv-now { margin-top: 0; }
@@ -454,14 +532,23 @@ body:not(.tv) .dv-over { margin: 2px 0 0; font-size: 17px; line-height: 1.5; col
   body:not(.tv) .pl-side .ep-strip { flex-direction: column; gap: 6px; overflow: visible; margin: 0; padding: 2px; }
   body:not(.tv) .pl-side .epx {
     width: auto; display: grid; grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: auto 1fr;
-    column-gap: 12px; row-gap: 2px; align-items: start; padding: 6px; border-radius: var(--r-2);
+    column-gap: 12px; row-gap: 2px; align-items: start; padding: 6px; border-radius: var(--r-md);
   }
   body:not(.tv) .pl-side .epx-thumb { grid-row: 1 / 3; }
   body:not(.tv) .pl-side .epx-n { padding-top: 4px; }
   body:not(.tv) .pl-side .epx.on { background: rgba(255, 255, 255, .06); }
   body:not(.tv) .pl-side .epx:hover { background: rgba(255, 255, 255, .04); }
-  body:not(.tv) .pl-side .pl-season { display: block; margin: 0 0 10px; }
+  /* The season picker stays in reach while the episodes scroll under it */
+  body:not(.tv) .pl-side .pl-season { display: block; margin: 0; padding: 0 0 10px; position: sticky; top: 0; z-index: 1; background: var(--bg); }
 }
+/* the height bands (see above); each value is the fit for the band's lowest edge */
+@media (min-width: 1200px) and (max-height: 869px) { body:not(.tv) .player-shell.pl-split { --pl-w: 1084px; } }
+@media (min-width: 1200px) and (max-height: 819px) { body:not(.tv) .player-shell.pl-split { --pl-w: 995px; } }
+@media (min-width: 1200px) and (max-height: 769px) { body:not(.tv) .player-shell.pl-split { --pl-w: 906px; } }
+@media (min-width: 1200px) and (max-height: 719px) { body:not(.tv) .player-shell.pl-split { --pl-w: 817px; } }
+@media (min-width: 1200px) and (max-height: 669px) { body:not(.tv) .player-shell.pl-split { --pl-w: 728px; } }
+@media (min-width: 1200px) and (max-height: 619px) { body:not(.tv) .player-shell.pl-split { --pl-w: 640px; } }
+@media (min-width: 1200px) and (max-height: 569px) { body:not(.tv) .player-shell.pl-split { --pl-w: 551px; } }
 
 /* ---- Phone title page: Play above the tab bar ----------------------------------------
    Once the hero's Play has scrolled away (wireTitleDock), the same button waits just above
@@ -473,21 +560,37 @@ body:not(.tv) .dv-over { margin: 2px 0 0; font-size: 17px; line-height: 1.5; col
     bottom: calc(86px + env(safe-area-inset-bottom, 0px)); width: min(372px, calc(100vw - 28px));
     animation: dv-dock-in var(--dur-2) var(--ease-out) both;
   }
-  body:not(.tv) .dv-dock .btn { flex: 1; justify-content: center; height: 50px; border-radius: var(--r-pill); box-shadow: 0 14px 34px rgba(0, 0, 0, .55); }
+  /* the one floating control over posters: it keeps the overlay shadow */
+  body:not(.tv) .dv-dock .btn { flex: 1; justify-content: center; height: 50px; border-radius: var(--r-pill); box-shadow: var(--elev); }
 }
 @keyframes dv-dock-in { from { opacity: 0; transform: translate3d(-50%, 10px, 0); } to { opacity: 1; transform: translate3d(-50%, 0, 0); } }
 @media (prefers-reduced-motion: reduce) { .dv-dock { animation: none !important; } }
 
 /* ---- Phone watch page: the picture stays put ----------------------------------------
-   The player pins under the bar while the episodes and servers scroll beneath it. The main
-   column steps out of the way (display: contents) so the frame's sticky range is the whole
-   page, not just its own column. */
+   The player pins to the top of the screen while the episodes and servers scroll beneath it
+   (the bar scrolls away on a phone, styles.css). The main column steps out of the way
+   (display: contents) so the frame's sticky range is the whole page, not just its own
+   column. Edge to edge and flat: with no page gutter beside it nothing scrolls past at the
+   sides, so it needs no ring of page colour. The negative margins are main's own gutters
+   (notch insets included), physical because compat maps nothing for them. */
 @media (max-width: 860px) {
   body:not(.tv) .pl-split > .pl-main { display: contents; }
   body:not(.tv):not(.cinema-on) .pl-split .player-frame {
-    position: sticky; top: calc(var(--header-h) + env(safe-area-inset-top, 0px)); z-index: 5;
-    /* the ring fills the page gutters, so nothing scrolls past at the sides */
-    box-shadow: 0 0 0 16px var(--bg), 0 26px 24px -6px rgba(0, 0, 0, .7);
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+    margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+    margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px)));
+    border: 0; border-radius: 0; box-shadow: none;
+  }
+}
+
+/* ---- Phone: quick actions and More are bottom sheets --------------------------------
+   Within the thumb's reach, the way the TV's are a sheet from the right. The bottom inset
+   pads the sheet itself so its last row clears the home indicator. */
+@media (max-width: 640px) {
+  body:not(.tv) .qa-back, body:not(.tv) .sheet-back { place-items: end stretch; padding: 0; }
+  body:not(.tv) .qa-back .modal, body:not(.tv) .sheet-back .modal {
+    width: 100%; max-height: 85vh; max-height: 85dvh; border-width: 1px 0 0; border-radius: var(--r-md) var(--r-md) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
 
@@ -509,24 +612,31 @@ body.tv .dv-titlebox { height: 104px; max-width: min(440px, 46vw); }
 body.tv .dv-titlebox .dv-title { font-size: 52px; }
 body.tv .dv-titlebox .detail-logo[style*="--ar"] { width: min(440px, 46vw, calc(104px * var(--ar))); }
 /* the tagline now opens the Details panel instead of pushing the hero down */
-.dv-main > .dv-tagline { margin: 0 0 var(--sp-4); text-shadow: none; }
+.dv-main > .dv-tagline { margin: 0 0 var(--sp-4); }
 
 /* ---- Account page (accountView, #/account) -------------------------------------------
    The account button's pop-out and the Settings dialog, as one page: Profile / Settings /
    App tabs over a single readable column. The tabs are links (the tab is in the hash). */
+/* the panel's width, so the rule under the tabs ends where the column does */
 .acc-tabs {
-  display: flex; gap: var(--sp-2); margin: 0 0 var(--sp-5); border-bottom: 1px solid var(--border);
+  display: flex; gap: var(--sp-2); max-width: 760px; margin: 0 0 var(--sp-5); border-bottom: 1px solid var(--border);
   overflow-x: auto; scrollbar-width: none;
 }
 .acc-tabs::-webkit-scrollbar { display: none; }
 .acc-tab {
   flex: none; height: 48px; padding: 0 18px; border: 0; background: none; color: var(--muted);
-  font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: inset 0 -3px 0 transparent;
+  font: inherit; font-size: var(--fs-sm); font-weight: 700; cursor: pointer; box-shadow: inset 0 -3px 0 transparent;
   transition: color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 .acc-tab:hover { color: var(--text); }
-.acc-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -3px 0 var(--accent); }
-.acc-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.acc-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -3px 0 rgba(var(--amb-rgb, var(--accent-rgb)), 1); }
+/* ONE focus ring for both tab sets, and the selected tab keeps its bar under it. A separate
+   outline stacked a second ring on the global one, which also ate the bar. Inset, as in
+   .sb-modes: .acc-tabs scrolls sideways, which clips anything drawn outside a tab. */
+body:not(.tv) .acc-tab:focus-visible, body:not(.tv) .dv-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+body:not(.tv) .acc-tab[aria-selected="true"]:focus-visible, body:not(.tv) .dv-tab[aria-selected="true"]:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 -3px 0 rgba(var(--amb-rgb, var(--accent-rgb)), 1);
+}
 .acc-dot { display: inline-block; width: 8px; height: 8px; margin-left: 8px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
 .acc-panel { max-width: 760px; }
 .acc-who { display: flex; align-items: center; gap: var(--sp-4); margin: 0 0 var(--sp-5); }
@@ -537,7 +647,7 @@ body.tv .dv-titlebox .detail-logo[style*="--ar"] { width: min(440px, 46vw, calc(
 /* TV: the tabs are D-pad buttons, and the selection is the rail's filled pill and gold ring */
 body.tv .acc-tabs { border-bottom: 0; gap: var(--sp-3); padding: 8px 6px; margin-left: -6px; overflow: visible; }
 body.tv .acc-tab { height: 50px; border-radius: var(--r-pill); font-size: var(--fs-md); }
-body.tv .acc-tab[aria-selected="true"]:not(.tv-focus) { box-shadow: inset 0 -3px 0 var(--accent); border-radius: 0; }
+body.tv .acc-tab[aria-selected="true"]:not(.tv-focus) { box-shadow: inset 0 -3px 0 rgba(var(--amb-rgb, var(--accent-rgb)), 1); border-radius: 0; }
 body.tv .acc-tab.tv-focus, body.tv .acc-tab:focus {
   background: var(--text); color: var(--bg); outline: none; transform: scale(var(--focus-scale));
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent);

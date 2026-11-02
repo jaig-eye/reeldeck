@@ -1,135 +1,76 @@
 /* ============================================================
    Reeldeck — a clean, ad-free TMDB-powered movie/TV browser
-   All colors as CSS variables so the whole look re-themes at once.
+   Every token (Midnight, the default theme) is in the ONE :root block at the top of
+   stage.css. The themes below restate only their colour roles.
    ============================================================ */
-:root {
-  --bg: #0b0d12;
-  --bg-2: #12151d;
-  --bg-3: #1a1f2b;
-  --surface: #171b24;
-  --surface-2: #1f2431;
-  --border: #262c3a;
-  --text: #eef1f6;
-  --muted: #9aa4b6;
-  --muted-2: #838da1;   /* lightened to hold 4.5:1 contrast for small text */
-  --accent: #f5c518;         /* per-theme accent; set by the theme picker */
-  --accent-2: #7c5cff;
-  --accent-ink: #12151d;
-  --danger: #ff5470;
-  --good: #4ade80;
-  /* theme-aware tokens (so light themes don't break on hardcoded colors) */
-  --text-soft: #d3d9e4;      /* body/reading text off the main --text */
-  --glow: #1b2130;           /* ambient page-background blob */
-  --scrollbar: #2a3140;
-  --sk-hi: #232a38;          /* skeleton shimmer highlight */
-  --chrome-bg: rgba(11, 13, 18, .72);  /* translucent header / bottom-nav */
-  --ghost-bg: rgba(255, 255, 255, .06);
-  --hero-text-shadow: rgba(0, 0, 0, .55); /* halo behind hero/detail titles over art */
-  /* ONE focus ring, shared by the keyboard (:focus-visible) and the remote (.tv-focus)
-     so selection reads the same everywhere. It is two-tone on purpose: a band of page
-     colour first, then the accent band. A plain accent outline disappears on an
-     accent-coloured control — the yellow Play button wearing a yellow ring — and the
-     old 2px --accent-2 outline measured 2.54:1 against Daylight's white surfaces,
-     below the 3:1 WCAG 2.4.11 minimum for a focus indicator. The inner band guarantees
-     an edge against whatever is underneath, in every theme. body.tv scales it up. */
-  /* ---- Signature accent -----------------------------------------------------
-     One two-tone sweep, reused everywhere something is ACTIVE or PROGRESSING, so
-     the app has a mark of its own instead of a flat swatch. Deliberately used only
-     where nothing sits on top of it - rules, bars, underlines, glows. Text never
-     rides the gradient, because the far end of it has no contrast guarantee, and
-     the themes each swap --accent and --accent-2 independently. */
-  /* A fade of the theme's OWN colour into a darker shade of itself. Sweeping to a
-     second hue read as loud and slightly arbitrary -- the accent stopped being one
-     colour and became a rainbow that fought whatever poster was next to it. Same
-     idea, one hue: the eye reads depth, not decoration. */
-  --accent-grad: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 55%, #000) 100%);
-  --accent-glow: 0 0 34px -8px color-mix(in srgb, var(--accent) 70%, transparent);
-  --ring: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent);
-  --ring-glow: 0 0 0 2px var(--bg), 0 0 0 5px var(--accent), 0 0 22px -6px var(--accent);
-  /* The badges over poster art sit on a near-black scrim in EVERY theme, so they need
-     an accent that survives on dark — Daylight's indigo is 2.88:1 there. */
-  --accent-on-dark: var(--accent);
-  /* Full-bleed geometry for the hero. 100vw INCLUDES the classic scrollbar, so the
-     old `width:100vw; margin-left:calc(-50vw + 50%)` overhung the layout box by the
-     scrollbar width at each edge and gave the whole document a horizontal scrollbar on
-     every desktop/PWA view. --sbw is measured once at boot (and on resize) in app.js. */
-  --sbw: 0px;
-  /* The top inset, exposed as a custom property so script can read it -- env() is not
-     available to getComputedStyle on an arbitrary element. */
-  --sat: env(safe-area-inset-top, 0px);
-  --bleed-w: calc(100vw - var(--sbw));
-  --bleed-ml: calc(-50vw + 50% + (var(--sbw) / 2));
-  --radius: 14px;
-  --radius-sm: 9px;
-  --shadow: 0 12px 40px rgba(0,0,0,.45);
-  --maxw: 1400px;
-  --header-h: 62px;
-  --font: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* Titles only, never UI or body. A heavy grotesque with the tracking pulled in:
-     the previous serif read as delicate where a title card needs to read as
-     confident. Fallbacks stay in the same GENRE (tight neo-grotesques) so the
-     hierarchy survives when the webfont does not load. */
-  --font-display: "Archivo", "Helvetica Neue", "Arial Narrow", system-ui, sans-serif;
-}
 
-/* ---------- Themes (set via data-theme on <html>) ---------- */
+/* ---------- Themes (set via data-theme on <html>) ----------
+   Each restates the colour roles, the triplets for rgba() (--bg-rgb the page, --veil-rgb
+   the always-dark ink over artwork, --accent-rgb) and --border-strong. Contrast measured:
+   --muted-2 and --danger hold 4.5:1 on every surface of their theme. */
 :root[data-theme="onyx"] {
   --bg: #000000; --bg-2: #0a0a0c; --bg-3: #141417;
   --surface: #0f0f12; --surface-2: #17171b; --border: #232327;
-  --text: #f4f4f6; --muted: #9a9aa2; --muted-2: #78787f;
-  --accent: #22d3ee; --accent-2: #a78bfa; --accent-ink: #00171c;
-  --text-soft: #c8c8d0; --glow: #101018; --scrollbar: #26262b; --sk-hi: #1b1b1f;
+  --text: #f4f4f6; --muted: #9a9aa2; --muted-2: #82828a;
+  --accent: #22d3ee; --accent-ink: #00171c;
+  --text-soft: #c8c8d0; --scrollbar: #26262b; --sk-hi: #1b1b1f;
   --chrome-bg: rgba(0, 0, 0, .72); --ghost-bg: rgba(255, 255, 255, .06);
-  --shadow: 0 12px 40px rgba(0, 0, 0, .65);
+  --bg-rgb: 0, 0, 0; --veil-rgb: 0, 0, 0; --accent-rgb: 34, 211, 238;
+  --house-a: .1;             /* the pixels stay (nearly) off */
 }
 /* Midnight's palette on true black: on an OLED the background pixels are simply off. */
 :root[data-theme="oled"] {
   --bg: #000000; --bg-2: #07080b; --bg-3: #10131a;
   --surface: #0c0e14; --surface-2: #151922; --border: #1f2430;
-  --glow: #0a0c12; --scrollbar: #20252f; --sk-hi: #161a22;
+  --scrollbar: #20252f; --sk-hi: #161a22;
   --chrome-bg: rgba(0, 0, 0, .74);
-  --shadow: 0 12px 40px rgba(0, 0, 0, .7);
+  --bg-rgb: 0, 0, 0; --veil-rgb: 0, 0, 0;
+  --house-a: .1;
 }
 :root[data-theme="aurora"] {
   --bg: #0f0a1a; --bg-2: #160f24; --bg-3: #1e1533;
   --surface: #1a1230; --surface-2: #251a42; --border: #34274f;
   --text: #f3eefe; --muted: #b4a6cf; --muted-2: #9184ad;
-  --accent: #d946ef; --accent-2: #22d3ee; --accent-ink: #1e0a24;
-  --text-soft: #d8cdec; --glow: #241640; --scrollbar: #3a2b52; --sk-hi: #2a1f45;
+  --accent: #d946ef; --accent-ink: #1e0a24;
+  --text-soft: #d8cdec; --scrollbar: #3a2b52; --sk-hi: #2a1f45;
   --chrome-bg: rgba(15, 10, 26, .74); --ghost-bg: rgba(255, 255, 255, .06);
-  --shadow: 0 14px 44px rgba(30, 8, 40, .5);
+  --bg-rgb: 15, 10, 26; --veil-rgb: 10, 6, 18; --accent-rgb: 217, 70, 239;
 }
 :root[data-theme="ocean"] {
   --bg: #06121a; --bg-2: #0a1b26; --bg-3: #102734;
   --surface: #0d2230; --surface-2: #143240; --border: #1e4152;
-  --text: #e8f4f8; --muted: #94b4c2; --muted-2: #6f95a4;
-  --accent: #2dd4bf; --accent-2: #38bdf8; --accent-ink: #04231f;
-  --text-soft: #cfe4ec; --glow: #0e2b3a; --scrollbar: #1c4050; --sk-hi: #163544;
+  --text: #e8f4f8; --muted: #94b4c2; --muted-2: #7a9fae;
+  --accent: #2dd4bf; --accent-ink: #04231f;
+  --danger: #ff6b81;
+  --text-soft: #cfe4ec; --scrollbar: #1c4050; --sk-hi: #163544;
   --chrome-bg: rgba(6, 18, 26, .74); --ghost-bg: rgba(255, 255, 255, .06);
-  --shadow: 0 14px 44px rgba(2, 20, 28, .5);
+  --bg-rgb: 6, 18, 26; --veil-rgb: 3, 12, 18; --accent-rgb: 45, 212, 191;
 }
 :root[data-theme="ember"] {
   --bg: #14100d; --bg-2: #1c1611; --bg-3: #261d16;
   --surface: #201812; --surface-2: #2c211a; --border: #3b2c22;
   --text: #f7efe8; --muted: #c2ab99; --muted-2: #a08978;
-  --accent: #fb923c; --accent-2: #f43f5e; --accent-ink: #241009;
-  --text-soft: #e6d6c8; --glow: #2e1d12; --scrollbar: #43301f; --sk-hi: #33261c;
+  --accent: #fb923c; --accent-ink: #241009;
+  --text-soft: #e6d6c8; --scrollbar: #43301f; --sk-hi: #33261c;
   --chrome-bg: rgba(20, 16, 13, .74); --ghost-bg: rgba(255, 255, 255, .06);
-  --shadow: 0 14px 44px rgba(30, 15, 5, .5);
+  --bg-rgb: 20, 16, 13; --veil-rgb: 14, 10, 8; --accent-rgb: 251, 146, 60;
 }
-/* Modern light theme — crisp edges, soft shadows */
+/* The light theme. Text over artwork still sits on a dark veil (--veil-rgb is Midnight's),
+   so the hero keeps light ink; everything on the page itself is dark ink on light. */
 :root[data-theme="daylight"] {
+  color-scheme: light;
   --bg: #f4f5f7; --bg-2: #ffffff; --bg-3: #e9ebef;
   --surface: #ffffff; --surface-2: #f3f4f7; --border: #e2e5ea;
-  --text: #1a1d24; --muted: #4f5664; --muted-2: #4f5664;   /* darker than before: the ambient wash took #5b6270 to 3.8:1 */
-  --amb-hi: 24%; --amb-lo: 14%;                              /* a lighter wash on a light page */
-  --accent: #4f46e5; --accent-2: #0ea5e9; --accent-ink: #ffffff;
-  --accent-on-dark: #a5b4fc;   /* indigo-300: 7.4:1 on the .82 black badge scrim */
-  --danger: #e11d48; --good: #16a34a;
-  --text-soft: #33394a; --glow: #e6eaf3; --scrollbar: #ccd2db; --sk-hi: #f0f2f5;
+  --border-strong: #7b8290;  /* 3.54:1 on --bg, 3.86:1 on white; --border is 1.16:1 */
+  --text: #1a1d24; --muted: #4f5664; --muted-2: #4f5664;
+  --accent: #4f46e5; --accent-ink: #ffffff;
+  --accent-on-dark: #a5b4fc;   /* indigo-300: 7.4:1 on the badge veil */
+  --danger: #be123c; --good: #16a34a;
+  --text-soft: #33394a; --scrollbar: #ccd2db; --sk-hi: #f0f2f5;
   --chrome-bg: rgba(255, 255, 255, .82); --ghost-bg: rgba(0, 0, 0, .05);
-  --shadow: 0 10px 34px rgba(24, 32, 64, .10);
-  --hero-text-shadow: rgba(255, 255, 255, .92);
+  --elev: 0 12px 32px rgba(24, 32, 64, .14);   /* a black .45 shadow is a smudge on white */
+  --bg-rgb: 244, 245, 247; --accent-rgb: 79, 70, 229;
+  --house-a: .14;            /* a lighter wash on a light page */
 }
 
 * { box-sizing: border-box; }
@@ -146,7 +87,7 @@ html, body { margin: 0; padding: 0; }
    which reserve nothing anyway), where the measured --sbw still applies. */
 html { scroll-behavior: smooth; scrollbar-gutter: stable; }
 body {
-  background: none;      /* the canvas is <html>; the light is body::after (2.0 block) */
+  background: none;      /* the canvas is <html>; the light is #house-light (2.0 block) */
   color: var(--text);
   font-family: var(--font);
   font-size: 16px;      /* skill: 16px minimum body text (mobile readability) */
@@ -168,20 +109,25 @@ svg { width: 1em; height: 1em; flex: none; }
 
 /* Scrollbars */
 ::-webkit-scrollbar { height: 10px; width: 10px; }
-::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 20px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: var(--r-pill); }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted-2); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ---------- Header ---------- */
+/* Off TV the hero starts BELOW the sticky bar, so at rest the bar lies on the page (and
+   the house light shows through it); scrolling adds the hairline and makes it solid, so
+   nothing that scrolls under it shows through. No blur: it re-sampled the page every frame. */
 header.top {
-  position: sticky; top: 0; z-index: 50;
+  position: sticky; top: 0; z-index: var(--z-sticky);
   height: var(--header-h);
   display: flex; align-items: center; gap: 18px;
   padding: 0 22px;
   background: var(--chrome-bg);
-  backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid transparent;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out),
+              transform var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out);
 }
+header.top.scrolled { background: var(--bg); border-bottom-color: var(--border); }
 .brand {
   display: flex; align-items: center; gap: 9px;
   font-weight: 800; letter-spacing: .3px; font-size: 19px;
@@ -196,43 +142,50 @@ header.top {
   -webkit-mask: url('assets/brand/mark-alpha.png') center / contain no-repeat;
   mask: url('assets/brand/mark-alpha.png') center / contain no-repeat;
 }
-nav.main { display: flex; gap: 4px; align-items: center; }
+nav.main { display: flex; gap: 2px; align-items: center; margin-left: 6px; }
 nav.main a {
-  padding: 8px 13px; border-radius: 10px; color: var(--muted);
-  font-weight: 600; font-size: 14px; transition: .15s; white-space: nowrap;
+  position: relative; padding: 7px 15px; border-radius: var(--r-pill); color: var(--text-soft);
+  font-weight: 700; font-size: var(--fs-sm); white-space: nowrap;
+  transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
 }
-nav.main a:hover { color: var(--text); background: var(--surface); }
-nav.main a.active { color: var(--text); background: var(--surface-2); }
+nav.main a:hover { color: var(--text); background: var(--ghost-bg); }
+nav.main a.active { color: var(--text); }
+/* Where you are: the house-light bar (the title's colour, the accent until one is sampled).
+   Not TV: there the header is the rail, which marks its own current item. */
+body:not(.tv) nav.main a.active::after {
+  content: ''; position: absolute; left: 15px; right: 15px; bottom: -1px; height: 3px; border-radius: 3px;
+  background: rgba(var(--amb-rgb, var(--accent-rgb)), 1);
+}
 
 .search-wrap { position: relative; margin-left: auto; width: min(420px, 42vw); }
 .search-wrap input {
-  width: 100%; height: 40px; border-radius: 11px;
+  width: 100%; height: 40px; border-radius: var(--r-md);
   background: var(--surface); border: 1px solid var(--border);
-  color: var(--text); padding: 0 40px 0 38px; font-size: 14px; outline: none;
-  transition: .15s;
+  color: var(--text); padding: 0 40px 0 38px; font-size: var(--fs-sm); outline: none;
+  transition: border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
 }
-.search-wrap input:focus { border-color: var(--accent-2); background: var(--surface-2); }
+.search-wrap input:focus { border-color: var(--accent); background: var(--surface-2); }
 .search-wrap .ico { position: absolute; left: 12px; top: 11px; color: var(--muted-2); width: 18px; height: 18px; }
-.search-wrap .clear { position: absolute; right: 8px; top: 7px; background: none; border: 0; color: var(--muted-2); padding: 4px; border-radius: 8px; }
+.search-wrap .clear { position: absolute; right: 8px; top: 7px; background: none; border: 0; color: var(--muted-2); padding: 4px; border-radius: var(--r-sm); }
 .search-wrap .clear:hover { color: var(--text); background: var(--surface-2); }
 
 /* Live suggestions dropdown */
 .suggest {
   position: absolute; top: 48px; left: 0; right: 0;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; z-index: 60;
+  border-radius: var(--r-md); box-shadow: var(--elev); overflow: hidden; z-index: 60;
   max-height: 66vh; overflow-y: auto;
 }
 .suggest .row { display: flex; gap: 11px; padding: 9px 11px; align-items: center; }
 .suggest .row:hover { background: var(--surface-2); }
-.suggest .row img { width: 40px; height: 58px; object-fit: cover; border-radius: 6px; background: var(--bg-3); flex: none; }
+.suggest .row img { width: 40px; height: 58px; object-fit: cover; border-radius: var(--r-sm); background: var(--bg-3); flex: none; }
 .suggest .row .t { font-weight: 600; font-size: 14px; }
 .suggest .row .s { color: var(--muted); font-size: 12px; }
 .suggest .row .badge { margin-left: auto; }
 
 .icon-btn {
   height: 40px; width: 40px; display: grid; place-items: center;
-  border-radius: 11px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border);
   color: var(--muted); flex: none;
 }
 .icon-btn:hover { color: var(--text); background: var(--surface-2); }
@@ -244,17 +197,14 @@ nav.main a.active { color: var(--text); background: var(--surface-2); }
    Sticky, so a transform costs no reflow and the page underneath never shifts.
    pointer-events:none is not cosmetic: tvMeasure rejects it, which is what keeps the
    D-pad from putting the ring on a bar that is off screen. */
-/* (The transition list lives with the bar's presentation rule further down: three
-   competing `transition` declarations meant the last one won and dropped transform and
-   opacity, so this slide had been a snap on every platform.) */
+/* (The transition list is the bar's own rule above: competing `transition` declarations
+   meant the last one won and dropped transform and opacity, so this slide had been a snap.) */
 body.chrome-idle header.top { transform: translateY(-100%); opacity: 0; pointer-events: none; }
 /* Someone who has asked for less motion still gets the bar out of the way, just without
    the slide. */
 @media (prefers-reduced-motion: reduce) {
-  header.top { transition: box-shadow .25s ease, background .25s ease, opacity .2s linear; }
   body.chrome-idle header.top { transform: none; visibility: hidden; }
 }
-header.top.scrolled { box-shadow: 0 6px 26px rgba(0,0,0,.30); }
 
 /* ---------- Billboard hero (rotating title-art) ---------- */
 .billboard {
@@ -282,34 +232,35 @@ header.top.scrolled { box-shadow: 0 6px 26px rgba(0,0,0,.30); }
    and screen-reader side. The crossfade is untouched. */
 .bb-slide { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity 1.1s ease; }
 .bb-slide.on { opacity: 1; pointer-events: auto; z-index: 1; }
+/* The art holds still: a 20s zoom restarted with every 8s slide, and a 24s drift after it,
+   kept a full-screen layer animating for as long as Home was open. */
 .bb-bg { position: absolute; inset: 0; background-size: cover; background-position: center 18%; }
-.bb-slide.on .bb-bg { animation: bbzoom 20s ease-out both; }
-@keyframes bbzoom { from { transform: scale(1.1); } to { transform: scale(1); } }
+/* Legibility is the left band of veil (always dark, theme-tinted) under the title block;
+   the bottom layer is the page colour, so the art dissolves into THIS theme's page and
+   not into Midnight's. Daylight keeps only the band (see "Hero: dissolve into the page"). */
 .bb-scrim { position: absolute; inset: 0; background:
-  linear-gradient(90deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.6) 34%, rgba(6,8,12,.05) 62%, transparent 100%),
-  linear-gradient(0deg, transparent 0%, rgba(6,8,12,.62) 20%, rgba(6,8,12,.28) 42%, transparent 64%); }
-/* TV only: the bar over the hero is fully transparent there (no band, no line), so the
-   darkening the nav needs on a bright backdrop is a third scrim layer on the image
-   itself, fading down over its top fifth instead of stopping where a bar would. */
-body.tv .bb-scrim { background:
-  linear-gradient(180deg, rgba(0,0,0,.62) 0%, rgba(0,0,0,.30) 9%, transparent 22%),
-  linear-gradient(90deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.6) 34%, rgba(6,8,12,.05) 62%, transparent 100%),
-  linear-gradient(0deg, transparent 0%, rgba(6,8,12,.62) 20%, rgba(6,8,12,.28) 42%, transparent 64%); }
+  linear-gradient(90deg, rgba(var(--veil-rgb), .9) 0%, rgba(var(--veil-rgb), .6) 34%, rgba(var(--veil-rgb), 0) 62%),
+  linear-gradient(0deg, rgba(var(--bg-rgb), 0) 0%, rgba(var(--bg-rgb), .62) 20%, rgba(var(--bg-rgb), .28) 42%, rgba(var(--bg-rgb), 0) 64%); }
+@media (min-width: 641px) {
+  :root[data-theme="daylight"] body:not(.tv) .bb-scrim { background:
+    linear-gradient(90deg, rgba(var(--veil-rgb), .9) 0%, rgba(var(--veil-rgb), .6) 34%, rgba(var(--veil-rgb), 0) 62%); }
+}
 .bb-info { position: absolute; left: 0; bottom: 9%; z-index: 2; max-width: min(620px, 84vw); padding: 0 clamp(18px, 5vw, 56px); }
-.bb-logo { max-height: 168px; max-width: min(420px, 72vw); object-fit: contain; object-position: left bottom; margin-bottom: 18px; filter: drop-shadow(0 6px 22px rgba(0,0,0,.6)); }
-.bb-title { color: #fff; font-size: clamp(30px, 5.4vw, 62px); font-weight: 900; letter-spacing: -1.5px; line-height: 1; margin: 0 0 18px; text-shadow: 0 3px 22px rgba(0,0,0,.6); }
-.bb-meta { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; color: rgba(255,255,255,.9); font-weight: 700; font-size: 15px; flex-wrap: wrap; }
+.bb-logo { max-height: 168px; max-width: min(420px, 72vw); object-fit: contain; object-position: left bottom; margin-bottom: 18px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+/* Over raw art the veil band does the work; the one small shadow only crisps the edge. */
+.bb-title { color: #fff; font-size: clamp(38px, 6vw, 82px); line-height: .95; margin: 0 0 18px; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
+.bb-meta { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; color: rgba(255,255,255,.9); font-weight: 700; font-size: var(--fs-sm); flex-wrap: wrap; }
 /* The rating reads as one more pill, not a loose glyph with a number under it: the
    star is sized to the text and locked on the same baseline. */
 .pill.rating { display: inline-flex; align-items: center; gap: 6px; line-height: 1; white-space: nowrap; }
 .pill.rating svg { width: 1em; height: 1em; flex: none; color: var(--accent); }
 .bb-meta .pill.rating {
-  border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: 20px;
-  font-size: 13px; color: #fff;
+  border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: var(--r-pill);
+  font-size: var(--fs-xs); color: #fff;
 }
 .bb-meta .pill.rating svg { color: var(--accent-on-dark); }
-.bb-meta .pill-type { border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: 20px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
-.bb-ovw { color: rgba(255,255,255,.86); font-size: clamp(14px, 1.4vw, 16.5px); line-height: 1.55; margin: 0 0 22px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
+.bb-meta .pill-type { border: 1px solid rgba(255,255,255,.35); padding: 2px 10px; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 700; }
+.bb-ovw { color: rgba(255,255,255,.86); font-size: clamp(var(--fs-sm), 1.4vw, var(--fs-md)); line-height: 1.55; margin: 0 0 22px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
 .bb-cta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .bb-cta .btn.primary { color: var(--accent-ink); }
 .bb-dots {
@@ -322,8 +273,8 @@ body.tv .bb-scrim { background:
   position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
   width: 46px; height: 46px; border-radius: 50%; display: none;
   align-items: center; justify-content: center; cursor: pointer;
-  background: rgba(11,13,18,.6); border: 1px solid rgba(255,255,255,.25); color: #fff;
-  opacity: 0; transition: opacity .2s, background .2s;
+  background: rgba(var(--veil-rgb), .55); border: 1px solid rgba(255,255,255,.18); color: var(--on-veil);
+  opacity: 0; transition: opacity var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
 }
 .bb-arrow svg { width: 20px; height: 20px; }
 .bb-arrow.left { left: clamp(10px, 2vw, 22px); }
@@ -331,7 +282,7 @@ body.tv .bb-scrim { background:
 @media (hover: hover) {
   .bb-arrow { display: flex; }
   .billboard:hover .bb-arrow { opacity: 1; }
-  .bb-arrow:hover { background: rgba(11,13,18,.85); }
+  .bb-arrow:hover { background: rgba(var(--veil-rgb), .9); }
 }
 /* A horizontal drag is a drag, not a text selection. */
 .billboard.dragging { cursor: grabbing; user-select: none; }
@@ -341,18 +292,22 @@ body.tv .bb-scrim { background:
    grows the hit area to full row height and out to the gap -- out to the GAP and no
    further, so neighbouring dots never overlap and steal each other's presses. The
    visual, the active-pill sizing and the TV overrides are all left untouched. */
-.bb-dot { position: relative; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.35); border: 0; cursor: pointer; padding: 0; transition: .25s; }
+.bb-dot { position: relative; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.35); border: 0; cursor: pointer; padding: 0;
+  transition: width var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out); }
 .bb-dot::after {
   content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   height: 44px; width: calc(100% + 16px);   /* == the gap, so targets tile without overlapping */
 }
-.bb-dot.on { background: var(--accent); width: 26px; border-radius: 6px; }
+.bb-dot.on { background: var(--accent); width: 26px; border-radius: var(--r-sm); }
 .billboard-sk { width: var(--bleed-w); margin-left: var(--bleed-ml); margin-top: -22px; height: min(82vh, 760px); min-height: 460px; border-radius: 0; }
 
 /* Big / glass buttons */
-.btn.lg { padding: 14px 26px; font-size: 15.5px; border-radius: 12px; }
-.btn.glass { background: rgba(125,135,155,.30); border-color: rgba(255,255,255,.16); color: #fff; backdrop-filter: blur(6px); }
-.btn.glass:hover { background: rgba(150,160,180,.42); }
+.btn.lg { padding: 14px 26px; font-size: var(--fs-md); }
+/* Glass over art: the theme's dark veil and a white hairline, so it reads on bright and dark
+   backdrops alike and in every theme (a grey tint went pale on light art). No blur and no
+   sheen: the veil alone carries it. */
+.btn.glass { background: rgba(var(--veil-rgb), .55); border-color: rgba(255,255,255,.18); color: var(--on-veil); }
+.btn.glass:hover { background: rgba(var(--veil-rgb), .72); }
 .btn.glass.icon { padding: 14px; }
 
 .rows { position: relative; }
@@ -361,11 +316,11 @@ body.tv .bb-scrim { background:
 .rail-wrap { position: relative; }
 .rail-arrow {
   position: absolute; top: 0; bottom: 12px; width: 48px; z-index: 4; display: grid; place-items: center;
-  background: linear-gradient(90deg, rgba(0,0,0,.5), transparent); border: 0; color: #fff; cursor: pointer;
-  opacity: 0; transition: opacity .2s;
+  background: linear-gradient(90deg, rgba(var(--veil-rgb), .5), transparent); border: 0; color: var(--on-veil); cursor: pointer;
+  opacity: 0; transition: opacity var(--dur-1) var(--ease-out);
 }
 .rail-arrow.left { left: 0; }
-.rail-arrow.right { right: 0; background: linear-gradient(270deg, rgba(0,0,0,.5), transparent); }
+.rail-arrow.right { right: 0; background: linear-gradient(270deg, rgba(var(--veil-rgb), .5), transparent); }
 @media (hover: hover) { .rail-wrap:hover .rail-arrow { opacity: 1; } }
 /* An arrow that cannot move anything is worse than no arrow: on a short row the left one
    landed on top of the first item. display:none, not opacity, so it stops hit-testing. */
@@ -380,8 +335,11 @@ body.tv .bb-scrim { background:
    .ch-play still carried a data-nav to the PLAYER, so on a touch device the middle of
    every poster opened playback instead of the detail page. */
 .card .poster .card-hover { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
-  background: linear-gradient(0deg, rgba(6,8,12,.92) 0%, rgba(6,8,12,.15) 52%, transparent 100%);
-  opacity: 0; pointer-events: none; transition: opacity .2s; padding: 12px; }
+  background: linear-gradient(0deg, rgba(var(--veil-rgb), .9) 0%, rgba(var(--veil-rgb), .15) 52%, transparent 100%);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-1) var(--ease-out); padding: 12px; }
+/* The house-light bar: the caption of the card you are on (hover, or focus on TV) is
+   marked in the title's own colour, the same mark as the current tab. */
+.card .poster .ch-cap { border-left: 3px solid rgba(var(--amb-rgb, var(--accent-rgb)), 1); padding-left: 9px; }
 /* hover: hover ONLY. Touch browsers latch :hover on tap and hold it until something
    else is tapped, which left this overlay interactive over the poster -- and it holds
    a play button that goes straight to /watch, so the next tap on the same card jumped
@@ -396,12 +354,13 @@ body.tv .bb-scrim { background:
   .card:not(.rank-item):active .poster .card-hover { opacity: 1; }
 }
 .ch-play { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(.6); width: 52px; height: 52px; border-radius: 50%;
-  background: var(--accent); color: var(--accent-ink); border: 0; display: grid; place-items: center; cursor: pointer; transition: .2s; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+  background: var(--accent); color: var(--accent-ink); border: 0; display: grid; place-items: center; cursor: pointer; opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); }
 @media (hover: hover) { .card:hover .poster .ch-play { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
 .ch-play svg { width: 25px; height: 25px; margin-left: 2px; }
 .ch-play:hover { filter: brightness(1.08); }
-.ch-title { color: #fff; font-weight: 700; font-size: 13px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ch-meta { color: rgba(255,255,255,.7); font-size: 11.5px; margin-top: 2px; }
+.ch-title { color: #fff; font-weight: 700; font-size: var(--fs-sm); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ch-meta { color: rgba(255,255,255,.7); font-size: var(--fs-xs); margin-top: 2px; }
 
 /* ---------- Top 10 rank rail ---------- */
 /* Columns size to their CONTENT. A fixed column had to be kept in agreement with the
@@ -427,10 +386,11 @@ body.tv .bb-scrim { background:
      artwork and read as a rendering fault; at a quarter it is plainly a number the
      poster stands on, and "10" still reads as one numeral. */
   margin-right: calc(var(--rank-size) * -0.26);
-  /* Outlined, in a fraction of the theme's OWN text colour. White at 30% was ~2.6:1 on
-     the dark themes and simply invisible on Daylight's white surfaces. */
-  color: color-mix(in srgb, var(--text) 34%, transparent);
-  transition: color .2s ease;
+  /* Outlined, in the theme's own 3:1 boundary colour. White at 30% was ~2.6:1 on the dark
+     themes and simply invisible on Daylight's white surfaces; a fraction of --text was
+     frozen to Midnight's on webOS (color-mix). */
+  color: var(--border-strong);
+  transition: color var(--dur-1) var(--ease-out);
 }
 .rank-num svg {
   width: var(--rank-size); height: var(--rank-size); display: block;
@@ -446,6 +406,8 @@ body.tv .bb-scrim { background:
 /* The numeral lights up with its poster. ONE rule: a later hover rule used to override
    this with a grey, so hover and focus disagreed about what "lit" looked like. */
 .rank-item:hover .rank-num, .rank-item:focus-within .rank-num { color: var(--accent); }
+/* Sized with the numeral, not as a normal rail card: at 165px the row grew ~60px taller and
+   the numerals, which stand at the poster's foot, fell below the fold at 1280x720. */
 .rank-item .poster { width: 126px; flex: none; aspect-ratio: 2/3; }
 
 @media (max-width: 860px) {
@@ -470,43 +432,32 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .cn-warn svg { width: 44px; height: 44px; }
 .center-note { text-align: center; color: var(--muted); padding: 60px 20px; }
 .center-note .note-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
+/* the empty watchlist sits under a left-aligned heading, so its note and buttons do too */
+.center-note.wl-empty { text-align: left; padding-left: 0; padding-right: 0; }
+.center-note.wl-empty .note-cta { justify-content: flex-start; }
 
-/* ---------- Hero ---------- */
-.hero {
-  position: relative; border-radius: 20px; overflow: hidden;
-  min-height: 420px; display: flex; align-items: flex-end;
-  margin-bottom: 28px; background: var(--bg-3);
-  box-shadow: var(--shadow);
-}
-.hero .bg { position: absolute; inset: 0; background-size: cover; background-position: center 18%; }
-.hero .scrim { position: absolute; inset: 0; background:
-  linear-gradient(90deg, rgba(11,13,18,.96) 0%, rgba(11,13,18,.72) 38%, rgba(11,13,18,.15) 70%, transparent 100%),
-  linear-gradient(0deg, rgba(11,13,18,.98) 2%, transparent 46%); }
-.hero .inner { position: relative; padding: 34px 38px; max-width: 640px; }
-.hero h1 { font-size: clamp(28px, 4vw, 46px); font-weight: 900; margin: 0 0 12px; letter-spacing: -1px; line-height: 1.02; color: #fff; }
-.hero .meta { display: flex; gap: 14px; align-items: center; color: rgba(255,255,255,.82); font-weight: 600; font-size: 14px; margin-bottom: 12px; flex-wrap: wrap; }
-.hero p.ovw { color: #d3d9e4; font-size: 15px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0 0 20px; }
-.hero .cta { display: flex; gap: 12px; flex-wrap: wrap; }
-
-/* ---------- Buttons ---------- */
+/* ---------- Buttons ----------
+   Flat: depth is the fill step, not a shadow or a sheen. Secondary is the raised surface
+   plus a hairline and hovers one step up; primary is the solid accent. No lift on hover. */
 .btn {
   display: inline-flex; align-items: center; gap: 9px;
-  padding: 11px 20px; border-radius: 12px; font-weight: 700; font-size: 14px;
-  border: 1px solid transparent; transition: .15s; background: var(--surface-2); color: var(--text);
-  border-color: var(--border);
+  padding: 11px 20px; border-radius: var(--r-md); font-weight: 700; font-size: var(--fs-sm);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
 }
-.btn:hover { transform: translateY(-1px); background: var(--bg-3); }
+@media (hover: hover) { .btn:hover { background-color: var(--surface-2); } }
+.btn:active { transform: scale(.97); }
 .btn svg { width: 18px; height: 18px; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
-.btn.primary:hover { filter: brightness(1.06); background: var(--accent); }
-.btn.ghost { background: var(--ghost-bg); }
-.btn.sm { padding: 8px 13px; font-size: 13px; border-radius: 10px; }
+@media (hover: hover) { .btn.primary:hover { background: var(--accent); filter: brightness(1.06); } }
+.btn.sm { padding: 8px 13px; font-size: var(--fs-sm); }
 .btn[disabled] { opacity: .45; pointer-events: none; }
 
 /* ---------- Rails ---------- */
 .rail { margin-bottom: 34px; }
 .rail .rail-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 13px; }
-.rail h2 { font-size: 19px; font-weight: 800; margin: 0; letter-spacing: -.2px; }
+.rail h2 { margin: 0; }   /* face and size: "One voice for headings" */
 /* 13px of text is a 20px-tall tap target. Pad it out and pull the padding back off
    with margin, so the row reads identically but the link is actually hittable. */
 .rail a.more { color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; padding: 11px 6px; margin: -11px -6px; }
@@ -533,7 +484,10 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
   overflow-x: auto; overflow-y: hidden;
   padding: 14px 2px 16px; margin: -10px 0 -12px;
   scroll-snap-type: x proximity;
-  scrollbar-width: thin;
+  /* a non-auto scrollbar-width switches off the ::-webkit-scrollbar styling above, so the
+     colours are restated here (never on html: scrollbar-color inherits, and would do the
+     same to the page's own scrollbar) */
+  scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
 }
 .rail .track > * { scroll-snap-align: start; }
 
@@ -543,61 +497,61 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
 .card { cursor: pointer; position: relative; }
+/* No drop shadow and no lift: on hover the poster takes a 2px outline in the theme's 3:1
+   boundary colour (an outline, so nothing re-rasters and no layout moves). */
 .card .poster {
-  position: relative; aspect-ratio: 2/3; border-radius: var(--radius);
-  overflow: hidden; background: var(--bg-3); box-shadow: 0 6px 20px rgba(0,0,0,.35);
-  transition: transform .18s ease, box-shadow .18s ease;
-  border: 1px solid rgba(255,255,255,.04);
+  position: relative; aspect-ratio: 2/3; border-radius: var(--r-sm);
+  overflow: hidden; background: var(--bg-3);
+  border: 1px solid rgba(255,255,255,.06);
+  outline: 2px solid transparent;
+  transition: outline-color var(--dur-1) var(--ease-out);
+  container-type: inline-size;   /* the "New episode" label shortens by poster width (2.0.x block) */
 }
-@media (hover: hover) { .card:hover .poster { transform: translateY(-4px); box-shadow: 0 14px 34px rgba(0,0,0,.5); } }
+@media (hover: hover) { body:not(.tv) .card:hover .poster { outline-color: var(--border-strong); } }
 .card .poster img { width: 100%; height: 100%; object-fit: cover; }
 /* With the caption gone these are the only chrome on a card, so they read as heavy
    very quickly. Dark glass, a hairline, and the accent kept for the star alone. */
 .card .poster .rate {
   position: absolute; top: 8px; left: 8px;
-  background: rgba(11,13,18,.72); border: 1px solid rgba(255,255,255,.14);
-  color: #fff; font-weight: 700; font-size: 11.5px; padding: 3px 8px; border-radius: 8px;
+  background: rgba(var(--veil-rgb), .72); border: 1px solid rgba(255,255,255,.18);
+  color: var(--on-veil); font-weight: 700; font-size: var(--fs-xs); padding: 3px 8px; border-radius: var(--r-sm);
   display: flex; align-items: center; gap: 4px;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .card .poster .rate svg { color: var(--accent-on-dark); }
 .card .poster .typebadge {
   position: absolute; top: 8px; right: 8px;
-  background: rgba(11,13,18,.72); border: 1px solid rgba(255,255,255,.14);
-  color: rgba(255,255,255,.86); font-weight: 700; font-size: 10px; letter-spacing: .5px;
-  text-transform: uppercase; padding: 3px 7px; border-radius: 8px;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  background: rgba(var(--veil-rgb), .72); border: 1px solid rgba(255,255,255,.18);
+  color: rgba(255,255,255,.86); font-weight: 700; font-size: var(--fs-xs);
+  padding: 3px 7px; border-radius: var(--r-sm);
 }
 .card .poster .wl {
   position: absolute; bottom: 8px; right: 8px; width: 34px; height: 34px; border-radius: 50%;
-  background: rgba(11,13,18,.7); border: 0; color: #fff; display: grid; place-items: center;
-  opacity: 0; transform: scale(.8); transition: .15s; backdrop-filter: blur(4px);
+  background: rgba(var(--veil-rgb), .72); border: 0; color: var(--on-veil); display: grid; place-items: center;
+  opacity: 0; transform: scale(.8); transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
 }
 .card:hover .poster .wl { opacity: 1; transform: scale(1); }
 .card .poster .wl.on { color: var(--accent); opacity: 1; }
 .card .poster .wl svg { width: 17px; height: 17px; }
-.card .cap { padding: 9px 3px 0; }
-.card .cap .t { font-weight: 600; font-size: 13.5px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.card .cap .y { color: var(--muted); font-size: 12px; margin-top: 3px; }
 
 /* Skeleton */
-.sk { background: linear-gradient(100deg, var(--bg-3) 30%, var(--sk-hi) 50%, var(--bg-3) 70%); background-size: 200% 100%; animation: sh 1.2s infinite; border-radius: var(--radius); }
+.sk { background: linear-gradient(100deg, var(--bg-3) 30%, var(--sk-hi) 50%, var(--bg-3) 70%); background-size: 200% 100%; animation: sh 1.2s infinite; border-radius: var(--r-sm); }
 .sk.poster { aspect-ratio: 2/3; }
-.sk.line { height: 12px; border-radius: 6px; margin-top: 8px; }
+.sk.line { height: 12px; border-radius: var(--r-sm); margin-top: 8px; }
 @keyframes sh { to { background-position: -200% 0; } }
 
 /* ---------- Filters ---------- */
-.toolbar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 22px; background: var(--surface); border: 1px solid var(--border); padding: 15px; border-radius: 14px; }
+.toolbar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 22px; background: var(--surface); border: 1px solid var(--border); padding: 15px; border-radius: var(--r-md); }
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.field label, .field-lbl { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
 .field select, .field input {
-  height: 38px; background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
-  border-radius: 10px; padding: 0 11px; font-size: 14px; outline: none; min-width: 130px;
+  height: 38px; background: var(--bg-2); border: 1px solid var(--border-strong); color: var(--text);
+  border-radius: var(--r-md); padding: 0 11px; font-size: var(--fs-sm); outline: none; min-width: 130px;
 }
-.field select:focus, .field input:focus { border-color: var(--accent-2); }
+.field select:focus, .field input:focus { border-color: var(--accent); }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .toolbar .genres-field { flex: 1; min-width: 200px; }
-.chip { padding: 7px 12px; border-radius: 20px; background: var(--bg-2); border: 1px solid var(--border); color: var(--muted); font-size: 13px; font-weight: 600; }
+.chip { padding: 7px 12px; border-radius: var(--r-pill); background: var(--bg-2); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-sm); font-weight: 600;
+  transition: color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out); }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .chip:hover { color: var(--text); }
 .chip.on:hover { color: var(--accent-ink); }
@@ -605,25 +559,26 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 /* ---------- Detail page ---------- */
 .detail-hero { position: relative; margin: -22px -22px 24px; padding: 0; min-height: 480px; }
 .detail-hero .bg { position: absolute; inset: 0; background-size: cover; background-position: center 15%; }
-/* Dark cinematic banner in every theme: image at top, text over a dark band,
-   blending to the page background at the very bottom. Keeps white hero text
-   readable in light themes too. */
+/* Dark cinematic banner in every theme: image at top, the text over a band of the
+   theme's veil, which gives way to the page colour at the very bottom where the art has
+   dissolved (Daylight ends on the band instead; see "Detail hero" below). */
 .detail-hero .scrim { position: absolute; inset: 0; background:
-  linear-gradient(0deg, transparent 0%, rgba(8,10,14,.80) 16%, rgba(8,10,14,.55) 48%, rgba(8,10,14,.22) 78%, transparent 100%); }
+  linear-gradient(0deg, rgba(var(--bg-rgb), 0) 0%, rgba(var(--veil-rgb), .8) 16%, rgba(var(--veil-rgb), .55) 48%, rgba(var(--veil-rgb), .22) 78%, transparent 100%); }
 /* .detail-body is NO LONGER the movie/TV detail layout - that moved to .dv-stage +
    .dv-body. It is still the PERSON page (personView in app.js), which is the one
    place a portrait-beside-biography row is genuinely the right shape. Deleting this
    rule outright collapsed that page to a full-bleed stack, so it stays - scoped by
    intent rather than by accident. */
 .detail-body { position: relative; max-width: var(--maxw); margin: 0 auto; padding: 22px; display: flex; gap: 30px; align-items: flex-start; }
-.detail-body .poster { width: 220px; flex: none; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); background: var(--bg-3); aspect-ratio: 2/3; }
+.detail-body .poster { width: 220px; flex: none; border-radius: var(--r-sm); overflow: hidden; background: var(--bg-3); aspect-ratio: 2/3; }
 .detail-body .info { flex: 1; min-width: 0; padding-bottom: 6px; }
 .detail-body h1 { font-size: clamp(26px, 3.4vw, 42px); font-weight: 900; margin: 0 0 8px; letter-spacing: -.6px; color: var(--text); }
 .detail-body .tagline { color: var(--text-soft); font-style: italic; margin: 0 0 14px; }
 .detail-body h1 .muted { color: var(--muted); }
-.detail-body .detail-logo { max-height: 128px; max-width: min(380px, 62vw); object-fit: contain; object-position: left bottom; display: block; margin: 4px 0 12px; filter: drop-shadow(0 4px 18px rgba(0,0,0,.6)); }
-.metarow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); font-weight: 600; font-size: 14px; margin-bottom: 16px; }
-.metarow .pill { background: var(--surface-2); border: 1px solid var(--border); padding: 4px 11px; border-radius: 20px; color: var(--text); }
+.detail-body .detail-logo { max-height: 128px; max-width: min(380px, 62vw); object-fit: contain; object-position: left bottom; display: block; margin: 4px 0 12px; }
+.metarow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); font-weight: 600; font-size: var(--fs-sm); margin-bottom: 16px; }
+/* The pills sit over the title page's art: a faint white fill, no hairline. */
+.metarow .pill { background: rgba(255,255,255,.09); border: 1px solid transparent; padding: 4px 11px; border-radius: var(--r-pill); color: var(--text); }
 .metarow .pill.rating { color: var(--text); }
 .detail-body .cta { display: flex; gap: 11px; flex-wrap: wrap; margin-top: 6px; }
 .section { max-width: var(--maxw); margin: 30px auto 0; padding: 0 22px; }
@@ -635,7 +590,7 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .cast-track { overflow-y: hidden; padding-top: 10px; padding-bottom: 10px; margin-top: -10px; margin-bottom: -10px;
   display: grid; grid-auto-flow: column; grid-auto-columns: 120px; gap: 14px; overflow-x: auto; padding-bottom: 8px; }
 .person { text-align: center; }
-.person img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: var(--bg-3); margin-bottom: 8px; }
+.person img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--r-md); background: var(--bg-3); margin-bottom: 8px; }
 .person .n { font-weight: 600; font-size: 13px; }
 .person .c { color: var(--muted); font-size: 12px; }
 
@@ -643,10 +598,11 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .ep-list { display: grid; gap: 10px; }
 .ep {
   display: flex; gap: 14px; padding: 12px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; align-items: center; cursor: pointer; transition: .15s;
+  border-radius: var(--r-md); align-items: center; cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
-.ep:hover { background: var(--surface-2); border-color: var(--accent-2); }
-.ep .thumb { width: 150px; aspect-ratio: 16/9; border-radius: 8px; object-fit: cover; background: var(--bg-3); flex: none; }
+.ep:hover { background: var(--surface-2); border-color: var(--accent); }
+.ep .thumb { width: 150px; aspect-ratio: 16/9; border-radius: var(--r-sm); object-fit: cover; background: var(--bg-3); flex: none; }
 .ep .en { font-weight: 700; color: var(--accent); font-size: 13px; }
 .ep .et { font-weight: 700; margin: 2px 0 4px; }
 .ep .eo { color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -670,13 +626,13 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 
 /* ---------- Player ---------- */
 .player-shell { max-width: 1200px; margin: 0 auto; }
-.player-frame { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 16px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); }
+.player-frame { position: relative; aspect-ratio: 16/9; background: #000; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
 .player-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .player-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 30px; }
 .player-empty .box { max-width: 560px; }
 .player-empty h3 { font-size: 20px; margin: 0 0 10px; }
 .player-empty p { color: var(--muted); margin: 0 0 18px; }
-.player-empty input { width: 100%; height: 42px; background: var(--bg-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 0 12px; margin-bottom: 12px; font-size: 13px; }
+.player-empty input { width: 100%; height: 42px; background: var(--bg-2); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md); padding: 0 12px; margin-bottom: 12px; font-size: var(--fs-sm); }
 .source-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
 .source-bar .lbl { color: var(--muted); font-weight: 600; font-size: 13px; }
 
@@ -685,18 +641,20 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .mirror {
   position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   text-align: left; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; color: var(--text); transition: .15s;
+  border-radius: var(--r-md); color: var(--text);
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
-.mirror:hover { background: var(--surface-2); border-color: var(--accent-2); transform: translateY(-2px); }
+.mirror:hover { background: var(--surface-2); border-color: var(--accent); }
 .mirror .num { position: absolute; top: 13px; right: 15px; color: var(--muted-2); font-weight: 800; font-size: 12px; letter-spacing: .5px; }
 .mirror .mn { font-weight: 800; font-size: 15px; }
 .mirror .ms { color: var(--muted); font-size: 11px; letter-spacing: .6px; text-transform: uppercase; }
-.mirror.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+/* an accent tint laid over the surface: rgba() of the triplet is native on webOS, a color-mix was frozen to gold */
+.mirror.on { border-color: var(--accent); background: linear-gradient(rgba(var(--accent-rgb), .12), rgba(var(--accent-rgb), .12)) var(--surface); }
 .mirror.on .ms { color: var(--accent); font-weight: 700; }
 
 /* ---------- Modal ---------- */
-.modal-back { position: fixed; inset: 0; background: rgba(6,8,12,.78); backdrop-filter: blur(6px); z-index: 100; display: grid; place-items: center; padding: 20px; }
-.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; width: min(720px, 100%); max-height: 92vh; overflow-y: auto; box-shadow: var(--shadow); }
+.modal-back { position: fixed; inset: 0; background: rgba(var(--veil-rgb), .72); z-index: 100; display: grid; place-items: center; padding: 20px; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); width: min(720px, 100%); max-height: 92vh; max-height: 92dvh; overflow-y: auto; box-shadow: var(--elev); }   /* dvh: clear of a phone's URL bar */
 .modal.wide { width: min(980px, 100%); }
 .modal .mh { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
 /* The heading icon had no size rule anywhere, so it fell back to the replaced-element
@@ -713,25 +671,25 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 22px; }
 .set-group .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
 .set-actions { display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 16px; }
 .theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.theme-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; color: var(--text); cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s; }
-.theme-card:hover { border-color: var(--accent-2); transform: translateY(-2px); }
+.theme-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); cursor: pointer; transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out); }
+.theme-card:hover { border-color: var(--accent); }
 .theme-card.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 /* A tick as well as the border: the border alone is the focus ring's shape and colour. */
 .theme-card.on .tname::after { content: ' ✓'; color: var(--accent); font-weight: 800; }
-.theme-card .tprev { display: flex; width: 100%; height: 34px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
+.theme-card .tprev { display: flex; width: 100%; height: 34px; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--border); }
 .theme-card .tprev i { flex: 1; }
-.theme-card .tname { font-size: 12.5px; font-weight: 700; }
+.theme-card .tname { font-size: var(--fs-xs); font-weight: 700; }
 @media (max-width: 560px) { .theme-grid { grid-template-columns: repeat(2, 1fr); } }
 
 /* ---------- Get app / Install on TV ---------- */
 .getapp { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; max-width: 1040px; }
-.ga-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+.ga-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; }
 .ga-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 17px; }
 .ga-card h3 svg { width: 20px; height: 20px; color: var(--accent); }
 .ga-url { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
-.ga-url code, .ga-url input { flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; overflow-x: auto; white-space: nowrap; }
+.ga-url code, .ga-url input { flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--border); color: var(--text); border-radius: var(--r-md); padding: 10px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; overflow-x: auto; white-space: nowrap; }
 .ga-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 16px 0; }
-.ga-qr img { border-radius: 12px; background: #fff; padding: 8px; display: block; }
+.ga-qr img { border-radius: var(--r-md); background: #fff; padding: 8px; display: block; }
 .ga-qr .muted { font-size: 12px; }
 .ga-steps { margin: 12px 0 0; padding-left: 20px; color: var(--text-soft); font-size: 14px; line-height: 1.7; }
 .linkish { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
@@ -753,7 +711,7 @@ footer.site a { display: inline-block; padding: 8px 4px; margin: -8px -4px; }
    invisible -- including "Volume 40%", which is the only feedback the TV volume buttons
    give. 420 clears the frame (300), the exit pill and control bar (310), and the pointer
    and its hint (400/401), so it is legible even with the pointer up. */
-.toast { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 16px; right: 16px; margin-inline: auto; width: fit-content; max-width: min(560px, calc(100vw - 32px)); text-align: center; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 12px 18px; border-radius: 12px; box-shadow: var(--shadow); z-index: 420; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+.toast { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 16px; right: 16px; margin-inline: auto; width: fit-content; max-width: min(560px, calc(100vw - 32px)); text-align: center; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 12px 18px; border-radius: var(--r-md); box-shadow: var(--elev); z-index: 420; font-weight: 600; font-size: var(--fs-sm); opacity: 0; transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); pointer-events: none; }
 .toast.show { opacity: 1; transform: translateY(-4px); }
 
 /* Update banner (desktop auto-update) */
@@ -798,7 +756,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 @media (hover: none) {
   .card .poster .wl { opacity: 1; transform: scale(1); }   /* save button always tappable */
   .card:active .poster { transform: scale(.98); }
-  .btn:active, .mirror:active, .chip:active { transform: scale(.97); }
+  .mirror:active, .chip:active { transform: scale(.97); }
   .bottom-nav a:active { opacity: .6; }
 }
 
@@ -819,8 +777,8 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .card .cw-x {
   position: absolute; top: 6px; left: 6px; z-index: 7;
   width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
-  background: rgba(11,13,18,.82); color: #fff; border: 1px solid rgba(255,255,255,.25);
-  cursor: pointer; opacity: 0; transition: opacity .15s, background .15s;
+  background: rgba(var(--veil-rgb), .72); color: var(--on-veil); border: 1px solid rgba(255,255,255,.18);
+  cursor: pointer; opacity: 0; transition: opacity var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
   /* pointer-events must follow opacity. Invisible and still hit-testing meant a tap
      on the top-left corner of a Continue-watching poster silently DELETED the entry
      instead of resuming it -- the dismiss branch runs before [data-nav]. Same rule
@@ -828,7 +786,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   pointer-events: none;
 }
 .card .cw-x svg { width: 13px; height: 13px; }
-.card .cw-x:hover { background: rgba(11,13,18,.95); }
+.card .cw-x:hover { background: rgba(var(--veil-rgb), .9); }
 @media (hover: hover) { .card:hover .cw-x { opacity: 1; pointer-events: auto; } }
 .card .cw-x:focus-visible { opacity: 1; pointer-events: auto; }
 body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34px; }
@@ -855,10 +813,10 @@ body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34p
 .epx {
   flex: none; width: 190px; display: flex; flex-direction: column; gap: 6px;
   background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
-  color: var(--muted); font: inherit; transition: color .15s;
+  color: var(--muted); font: inherit; transition: color var(--dur-1) var(--ease-out);
 }
 .epx-thumb {
-  position: relative; display: block; aspect-ratio: 16/9; border-radius: 10px;
+  position: relative; display: block; aspect-ratio: 16/9; border-radius: var(--r-md);
   overflow: hidden; background: var(--bg-3); border: 1px solid var(--border);
 }
 .epx-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -880,10 +838,10 @@ body.tv .card .cw-x { opacity: 1; pointer-events: auto; width: 34px; height: 34p
 .epx-now {
   position: absolute; left: 6px; bottom: 6px; z-index: 3;
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 7px 2px 5px; border-radius: 99px;
-  background: rgba(8,10,14,.78); color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  font-size: 9.5px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase;
+  padding: 2px 7px 2px 5px; border-radius: var(--r-pill);
+  background: rgba(var(--veil-rgb), .72); color: var(--accent);
+  border: 1px solid rgba(255, 255, 255, .18);
+  font-size: 10.5px; font-weight: 700;
 }
 .epx-now svg { width: 9px; height: 9px; }
 body.tv .epx-now { left: 8px; bottom: 8px; padding: 3px 9px 3px 7px; font-size: 11px; }
@@ -911,7 +869,7 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 700; letter-spacing: .3px;
   color: var(--muted); background: var(--bg-3);
-  border: 1px solid var(--border); border-radius: 20px; padding: 2px 8px;
+  border: 1px solid var(--border); border-radius: var(--r-pill); padding: 2px 8px;
 }
 .mbadge svg { width: 11px; height: 11px; }
 .mirror.tracked .mbadge { margin-top: 6px; }
@@ -929,8 +887,8 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
 
 /* ---------- Watch progress ---------- */
 .prog { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
-.prog-bar { flex: 1; min-width: 60px; max-width: 260px; height: 4px; border-radius: 99px; background: var(--bg-3); overflow: hidden; }
-.prog-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); }
+.prog-bar { flex: 1; min-width: 60px; max-width: 260px; height: 4px; border-radius: var(--r-pill); background: var(--bg-3); overflow: hidden; }
+.prog-bar i { display: block; height: 100%; width: 0; border-radius: var(--r-pill); background: var(--accent); }
 .prog-lbl { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
 .prog.done .prog-bar i { background: var(--muted-2); }
 .prog.done .prog-lbl { color: var(--muted-2); }
@@ -944,7 +902,7 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
 .card .poster .ep-fill { bottom: 0; }
 .ep-tick {
   position: absolute; top: 6px; right: 6px; z-index: 2; width: 22px; height: 22px;
-  border-radius: 50%; background: rgba(11,13,18,.82); color: var(--accent);
+  border-radius: 50%; background: rgba(var(--veil-rgb), .72); color: var(--accent);
   display: grid; place-items: center; border: 1px solid rgba(255,255,255,.25);
 }
 .ep-tick svg { width: 13px; height: 13px; }
@@ -962,23 +920,32 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
 .spill {
   flex: none; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
   background: var(--bg-2); border: 1px solid var(--border); color: var(--muted);
-  border-radius: 12px; padding: 8px 14px; cursor: pointer; transition: .15s;
-  font-weight: 700; font-size: 14px; white-space: nowrap;
+  border-radius: var(--r-md); padding: 8px 14px; cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+  font-weight: 700; font-size: var(--fs-sm); white-space: nowrap;
 }
-.spill .sp-c { font-size: 11.5px; font-weight: 600; color: var(--muted-2); }
-.spill:hover { color: var(--text); border-color: var(--accent-2); }
-.spill.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.spill.on .sp-c { color: var(--accent-ink); }
+.spill .sp-c { font-size: var(--fs-xs); font-weight: 600; color: var(--muted-2); }
+.spill:hover { color: var(--text); border-color: var(--accent); }
+/* The season you are looking at is context, not an action: the raised surface, full ink
+   and the house-light bar along its foot (the accent fill read as a second Play button). */
+.spill.on { background: var(--surface-2); border-color: rgba(var(--amb-rgb, var(--accent-rgb)), .55); color: var(--text);
+  box-shadow: inset 0 -3px 0 rgba(var(--amb-rgb, var(--accent-rgb)), 1); }
+/* From a sofa the under-bar alone was lost (it can sit at the fold), so the TV outline
+   carries the full house light. Still an outline, not a fill: Play stays the one fill. */
+body.tv .spill.on:not(.tv-focus) { border-color: rgba(var(--amb-rgb, var(--accent-rgb)), 1); }
+.spill.on:focus-visible,
+body.tv .spill.on.tv-focus { box-shadow: var(--ring), inset 0 -3px 0 rgba(var(--amb-rgb, var(--accent-rgb)), 1); }   /* outranks the generic ring */
+.spill.on .sp-c { color: var(--muted); }
 
 /* ---------- Watch history ---------- */
 .hist-list { display: grid; gap: 8px; }
 .hist-row {
   display: flex; gap: 12px; align-items: center; padding: 10px;
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
-  cursor: pointer; transition: .15s;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-md);
+  cursor: pointer; transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
-.hist-row:hover { background: var(--surface-2); border-color: var(--accent-2); }
-.hist-poster { width: 46px; aspect-ratio: 2/3; object-fit: cover; border-radius: 6px; background: var(--bg-3); flex: none; }
+.hist-row:hover { background: var(--surface-2); border-color: var(--accent); }
+.hist-poster { width: 46px; aspect-ratio: 2/3; object-fit: cover; border-radius: var(--r-sm); background: var(--bg-3); flex: none; }
 .hist-t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-s { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .hist-row .prog { margin-top: 6px; }
@@ -1031,9 +998,9 @@ body.tv.cursor-on .tv-cursor.tap { animation: cur-tap .28s ease-out; }
 }
 .tv-cursor-hint {
   position: fixed; left: 50%; bottom: 7vh; transform: translateX(-50%);
-  z-index: 401; padding: 10px 20px; border-radius: 99px;
-  background: rgba(0,0,0,.78); color: #fff; font-size: 15px; font-weight: 700;
-  opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap;
+  z-index: 401; padding: 10px 20px; border-radius: var(--r-pill);
+  background: rgba(var(--veil-rgb), .9); color: var(--on-veil); font-size: 15px; font-weight: 700;
+  opacity: 0; transition: opacity var(--dur-2) var(--ease-out); pointer-events: none; white-space: nowrap;
 }
 .tv-cursor-hint.show { opacity: 1; }
 .cinema-chrome {
@@ -1042,9 +1009,9 @@ body.tv.cursor-on .tv-cursor.tap { animation: cur-tap .28s ease-out; }
 }
 .cinema-btn {
   display: inline-flex; align-items: center; gap: 6px;
-  background: rgba(11,13,18,.72); color: #fff; border: 1px solid rgba(255,255,255,.22);
-  border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 13px; backdrop-filter: blur(6px);
-  transition: opacity .35s ease;
+  background: rgba(var(--veil-rgb), .72); color: var(--on-veil); border: 1px solid rgba(255,255,255,.18);
+  border-radius: var(--r-md); padding: 10px 14px; font-weight: 700; font-size: var(--fs-sm);
+  transition: opacity var(--dur-2) var(--ease-out);
 }
 .cinema-btn svg { width: 16px; height: 16px; }
 .cinema-btn.faded { opacity: 0; pointer-events: none; }
@@ -1065,36 +1032,37 @@ body.tv.cursor-on .cinema-hot { pointer-events: none; }
 body.tv.cursor-on .cinema-btn { pointer-events: none; }
 
 /* ---------- Responsive ---------- */
+/* The tab bar's look (a floating pill) is the "Phones" block in the 2.0 layer; this is only
+   its place in the layout. */
 @media (max-width: 860px) {
   .bottom-nav {
-    display: grid; grid-template-columns: repeat(5, 1fr);
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
-    background: var(--chrome-bg); backdrop-filter: blur(16px);
-    border-top: 1px solid var(--border);
+    display: grid; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  .bottom-nav a { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0 8px; color: var(--muted-2); font-size: 10.5px; font-weight: 700; letter-spacing: .2px; }
+  .bottom-nav a { display: flex; flex-direction: column; align-items: center; font-size: var(--fs-xs); font-weight: 700; }
   .bottom-nav a svg { width: 22px; height: 22px; }
-  .bottom-nav a.active { color: var(--accent); }
-  body { padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
-  header.top { padding-top: env(safe-area-inset-top, 0px); height: calc(var(--header-h) + env(safe-area-inset-top, 0px)); }
-  main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  header.top { padding-top: env(safe-area-inset-top, 0px); height: calc(var(--header-h) + env(safe-area-inset-top, 0px));
+    padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }   /* main's gutters */
+  /* the notch gutters: a bare `padding: 16px` clipped posters behind a landscape cutout */
+  main { padding: 16px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
   /* skill: 44px+ touch targets on mobile */
   .icon-btn { width: 44px; height: 44px; }
   .search-wrap input { height: 44px; }
   .card .poster .wl { width: 40px; height: 40px; }
-  .bottom-nav a { font-size: 11px; }
   .btn.sm { padding: 10px 14px; }
-}
-@media (max-width: 860px) {
+  body:not(.tv) .chip, body:not(.tv) .btn.sm, body:not(.tv) .field select, body:not(.tv) .sb-modes .btn { min-height: 44px; }
+  body:not(.tv) .chip { display: inline-flex; align-items: center; }   /* a link chip is inline: min-height needs a box */
+  body:not(.tv) .acct-btn { width: 44px; height: 44px; }
+  /* Too small to grow without crowding their rows: a bigger hit area instead. The mark is
+     already absolute; a credit link is inline, so its padding is cancelled by its margin and
+     the line keeps its height. */
+  body:not(.tv) .ep-mark::after { content: ''; position: absolute; inset: -7px; }
+  body:not(.tv) a.who { display: inline-block; padding: 12px 2px; margin: -12px 0; }
   nav.main { display: none; }
   .detail-body { flex-direction: column; align-items: flex-start; padding-top: 30px; }
   .detail-body .poster { width: 140px; }
   .detail-hero { min-height: 380px; }
   .search-wrap { width: auto; flex: 1; }
-  /* keep the notch gutters that the earlier 860px block sets — a bare `padding: 16px`
-     reset all four sides and clipped posters behind a landscape cutout */
-  main { padding: 16px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
   /* the hero's -22px bleed is wider than main's 16px padding, which overflowed the
      document horizontally on phones */
   .detail-hero { margin: -16px -16px 20px; }
@@ -1102,7 +1070,6 @@ body.tv.cursor-on .cinema-btn { pointer-events: none; }
 }
 @media (max-width: 560px) {
   .brand span.txt { display: none; }
-  .hero .inner { padding: 22px; }
 }
 
 
@@ -1141,44 +1108,21 @@ body.tv {
 
   /* The shared ring from :root, scaled up for a 10-foot viewing distance. */
   --ring: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent);
-  /* A 34px blur on a transformed element is re-rasterised every frame of the scroll;
-     18px reads the same across a room and costs far less on a TV dongle. */
-  --ring-glow: 0 0 0 3px var(--bg), 0 0 0 7px var(--accent), 0 0 18px -6px var(--accent);
 }
 /* The sticky bar is opaque here, so anything scrolled to by the browser (rather than
    by tvFocusEl) still clears it. */
 html { scroll-padding-top: 90px; }
 
-/* ---- Chrome: the top bar is the D-pad's row 0, so it must always be there --- */
-/* Header type and spacing scale with the viewport: at fixed 10-foot sizes brand +
-   four nav items + the icons overflowed 853px (the settings button fell off the right
-   edge and the page grew a horizontal scrollbar). The top padding keeps the nav row
-   out of the overscan crop band. */
-body.tv header.top {
-  height: auto; min-height: var(--header-h);
-  padding: var(--tv-pad-top) var(--tvpad) 8px;
-  background: var(--bg); backdrop-filter: none; gap: clamp(8px, 1.7vw, 22px);
-}
-/* Over the home hero the bar FLOATS: an opaque band sitting on top of the artwork
-   read as the image being cut off. A scrim keeps the nav legible over bright
-   backdrops, and the existing .scrolled toggle brings the solid bar back the moment
-   you leave the top of the page. */
-body.tv.home header.top:not(.scrolled) {
-  background: transparent;      /* the billboard's own top scrim does the darkening */
-  border-bottom-color: transparent;
-}
-/* Still a scrim -- the TV bar is fully transparent over bright art -- but without the box. */
-body.tv.home header.top:not(.scrolled) .icon-btn { background: rgba(0,0,0,.34); border-color: transparent; }
-body.tv nav.main { display: flex !important; }
+/* ---- Chrome ---- */
+/* The header is the side rail on TV, styled whole in stage.css; the old top-bar sizing that
+   stood here was overridden there rule for rule. */
 body.tv .bottom-nav, body.tv .rail-arrow { display: none !important; }
-body.tv .brand { font-size: clamp(17px, 1.8vw, 23px); }
-body.tv .brand-mark { width: clamp(26px, 2.8vw, 36px); height: clamp(26px, 2.8vw, 36px); }
-body.tv nav.main a { font-size: clamp(14px, 1.35vw, 17px); padding: 11px clamp(9px, 1.5vw, 20px); border-radius: 12px; }
-body.tv #search-btn { margin-left: auto; }
 body.tv .icon-btn { width: clamp(40px, 3.8vw, 48px); height: clamp(40px, 3.8vw, 48px); }
 body.tv .icon-btn svg { width: 22px; height: 22px; }
 /* Overscan for the fixed chrome that lives at the screen edges. */
-body.tv .toast { bottom: calc(22px + 3vh); }
+/* The toast sits top-right, over the hero/backdrop corner: at the bottom it covered the
+   focused row, i.e. the very selection a tip like "hold OK" is about. */
+body.tv .toast { top: var(--tv-pad-top); right: var(--tvpad); bottom: auto; left: auto; margin: 0; }
 body.tv .cinema-chrome { top: calc(12px + 3vh); right: calc(14px + 3vw); gap: 14px; }
 body.tv footer.site { padding: 26px var(--tvpad) calc(40px + 3vh); font-size: 15px; }
 
@@ -1186,20 +1130,10 @@ body.tv footer.site { padding: 26px var(--tvpad) calc(40px + 3vh); font-size: 15
 .tv-search { display: flex; gap: 14px; align-items: center; margin: 0 0 26px; }
 .tv-search .ico { width: 26px; height: 26px; color: var(--muted-2); flex: none; }
 .tv-search input {
-  flex: 1; min-width: 0; height: 60px; border-radius: 14px; font-size: 20px; padding: 0 20px;
-  background: var(--surface); border: 1px solid var(--border); color: var(--text); outline: none;
+  flex: 1; min-width: 0; height: 60px; border-radius: var(--r-md); font-size: 20px; padding: 0 20px;
+  background: var(--surface); border: 1px solid var(--border-strong); color: var(--text); outline: none;
 }
 .tv-search .btn { height: 60px; padding: 0 30px; font-size: 18px; }
-
-/* ---- Cheap-silicon budget -------------------------------------------------- */
-body.tv::before { display: none; }                    /* film-grain overlay */
-body.tv .bb-slide.on .bb-bg { animation: none; }      /* 20s full-screen ken burns */
-/* Every blur is a full compositing pass. The badge blurs run once per card (~94 on
-   Home) and the modal one covers the whole viewport, two presses away via the gear. */
-body.tv .btn.glass,
-body.tv .card .poster .rate,
-body.tv .card .poster .wl,
-body.tv .modal-back { backdrop-filter: none; }
 
 /* ---- Overscan-safe page frame ---------------------------------------------- */
 /* The generous bottom padding is not decoration: it is what lets the LAST row
@@ -1290,7 +1224,7 @@ body.tv .ep .eo { font-size: 15px; }
    mirror: tint + the word Playing. Current theme: tint + a tick. Current episode: the
    NOW PLAYING label. Accent outlines are reserved for the remote. */
 body.tv .mirror.on { border-color: var(--border); }
-body.tv .theme-card.on { border-color: var(--border); box-shadow: none; background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); }
+body.tv .theme-card.on { border-color: var(--border); box-shadow: none; background: linear-gradient(rgba(var(--accent-rgb), .16), rgba(var(--accent-rgb), .16)) var(--bg-2); }
 
 /* ---- Focus -----------------------------------------------------------------
    Selection is driven by a class we own (.tv-focus / .tv-row-active), not by the
@@ -1309,26 +1243,12 @@ body.tv .theme-card.on { border-color: var(--border); box-shadow: none; backgrou
    billboard dots into squircles as the ring moved across them. */
 body.tv a:focus, body.tv button:focus, body.tv input:focus, body.tv select:focus, body.tv [tabindex]:focus,
 body.tv .tv-focus {
-  outline: none; box-shadow: var(--ring-glow);
-}
-/* The nav pill keeps its "you are here" underline while focused — a single box-shadow
-   property meant the focus ring replaced it outright, so a focused Home and a focused
-   Movies were pixel-identical with no other section indicator on TV. */
-body.tv nav.main a:focus, body.tv nav.main a.tv-focus {
-  background: var(--accent); color: var(--accent-ink); box-shadow: var(--ring);
-}
-body.tv nav.main a.active { box-shadow: inset 0 -3px 0 var(--accent); }
-body.tv nav.main a.active:focus, body.tv nav.main a.active.tv-focus {
-  box-shadow: var(--ring), inset 0 -3px 0 var(--accent-ink);
+  outline: none; box-shadow: var(--ring);
 }
 body.tv .mirror:focus, body.tv .theme-card:focus, body.tv .chip:focus, body.tv .ep:focus, body.tv .person:focus,
 body.tv .mirror.tv-focus, body.tv .theme-card.tv-focus, body.tv .chip.tv-focus, body.tv .ep.tv-focus, body.tv .person.tv-focus {
-  box-shadow: var(--ring-glow), 0 10px 20px rgba(0,0,0,.55);
-  transform: scale(1.03); position: relative; z-index: 4;
+  box-shadow: var(--ring); position: relative; z-index: 4;   /* the zoom is stage.css's one --focus-scale */
 }
-body.tv .chip:focus, body.tv .chip.tv-focus { border-radius: 20px; }
-body.tv .btn:focus, body.tv .btn.tv-focus { transform: scale(1.05); }
-body.tv .btn { transition: transform .16s ease; }
 
 /* The D-pad runs its own interruptible scroll (tvGlide). CSS smooth-scroll has to be
    off wherever it does: setting scrollLeft/scrollTop obeys scroll-behavior, so leaving
@@ -1354,36 +1274,19 @@ body.tv .track, body.tv .cast-track, body.tv .ep-list, body.tv .season-pills { s
 .upd-box .upd-t { margin: 0; font-size: 13.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
 .upd-box .upd-warn { color: var(--accent); }
 .upd-box .upd-sub { font-size: 12.5px; opacity: .85; }
-.upd-box .ub-bar { width: 100%; height: 6px; border-radius: 99px; background: var(--surface); overflow: hidden; }
-.upd-box .ub-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--accent); transition: width .25s ease; }
-.upd-box .ub-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: ub-spin .7s linear infinite; flex: none; }
-
-/* On a TV the window IS the screen, so Theater mode and Fullscreen would be the same
-   button twice. */
+.upd-box .ub-bar { width: 100%; height: 6px; border-radius: var(--r-pill); background: var(--surface); overflow: hidden; }
+.upd-box .ub-bar i { display: block; height: 100%; width: 0; border-radius: var(--r-pill); background: var(--accent); transition: width var(--dur-2) var(--ease-out); }
 
 /* ---- Focus: cards ---------------------------------------------------------- */
-/* Only the SELECTED poster animates. Transitioning opacity on the twenty row-mates
-   meant every press started twenty more compositor animations. */
-body.tv .card .poster { transition: transform .13s cubic-bezier(.2,.7,.3,1); }
-/* the ring belongs on the artwork, not on the card box (which includes the caption) */
+/* the ring belongs on the artwork, not on the card box (which includes the caption);
+   the zoom is stage.css's one --focus-scale */
 body.tv .card:focus, body.tv .card.tv-focus { outline: none; box-shadow: none; z-index: 6; }
-/* 1.10, not 1.14: scaling about the centre pushes the poster's bottom edge down by
-   height x 0.05, and with the ring that is ~23px — which has to fit inside the
-   caption's top padding below, or the focused poster covers the only place the title
-   is written out on TV. */
 body.tv .card:focus .poster, body.tv .card.tv-focus .poster {
-  transform: scale(1.10);
-  box-shadow: var(--ring-glow), 0 14px 30px rgba(0,0,0,.7);
+  box-shadow: var(--ring);
   position: relative; z-index: 6;
 }
-/* the focused poster grows downward by height x 0.05 plus its ring, so the caption
-   needs that much clearance or the selection covers its own title */
-/* The focused poster grows by height x 0.05 plus its ring. With no caption below to
-   eat into, the rail's own padding is what has to absorb it -- body.tv .rail .track
-   already pads generously for exactly this. */
-body.tv .card .cap { padding: clamp(10px, 1.6vh, 16px) 3px 0; }
-body.tv .card .cap .t { font-size: clamp(13px, 2.5vh, 15.5px); }
-body.tv .card .cap .y { font-size: clamp(12px, 2.2vh, 14px); }
+/* The focused poster grows by height x 0.05 plus its ring. There is no caption below to
+   eat into, so the rail's own padding absorbs it -- body.tv .rail .track pads for this. */
 /* On TV the poster overlay only covers the art we just scaled up, and the title is
    already spelled out underneath the card. */
 /* On TV the caption under the poster used to carry the title, so this overlay was
@@ -1413,12 +1316,6 @@ body.tv .rail-wrap::after {
 }
 body.tv .rail.tv-row-active .rail-wrap::after { opacity: .55; }
 body.tv .cast-track.tv-row-active .person:not(.tv-focus) img { opacity: .45; }
-/* No soft shadow under every poster on TV. 150 posters each carrying a 20px-blur
-   box-shadow is a soft-shadow raster for every card a scroll reveals, and from three
-   metres on a dark theme the shadow does not read anyway. The FOCUSED poster keeps its
-   ring and drop shadow -- that rule comes later and is more specific. */
-body.tv .card .poster { box-shadow: none; }
-body.tv .mirror, body.tv .chip, body.tv .ep, body.tv .person { transition: transform .16s ease; }
 /* The Top 10 numeral lights up with its poster. */
 body.tv .rank-item:focus .rank-num, body.tv .rank-item.tv-focus .rank-num { color: var(--accent); }
 
@@ -1437,7 +1334,7 @@ body.tv .toolbar {
   align-items: end; gap: 20px 14px; padding: 20px;
 }
 body.tv .toolbar .genres-field { grid-column: 1 / -1; min-width: 0; }
-body.tv .toolbar .field label { font-size: 14px; }
+body.tv .toolbar .field label, body.tv .toolbar .field-lbl { font-size: 14px; }
 body.tv .toolbar select { height: 46px; font-size: 16px; }
 body.tv .chip { font-size: 16px; padding: 10px 16px; }
 
@@ -1451,7 +1348,7 @@ body.tv .mirror .ms { font-size: 14px; }
 body.tv .mirror .num { font-size: 15px; }
 body.tv .source-bar .lbl { font-size: 17px; }
 body.tv .card .poster .rate { font-size: 14px; padding: 4px 10px; }
-body.tv .card .poster .typebadge { font-size: 12px; padding: 4px 9px; }
+body.tv .card .poster .typebadge { padding: 4px 9px; }
 body.tv .modal .mh h3 { font-size: 22px; }
 body.tv .modal .mh h3 svg { width: 24px; height: 24px; }
 body.tv .modal .mh { padding: 20px 24px; }
@@ -1477,19 +1374,19 @@ body.tv .bb-cta .btn.lg { font-size: clamp(15px, 2.9vh, 19px); padding: clamp(10
 body.tv .bb-dots { left: auto; transform: none; right: var(--tvpad); bottom: var(--bb-bottom); gap: 12px; height: clamp(38px, 7vh, 58px); align-items: center; }
 body.tv .bb-arrow { display: none; }
 body.tv .bb-dot { width: 18px; height: 18px; }
-body.tv .bb-dot.on { width: 44px; border-radius: 9px; }
+body.tv .bb-dot.on { width: 44px; border-radius: var(--r-pill); }
 /* Same ring as everything else — a bespoke outline here made the selection change
    shape and colour as it crossed from the buttons into the picker. */
 body.tv .bb-dot:focus, body.tv .bb-dot.tv-focus {
-  box-shadow: var(--ring-glow); transform: scale(1.15); background: var(--accent);
+  box-shadow: var(--ring); transform: scale(1.15); background: var(--accent);
 }
 
 /* ============================================================================
-   PRESENTATION LAYER — depth, material and motion
+   PRESENTATION LAYER — motion
    ----------------------------------------------------------------------------
-   Everything above this point is structure and colour. This block is what makes
-   it feel like a product rather than a wireframe, and it is deliberately kept
-   in one place so it can be reasoned about (or removed) as a unit.
+   The depth and "material" that used to live here (sheens, glows, lifts, blurs) are
+   gone: the look is flat, and depth is a fill step. What is left is motion, kept in
+   one place so it can be reasoned about as a unit.
 
    Three rules it holds to:
 
@@ -1504,20 +1401,6 @@ body.tv .bb-dot:focus, body.tv .bb-dot.tv-focus {
       state so nothing is left invisible if an animation never runs.
    ========================================================================== */
 
-:root {
-  /* Two curves, used consistently. Entrances decelerate hard (things arrive and
-     settle); interactions are symmetric and quick. */
-  --ease-enter: cubic-bezier(.22, 1, .36, 1);
-  --ease-ui: cubic-bezier(.4, 0, .2, 1);
-  --dur-enter: 460ms;
-  --dur-ui: 180ms;
-}
-
-/* ---- Ambient depth ---------------------------------------------------------
-   A single flat #0b0d12 reads as "unstyled". Two very low-opacity blobs — one
-   accent-tinted, one cool — give the page a light source without ever competing
-   with the artwork. Fixed, so scrolling moves content THROUGH the light. */
-
 /* ---- Entrances -------------------------------------------------------------
    The page had no arrival at all: content simply existed. A short rise+fade
    gives navigation a direction, and staggering the rails makes the home page
@@ -1527,12 +1410,12 @@ body.tv .bb-dot:focus, body.tv .bb-dot.tv-focus {
 
 body:not(.tv) .billboard,
 body:not(.tv) .page-title,
-body:not(.tv) .detail-hero { animation: rd-fade var(--dur-enter) var(--ease-enter) both; }
+body:not(.tv) .detail-hero { animation: rd-fade var(--dur-3) var(--ease-out) both; }
 
 /* Rails assemble in sequence. Capped at six: past that the last rail would wait
    long enough to read as jank rather than choreography. */
 body:not(.tv) .rows > .rail,
-body:not(.tv) .rows > section { animation: rd-rise var(--dur-enter) var(--ease-enter) both; }
+body:not(.tv) .rows > section { animation: rd-rise var(--dur-3) var(--ease-out) both; }
 body:not(.tv) .rows > *:nth-child(1) { animation-delay: 40ms; }
 body:not(.tv) .rows > *:nth-child(2) { animation-delay: 100ms; }
 body:not(.tv) .rows > *:nth-child(3) { animation-delay: 160ms; }
@@ -1541,76 +1424,7 @@ body:not(.tv) .rows > *:nth-child(5) { animation-delay: 250ms; }
 body:not(.tv) .rows > *:nth-child(n+6) { animation-delay: 280ms; }
 /* Grids get one collective arrival — 60 individually-staggered posters is a
    slot machine, not an interface. */
-body:not(.tv) .grid { animation: rd-rise var(--dur-enter) var(--ease-enter) both; }
-
-/* ---- Material: buttons -----------------------------------------------------
-   Flat fills are the single biggest "unfinished" tell. Every button now has a
-   light source: a top-edge highlight, a gradient body, and a shadow that grows
-   on hover so the control lifts toward the cursor. */
-.btn {
-  background-image: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0));
-  box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 2px 8px rgba(0,0,0,.22);
-  transition: transform var(--dur-ui) var(--ease-ui),
-              box-shadow var(--dur-ui) var(--ease-ui),
-              background-color var(--dur-ui) var(--ease-ui),
-              filter var(--dur-ui) var(--ease-ui);
-}
-.btn.primary {
-  background-image: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 88%, white), var(--accent));
-  box-shadow: 0 1px 0 rgba(255,255,255,.35) inset,
-              0 6px 18px -6px color-mix(in srgb, var(--accent) 65%, transparent);
-}
-@media (hover: hover) {
-  .btn:hover { box-shadow: 0 1px 0 rgba(255,255,255,.07) inset, 0 10px 26px -8px rgba(0,0,0,.6); }
-  .btn.primary:hover {
-    box-shadow: 0 1px 0 rgba(255,255,255,.4) inset,
-                0 12px 30px -8px color-mix(in srgb, var(--accent) 80%, transparent);
-  }
-}
-.btn:active { transform: translateY(1px) scale(.985); }
-
-/* The hero's glass buttons should actually look like glass. */
-.btn.glass {
-  backdrop-filter: blur(10px) saturate(140%);
-  -webkit-backdrop-filter: blur(10px) saturate(140%);
-  border-color: rgba(255,255,255,.18);
-  background-image: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04));
-}
-
-/* ---- Material: pills and chips --------------------------------------------- */
-.metarow .pill, .bb-meta .pill-type, .bb-meta .pill.rating {
-  background-image: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.01));
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-.chip { transition: transform var(--dur-ui) var(--ease-ui), color var(--dur-ui) var(--ease-ui), border-color var(--dur-ui) var(--ease-ui); }
-@media (hover: hover) { .chip:hover { transform: translateY(-1px); } }
-
-/* ---- Header: dissolve over the hero, solidify on scroll --------------------
-   A permanently opaque bar sitting on the artwork is what made the hero look
-   cropped. Over the hero it is a gradient that fades to nothing; once the page
-   scrolls it becomes real chrome with a hairline. */
-header.top {
-  background: linear-gradient(180deg, rgba(6,8,12,.82) 0%, rgba(6,8,12,.45) 55%, transparent 100%);
-  backdrop-filter: none; -webkit-backdrop-filter: none;
-  border-bottom: 1px solid transparent;
-  transition: background var(--dur-ui) var(--ease-ui),
-              backdrop-filter var(--dur-ui) var(--ease-ui),
-              border-color var(--dur-ui) var(--ease-ui),
-              box-shadow var(--dur-ui) var(--ease-ui),
-              transform .3s var(--ease-ui, ease), opacity .3s var(--ease-ui, ease);
-}
-header.top.scrolled {
-  background: var(--chrome-bg);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-  border-bottom-color: var(--border);
-  box-shadow: 0 8px 30px rgba(0,0,0,.35);
-}
-/* Not on the home hero only — every page gets the same treatment, so the bar
-   behaves consistently instead of looking broken off-Home. */
-body:not(.home) header.top:not(.scrolled) { background: var(--chrome-bg); }
+body:not(.tv) .grid { animation: rd-rise var(--dur-3) var(--ease-out) both; }
 
 /* ---- Hero: dissolve into the page ------------------------------------------
    The artwork used to stop on a hard horizontal line. A mask feathers the last
@@ -1626,46 +1440,14 @@ body:not(.home) header.top:not(.scrolled) { background: var(--chrome-bg); }
   -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 94%);
   mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 94%);
 }
-/* The slide's own art drifts almost imperceptibly, so a still frame is never
-   quite still. 24s, 3% — any more and it reads as a bug. */
-@media (prefers-reduced-motion: no-preference) {
-  body:not(.tv) .bb-slide.on .bb-bg { animation: rd-drift 24s ease-in-out infinite alternate; }
-}
-@keyframes rd-drift { from { transform: scale(1.03) translate3d(0,0,0); } to { transform: scale(1.08) translate3d(-1.2%, -1%, 0); } }
 
-/* ---- Cards -----------------------------------------------------------------
-   A caption scrim gives every poster a consistent base regardless of artwork,
-   and the lift gets a real curve instead of a linear nudge. */
-.card .poster::after {
-  content: ''; position: absolute; inset: auto 0 0 0; height: 38%;
-  background: linear-gradient(180deg, transparent, rgba(0,0,0,.5));
-  opacity: 0; transition: opacity var(--dur-ui) var(--ease-ui); pointer-events: none;
+/* Daylight ends the hero cleanly instead of dissolving it: dark art fading into a white
+   page can only pass through grey, so every Daylight hero ended in a mud band under its
+   buttons. The art stops on a hairline instead (the phone's billboard is already a card). */
+@media (min-width: 641px) {
+  :root[data-theme="daylight"] body:not(.tv) .bb-bg { -webkit-mask-image: none; mask-image: none; }
+  :root[data-theme="daylight"] body:not(.tv) .billboard { border-bottom: 1px solid var(--border); }
 }
-@media (hover: hover) {
-  .card:hover .poster::after { opacity: 1; }
-  .card .poster { transition: transform 260ms var(--ease-enter), box-shadow 260ms var(--ease-enter); }
-}
-
-/* ---- Rail headings ---------------------------------------------------------
-   19px semi-bold reads like a form label. Larger, tighter, with a short accent
-   rule so a section announces itself. */
-.rail h2, .section > h3 {
-  font-size: clamp(19px, 1.5vw, 23px); letter-spacing: -.4px; font-weight: 800;
-}
-.rail .rail-head h2 { position: relative; padding-left: 14px; }
-.rail .rail-head h2::before {
-  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
-  width: 4px; height: 1em; border-radius: 99px;
-  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 35%, transparent));
-}
-
-/* ---- Focus ------------------------------------------------------------------
-   NO blanket !important here, deliberately. The material work above adds a
-   box-shadow to .btn, but `.btn` (0,1,0) already loses to `button:focus-visible`
-   (0,1,1) and to `body.tv .tv-focus` (0,2,0), so the ring wins on its own. An
-   !important would have flattened the nav bar's combined shadow -- ring PLUS the
-   inset "you are here" underline -- leaving a focused Home and a focused Movies
-   pixel-identical on TV, which is the exact bug that underline was added to fix. */
 
 /* Anything that animates in must be visible if the animation never runs. */
 @media (prefers-reduced-motion: reduce) {
@@ -1686,31 +1468,13 @@ body:not(.home) header.top:not(.scrolled) { background: var(--chrome-bg); }
   -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 88%);
   mask-image: linear-gradient(180deg, #000 0%, #000 46%, transparent 88%);
 }
-/* Give the poster real weight: a long soft shadow plus a hairline so it reads as a
-   physical card sitting on the page rather than a pasted rectangle. */
-.detail-body .poster {
-  box-shadow: 0 30px 60px -20px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.07);
-  transition: transform 320ms var(--ease-enter), box-shadow 320ms var(--ease-enter);
-}
-@media (hover: hover) {
-  .detail-body .poster:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 40px 70px -20px rgba(0,0,0,.9), 0 0 0 1px rgba(255,255,255,.12);
-  }
-}
-
-/* ---- Navigation ------------------------------------------------------------
-   The active pill was a flat block. An accent underline plus a soft wash reads as
-   "you are here" without shouting, and the inactive items get a hover that moves. */
-nav.main a { position: relative; transition: color var(--dur-ui) var(--ease-ui), background var(--dur-ui) var(--ease-ui); }
-/* ---- Search ---------------------------------------------------------------- */
-.search-wrap input {
-  transition: border-color var(--dur-ui) var(--ease-ui), box-shadow var(--dur-ui) var(--ease-ui), background var(--dur-ui) var(--ease-ui);
-}
-.search-wrap input:focus {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
-}
+/* Daylight: no dissolve (see the billboard above). The veil runs on to the foot of the
+   hero instead of fading out, so the overview and the buttons keep a dark band behind
+   their light ink, and the block ends on a hairline. Not TV: its title page is the Stage. */
+:root[data-theme="daylight"] body:not(.tv) .detail-hero { border-bottom: 1px solid var(--border); }
+:root[data-theme="daylight"] body:not(.tv) .detail-hero .bg { -webkit-mask-image: none; mask-image: none; }
+:root[data-theme="daylight"] body:not(.tv) .detail-hero .scrim { background:
+  linear-gradient(0deg, rgba(var(--veil-rgb), .9) 0%, rgba(var(--veil-rgb), .55) 48%, rgba(var(--veil-rgb), .22) 78%, transparent 100%); }
 
 /* ---- Rails: edge fade ------------------------------------------------------
    A row that ends in a hard vertical slice at the viewport edge is the giveaway
@@ -1754,62 +1518,6 @@ nav.main a { position: relative; transition: color var(--dur-ui) var(--ease-ui),
   }
 }
 
-/* ---- Toast ----------------------------------------------------------------- */
-.toast {
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
-  box-shadow: 0 18px 50px -12px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-}
-
-/* ============================================================================
-   TYPE — the display face, applied only to things that are titles
-   ========================================================================== */
-.bb-title, .detail-hero h1, .page-title, .rail h2, .section > h3, .modal .mh h3,
-.dv-title, .dv-main h3, .rail-head h2 {
-  font-family: var(--font-display);
-  font-weight: 400;              /* the serif carries weight through contrast, not mass */
-  letter-spacing: 0;             /* it is drawn with its own spacing; -.4px pinched it */
-}
-.bb-title { font-size: clamp(38px, 6vw, 82px); line-height: .95; }
-.page-title { font-size: clamp(30px, 4vw, 46px); }
-.rail h2, .section > h3, .dv-main h3 { font-size: clamp(22px, 1.7vw, 28px); }
-/* Small caps + tracking for the label-ish text next to a serif title reads as
-   editorial rather than as an unstyled span. */
-.bb-meta .pill-type {
-  font-family: var(--font); text-transform: uppercase;
-  letter-spacing: .14em; font-size: 11.5px; font-weight: 700;
-}
-
-/* ============================================================================
-   SIGNATURE ACCENT — the same sweep, everywhere something is active
-   ========================================================================== */
-.rail .rail-head h2::before { background: var(--accent-grad); }
-.prog-bar i { background: var(--accent-grad); }
-.ep-fill { background: var(--accent-grad); }
-.bb-dot.on { background: var(--accent-grad); }
-/* Flat accent, NOT --accent-grad. This is the one place a label sits ON the sweep,
-   and darkening its far end took "Season N" to 2.84:1 in aurora across the whole
-   label. The gradient's own rule is that nothing reads on top of it; this was the
-   exception that proved it. */
-.spill.on { background: var(--accent); border-color: transparent; }
-.upd-box .ub-bar i { background: var(--accent-grad); }
-/* The one place the sweep is allowed to glow: the primary action. The FILL stays a
-   contrast-safe accent-to-lighter-accent so the dark ink on it never drops below
-   its ratio; the gradient appears as light AROUND the button, not under the text. */
-.btn.primary { box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, var(--accent-glow); }
-@media (hover: hover) {
-  .btn.primary:hover {
-    box-shadow: 0 1px 0 rgba(255,255,255,.45) inset,
-                0 0 44px -6px color-mix(in srgb, var(--accent) 85%, transparent);
-  }
-}
-/* A hairline of the sweep under the header once it is real chrome. */
-header.top.scrolled { border-bottom-color: transparent; position: sticky; }
-header.top.scrolled::after {
-  content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
-  background: var(--accent-grad); opacity: .5;
-}
-
 /* ============================================================================
    DETAIL PAGE — editorial layout
    ----------------------------------------------------------------------------
@@ -1823,15 +1531,15 @@ header.top.scrolled::after {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: 14px;
 }
-.dv-title { margin: 0; font-size: clamp(40px, 6.4vw, 92px); line-height: .92; color: #fff;
-  text-shadow: 0 4px 30px var(--hero-text-shadow); max-width: 16ch; }
+/* --text, not white: over the art (desktop, phone) the hero's ink is light in every theme,
+   but the TV title page is the Stage, which is the page colour -- light on Daylight. */
+.dv-title { margin: 0; font-size: clamp(40px, 6vw, 84px); line-height: .95; color: var(--text); max-width: 16ch; }
 .detail-logo { max-height: clamp(90px, 15vh, 190px); max-width: min(560px, 76vw); object-fit: contain;
-  object-position: left bottom; filter: drop-shadow(0 6px 26px rgba(0,0,0,.65)); }
-/* Italic, in the display face: a tagline is a line of copy, not a subtitle. */
+  object-position: left bottom; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+/* A line of interface copy under the title, not a pull-quote. */
 .dv-tagline {
-  font-family: var(--font-display); font-style: italic;
-  font-size: clamp(17px, 1.7vw, 24px); color: var(--text-soft);
-  margin: 0; max-width: 46ch; text-shadow: 0 2px 14px var(--hero-text-shadow);
+  font-weight: 600; font-size: clamp(15px, 1.2vw, 18px); color: var(--muted);
+  margin: 0; max-width: 46ch;
 }
 .dv-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
 
@@ -1847,20 +1555,14 @@ header.top.scrolled::after {
 .dv-main h3 { margin: 0 0 12px; }
 /* A measure, not a full-width paragraph: 100+ characters a line is where prose
    stops being readable and starts being wallpaper. */
-.dv-main .overview { max-width: 68ch; font-size: 16.5px; line-height: 1.7; color: var(--text-soft); }
+.dv-main .overview { max-width: 68ch; font-size: var(--fs-md); line-height: 1.7; color: var(--text-soft); }
 .dv-main .genre-row { margin-top: 18px; }
 
 .dv-facts { display: flex; flex-direction: column; gap: 18px; }
-.dv-poster {
-  width: 100%; border-radius: 14px; display: block; background: var(--bg-3);
-  box-shadow: 0 24px 50px -18px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.07);
-}
+.dv-poster { width: 100%; border-radius: var(--r-sm); display: block; background: var(--bg-3); }
 .dv-facts dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; align-items: baseline; }
-.dv-facts dt {
-  font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
-  color: var(--muted-2); white-space: nowrap;
-}
-.dv-facts dd { margin: 0; font-size: 14.5px; font-weight: 600; color: var(--text); }
+.dv-facts dt { font-size: var(--fs-xs); font-weight: 600; color: var(--muted); white-space: nowrap; }
+.dv-facts dd { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
 .dv-rate { display: inline-flex; align-items: center; gap: 6px; }
 .dv-rate svg { width: 14px; height: 14px; color: var(--accent); }
 
@@ -1889,27 +1591,8 @@ body.tv .dv-facts dd { font-size: clamp(15px, 2.2vh, 19px); }
 body.tv .dv-facts dt { font-size: clamp(13px, 2.4vh, 16px); }
 
 /* ============================================================================
-   ROUND 2 — bolder display type, progress on cards
+   ROUND 2 — progress on cards, Up next, the watch page
    ========================================================================== */
-/* Archivo carries weight through mass, so it wants the opposite treatment to the
-   serif it replaced: heavy, tight, and slightly condensed by tracking rather than
-   by a condensed cut (which Google's Archivo does not ship in this axis set). */
-.bb-title, .detail-hero h1, .page-title, .rail h2, .section > h3, .modal .mh h3,
-.dv-title, .dv-main h3, .rail-head h2 {
-  font-weight: 800;
-  letter-spacing: -.035em;
-}
-.dv-title { font-weight: 900; letter-spacing: -.045em; line-height: .9; }
-.bb-title { font-weight: 900; letter-spacing: -.045em; }
-
-/* The kicker and tagline were doing a job the pills already did better. The tagline
-   stays but stops pretending to be a pull-quote. */
-.dv-tagline {
-  font-family: var(--font); font-style: normal; font-weight: 600;
-  font-size: clamp(15px, 1.2vw, 18px); color: var(--muted);
-  letter-spacing: 0;
-}
-
 /* ---- Progress on every card ------------------------------------------------
    If a title has been started, say so wherever it appears -- not only in Continue
    watching. A 3px rule under the artwork is the whole affordance. */
@@ -1926,12 +1609,10 @@ body.tv .card-prog { height: 5px; }
 .next-up {
   position: fixed; right: clamp(14px, 3vw, 40px); bottom: clamp(16px, 4vh, 48px);
   z-index: 320; display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px; border-radius: 14px; max-width: min(560px, 92vw);
-  background: linear-gradient(180deg, var(--surface-2), var(--surface));
-  border: 1px solid var(--border);
-  box-shadow: 0 24px 60px -16px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.05);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  animation: rd-rise 320ms var(--ease-enter) backwards;
+  padding: 12px 14px; border-radius: var(--r-md); max-width: min(560px, 92vw);
+  /* solid: a blur here re-sampled the playing picture every frame */
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--elev);
+  animation: rd-rise var(--dur-2) var(--ease-out) backwards;
   /* Resting state: present, but not competing with the picture. It sits in the
      bottom-right for three minutes, which is where subtitles and end credits live, so
      full opacity that whole time would be an imposition. .22 is low enough to read as
@@ -1944,7 +1625,7 @@ body.tv .card-prog { height: 5px; }
      and lets the shape carry it. */
   opacity: .16;
   filter: saturate(.35);
-  transition: opacity .4s var(--ease-ui, ease), filter .4s var(--ease-ui, ease);
+  transition: opacity var(--dur-3) var(--ease-out), filter var(--dur-3) var(--ease-out);
 }
 /* Any sign of life brings it up: a tap, the mouse, a key, the remote. */
 .next-up.awake,
@@ -1957,11 +1638,11 @@ body.tv .next-up { opacity: .32; filter: saturate(.5); }
 body.tv .next-up.awake,
 body.tv .next-up:focus-within { opacity: 1; filter: none; }
 .next-up .nu-k {
-  font-size: 10.5px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+  font-size: var(--fs-xs); font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
   color: var(--accent); white-space: nowrap;
 }
 .next-up .nu-t {
-  font-weight: 700; font-size: 14px; min-width: 0;
+  font-weight: 700; font-size: var(--fs-sm); min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 body.tv .next-up {
@@ -1978,16 +1659,16 @@ body.tv .next-up .nu-k { font-size: clamp(11px, 1.6vh, 14px); }
    OCCASIONAL: you choose a mirror when one fails, not every time you press play.
    <details> because it is native, works from a keyboard and a remote, needs no state
    of ours, and degrades to "everything visible" if the CSS never loads. */
-.srv { margin-top: 26px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-2); }
+.srv { margin-top: 26px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-2); }
 .srv > summary {
   list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 12px;
-  padding: 14px 16px; border-radius: 14px; font-weight: 700;
+  padding: 14px 16px; border-radius: var(--r-md); font-weight: 700;
 }
 .srv > summary::-webkit-details-marker { display: none; }
 .srv > summary::after {
   content: ''; margin-left: auto; width: 8px; height: 8px; flex: none; align-self: center;
   border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
-  transform: rotate(45deg) translateY(-2px); transition: transform var(--dur-ui) var(--ease-ui);
+  transform: rotate(45deg) translateY(-2px); transition: transform var(--dur-1) var(--ease-out);
 }
 .srv[open] > summary::after { transform: rotate(-135deg) translateY(2px); }
 @media (hover: hover) { .srv > summary:hover { background: var(--surface); } }
@@ -2006,9 +1687,9 @@ body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
 /* One control, two halves: same fill, one hairline between them. Two different button
    styles for two settings of the same thing read as unrelated controls. */
 .sb-modes { display: inline-flex; margin-left: auto; border: 1px solid var(--border);
-            border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+            border-radius: var(--r-md); overflow: hidden; background: var(--surface-2); }
 .sb-modes .btn { border: 0; border-radius: 0; background: none; }
-.sb-modes .btn:hover { transform: none; background: var(--bg-3); }
+.sb-modes .btn:hover { background: var(--bg-3); }
 .sb-modes .btn + .btn { box-shadow: inset 1px 0 0 var(--border); }
 
 /* The "Playing on X" row is welded to the Servers panel below it: same width, square
@@ -2018,12 +1699,12 @@ body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   margin-top: 26px; padding: 10px 16px;
   background: var(--bg-2); border: 1px solid var(--border); border-bottom: 0;
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
 }
 .srv-now .lbl { color: var(--muted); font-weight: 600; font-size: 13px; }
 .srv-now .lbl b { color: var(--text); }
 .srv-now .btn { margin-left: auto; }
-.srv-now + .srv { margin-top: 0; border-radius: 0 0 14px 14px; }
+.srv-now + .srv { margin-top: 0; border-radius: 0 0 var(--r-md) var(--r-md); }
 @media (max-width: 640px) { .sb-modes { margin-left: 0; } }
 /* The season rail on the player page carries no heading of its own -- the strip
    below it is the subject, and this is just which slice of it you are looking at. */
@@ -2032,16 +1713,28 @@ body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
 /* The player page's season control: one line, quiet, native. */
 .pl-season { display: inline-block; margin: 0 0 12px; }
 .pl-season select {
-  height: 38px; padding: 0 12px; border-radius: 10px;
+  height: 38px; padding: 0 12px; border-radius: var(--r-md);
   background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
   font: inherit; font-weight: 700; font-size: 14px; cursor: pointer;
 }
-.pl-season select:hover { border-color: var(--accent-2); }
+.pl-season select:hover { border-color: var(--accent); }
 body.tv .pl-season select { height: clamp(38px, 6vh, 54px); font-size: clamp(14px, 2.2vh, 19px); padding: 0 18px; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
+/* The skip link (index.html): hidden until a keyboard lands on it, then a plain button
+   over the header. The TV's D-pad never reaches it (no data-nav), so it is not drawn there. */
+a.skip:not(:focus) {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+a.skip:focus {
+  position: fixed; top: 8px; left: 8px; z-index: 500; padding: 10px 16px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-md); font-weight: 700; text-decoration: none;
+}
+body.tv a.skip { display: none; }
 
 /* Arrows on the detail page's season rail -- it is the same kind of horizontal row
    as every other rail, and long shows push season 19 well off screen. The rail-wrap
@@ -2059,17 +1752,15 @@ body:not(.tv) .season-wrap { -webkit-mask-image: none; mask-image: none; }
    hold it repeated the header's own links and went in 2.0.
    ========================================================================== */
 .hdr-gap { flex: 1; }
-/* Below 860px the tab bar is the navigation, so the inline links step aside. */
-@media (max-width: 860px) { header.top nav.main { display: none; } }
 
 .acct-btn {
   /* 40px, not 34: this is now the only way to Settings, Check for updates, Install on
      TV and Sign in, and 34 is below every published minimum touch target. */
   flex: none; width: 40px; height: 40px; border-radius: 50%; padding: 0;
   border: 1px solid var(--border); background: var(--surface-2); cursor: pointer;
-  display: grid; place-items: center; transition: border-color var(--dur-ui) var(--ease-ui);
+  display: grid; place-items: center; transition: border-color var(--dur-1) var(--ease-out);
 }
-.acct-btn:hover { border-color: var(--accent-2); }
+.acct-btn:hover { border-color: var(--accent); }
 /* One face, three fallbacks: the Google picture, then the account initial, then a gear.
    The header used to render cfg.brand's initial while the menu rendered the account's, so
    the same person showed as two different letters in two adjacent places. */
@@ -2091,49 +1782,25 @@ body:not(.tv) .season-wrap { -webkit-mask-image: none; mask-image: none; }
 .acct-av .acct-ini.gear svg { width: 60%; height: 60%; }
 
 /* ---- "there is something here" ---------------------------------------------------
-   The whole passive update UI. A dot, on the button and on the row it leads to. */
+   The whole passive update UI. A dot on the account button. */
 .acct-btn { position: relative; }
 .acct-btn.has-dot::after {
   content: ''; position: absolute; top: -1px; right: -1px;
   width: 11px; height: 11px; border-radius: 50%;
   background: var(--accent); border: 2px solid var(--bg);
 }
-.am-item.has-dot { color: var(--text); font-weight: 700; }
-.am-item.has-dot::after {
-  content: ''; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent); margin-left: auto; flex: none;
-}
-.acct-menu {
-  position: fixed; z-index: 260; min-width: 236px; padding: 8px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 24px 60px -16px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.05);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  animation: rd-rise 180ms var(--ease-enter) both;
-}
-.am-who { display: flex; align-items: center; gap: 10px; padding: 8px 10px 12px; }
-.am-who .acct-av { width: 34px; height: 34px; flex: none; }
-.am-who b { display: block; font-size: 14px; }
-.am-who small { color: var(--muted); font-size: 12px; }
-.am-item {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 10px; border: 0; border-radius: 10px; background: none; cursor: pointer;
-  color: var(--text); font: inherit; font-weight: 600; font-size: 14px; text-align: left;
-}
-.am-item svg { width: 16px; height: 16px; flex: none; color: var(--muted); }
-.am-item:hover { background: var(--surface-2); }
-@media (prefers-reduced-motion: reduce) { .acct-menu { animation: none; } }
 
 /* ---- Filters, collapsed ---------------------------------------------------- */
-.filters { border: 1px solid var(--border); border-radius: 14px; background: var(--bg-2); margin-bottom: 18px; }
+.filters { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-2); margin-bottom: 18px; }
 .filters > summary {
   list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 12px;
-  padding: 13px 16px; border-radius: 14px; font-weight: 700;
+  padding: 13px 16px; border-radius: var(--r-md); font-weight: 700;
 }
 .filters > summary::-webkit-details-marker { display: none; }
 .filters > summary::after {
   content: ''; margin-left: auto; width: 8px; height: 8px; flex: none; align-self: center;
   border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
-  transform: rotate(45deg) translateY(-2px); transition: transform var(--dur-ui) var(--ease-ui);
+  transform: rotate(45deg) translateY(-2px); transition: transform var(--dur-1) var(--ease-out);
 }
 .filters[open] > summary::after { transform: rotate(-135deg) translateY(2px); }
 @media (hover: hover) { .filters > summary:hover { background: var(--surface); } }
@@ -2161,7 +1828,7 @@ body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: 
 .sync-fine { color: var(--muted-2); font-size: 12.5px; line-height: 1.65; max-width: 58ch; margin-top: 24px; }
 
 .sync-facts { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border);
-  border-radius: 14px; overflow: hidden; margin: 22px 0; }
+  border-radius: var(--r-md); overflow: hidden; margin: 22px 0; }
 .sync-facts > div { display: flex; justify-content: space-between; align-items: baseline;
   gap: 16px; padding: 14px 16px; background: var(--bg-2); }
 .sync-facts span { color: var(--muted); font-size: 13.5px; }
@@ -2180,13 +1847,13 @@ body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: 
   display: grid; gap: 22px 28px; align-items: center;
   grid-template-columns: auto minmax(0, 1fr);
   margin-top: 24px; padding: 24px;
-  border: 1px solid var(--border); border-radius: 18px; background: var(--bg-2);
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-2);
 }
 .au-flow.au-narrow { grid-template-columns: minmax(0, 1fr); }
 
 .au-qrwrap { grid-row: span 2; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .au-qr {
-  width: 176px; height: 176px; display: block; border-radius: 12px;
+  width: 176px; height: 176px; display: block; border-radius: var(--r-md);
   background: #fff; padding: 10px;
   /* Keep the modules square-edged at any size. Smooth interpolation on a 1-bit
      pattern is what made this render as an empty white card. */
@@ -2235,12 +1902,12 @@ body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: 
 @media (prefers-reduced-motion: reduce) { .au-live i { animation: none; opacity: .8; } }
 
 .au-wait, .au-err { margin-top: 22px; padding: 20px 22px; border: 1px solid var(--border);
-  border-radius: 16px; background: var(--bg-2); color: var(--muted); font-size: 14.5px; }
+  border-radius: var(--r-md); background: var(--bg-2); color: var(--muted); font-size: 14.5px; }
 .au-err p { margin: 0 0 14px; color: var(--text); }
 .au-hint { color: var(--muted-2); font-size: 13px; line-height: 1.5; }
 .au-input {
   width: 100%; max-width: 260px; display: block;
-  padding: 13px 16px; border-radius: 12px; border: 1px solid var(--border);
+  padding: 13px 16px; border-radius: var(--r-md); border: 1px solid var(--border);
   background: var(--surface); color: var(--text);
   font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 22px;
   letter-spacing: .22em; text-transform: uppercase;
@@ -2267,8 +1934,8 @@ body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: 
   /* Reaches past the fold and fades over a long tail. At 85%/68% the stop landed
      around two-thirds down a phone screen and read as a horizontal seam. */
   background-image: radial-gradient(150% 105% at 50% -18%,
-    color-mix(in srgb, var(--accent) 15%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 5%, transparent) 45%, transparent 82%);
+    rgba(var(--accent-rgb), .15) 0%,
+    rgba(var(--accent-rgb), .05) 45%, transparent 82%);
 }
 .splash { width: min(620px, 100%); text-align: center; margin: auto 0; }
 .splash-brand { display: inline-flex; align-items: center; gap: 11px; margin-bottom: 26px; }
@@ -2315,16 +1982,14 @@ body.tv .splash-word { font-size: clamp(24px, 3.4vh, 34px); }
    TV is always the device that SHOWS a code, never the one that types one. */
 body.tv [data-au="pairclaim"] { display: none; }
 
-/* The account button carries the whole overflow menu now, so it has to be findable
-   from a sofa as well as hittable with a thumb. */
-body.tv .acct-btn { width: clamp(40px, 5.2vh, 56px); height: clamp(40px, 5.2vh, 56px); }
+/* The account button's initial, readable from a sofa (the button's size is the rail's). */
 body.tv .acct-av { font-size: clamp(14px, 1.9vh, 20px); }
 
 /* The phone/desktop sign-in panel: the browser has already opened, so the code is a
    fallback rather than the instruction, and it is sized down accordingly. */
 .au-fallback {
   display: flex; flex-direction: column; gap: 6px;
-  padding: 14px 16px; border-radius: 12px;
+  padding: 14px 16px; border-radius: var(--r-md);
   background: var(--surface); border: 1px solid var(--border);
 }
 .au-fallback .au-code { font-size: clamp(19px, 5vw, 24px); }
@@ -2360,7 +2025,7 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
 /* The iOS panel on the install page. Deliberately loud: it is correcting the advice
    directly above it, which offers an Android package an iPhone cannot use. */
 .ga-ios {
-  margin-top: 20px; padding: 18px 20px; border-radius: 16px;
+  margin-top: 20px; padding: 18px 20px; border-radius: var(--r-md);
   background: var(--bg-2); border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
 }
@@ -2378,16 +2043,20 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
   /* The same quiet pill the "Playing" marker wears: dark, accent text, small. A solid
      accent block on every airing show turned a rail into a row of warning labels. */
   position: absolute; left: 6px; bottom: 9px; z-index: 3;
-  padding: 2px 7px; border-radius: 99px;
-  background: rgba(8,10,14,.78); color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  font-size: 9.5px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase;
+  padding: 2px 7px; border-radius: var(--r-pill);
+  background: rgba(var(--veil-rgb), .72); color: var(--accent);
+  border: 1px solid rgba(255, 255, 255, .18);
+  font-size: 10.5px; font-weight: 700;
   pointer-events: none;
 }
 .pill.next-ep { color: var(--accent); }
 .pill.next-ep svg { width: 14px; height: 14px; }
 .season-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .season-head h3 { margin: 0; }
+/* "Mark season watched" is a real action, not a caption: the secondary button, so it reads
+   as a target before a pointer or the TV ring finds it. Hover restated, as this outranks it. */
+.season-head .btn.ghost { background: var(--surface); border-color: var(--border); color: var(--text); }
+@media (hover: hover) { .season-head .btn.ghost:hover { background: var(--surface-2); } }
 /* Per-episode mark. Sits over the row's top-right corner; shown on hover or focus so
    the list stays quiet, and always shown where there is no hover to wait for. */
 .ep { position: relative; }
@@ -2395,7 +2064,7 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
   position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid var(--border); background: var(--surface); color: var(--muted);
   display: grid; place-items: center; cursor: pointer; padding: 0;
-  opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+  opacity: 0; transition: opacity var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 .ep-mark svg { width: 15px; height: 15px; }
 .ep:hover .ep-mark, .ep:focus-within .ep-mark, .ep-mark[aria-pressed="true"] { opacity: 1; }
@@ -2412,12 +2081,12 @@ body.tv .au-input.wide { font-size: clamp(17px, 2.4vh, 22px); padding: clamp(12p
 .kb-row { display: flex; align-items: center; gap: 14px; font-size: 14px; }
 .kb-row kbd {
   font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  padding: 6px 9px; border-radius: 7px; background: var(--bg-3); border: 1px solid var(--border);
+  padding: 6px 9px; border-radius: var(--r-sm); background: var(--bg-3); border: 1px solid var(--border);
   color: var(--text); min-width: 36px; text-align: center;
 }
 
 /* 10-foot sizes for the newer badges, matching .rate / .typebadge above. */
-body.tv .card .poster .newep { font-size: 11px; padding: 3px 9px; left: 8px; bottom: 11px; }
+body.tv .card .poster .newep { padding: 3px 9px; left: 8px; bottom: 11px; }
 body.tv .pill.next-ep svg { width: 16px; height: 16px; }
 /* "Because you watched <a long series name>" must not wrap under the See-all link. */
 .rail .rail-head h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2449,7 +2118,7 @@ body.tv .pill.next-ep svg { width: 16px; height: 16px; }
    REELDECK 2.0 — "house lights"
    ----------------------------------------------------------------------------
    One idea carries the look: the room takes its colour from the screen. Every
-   title's poster is sampled (app.js, ambientFrom) and --ambient washes the page
+   title's poster is sampled (app.js, ambientFrom) and --amb-rgb washes the page
    behind it. Everything else in this layer exists to get out of that light's
    way: no boxes round the header icons, no permanent chips on rail posters,
    sentence-case labels, one condensed voice for headings.
@@ -2472,39 +2141,44 @@ body.tv .pill.next-ep svg { width: 16px; height: 16px; }
   src: url("assets/fonts/manrope-latin-ext.woff2") format("woff2");
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
 
-/* ---- The light ------------------------------------------------------------- */
-/* Registered as a <color> so a change of title is a slow cross-fade of the room,
-   not a cut. Where @property is missing the colour simply switches. */
-@property --ambient { syntax: '<color>'; inherits: true; initial-value: rgba(0, 0, 0, 0); }
-html { background: var(--bg); transition: --ambient 1.6s ease; }
-body::after {
-  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  /* The theme's own quiet glow, always; the title's colour over it when there is one.
-     Two lobes: the top one is what Home shows round its hero, but a title page covers
-     the top of the viewport with artwork -- the lower one is the light that reaches the
-     rest of that page. */
-  background:
-    radial-gradient(130vw 78vh at 50% -22%, color-mix(in srgb, var(--ambient, transparent) var(--amb-hi, 46%), transparent), transparent 72%),
-    radial-gradient(95vw 80vh at 8% 112%, color-mix(in srgb, var(--ambient, transparent) var(--amb-lo, 26%), transparent), transparent 70%),
-    radial-gradient(1200px 600px at 70% -10%, var(--glow) 0%, transparent 60%);
+/* ---- The light -------------------------------------------------------------
+   One faint, static wash from above in the title's colour (--amb-rgb, written by app.js
+   ambientSet; the theme accent until a title has been sampled), on its own fixed layer
+   behind everything. A change of title is a plain swap of one gradient: nothing here
+   transitions a custom property, which restyled the whole document every frame for 1.6s.
+   The layer itself only ever fades by opacity. --house-a is lower on the black themes so
+   their pixels stay off. */
+html { background: var(--bg); }
+#house-light {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(120vw 70vh at 50% -20%, rgba(var(--amb-rgb, var(--accent-rgb)), var(--house-a)), transparent 70%);
+  transition: opacity var(--dur-3) var(--ease-out);
 }
-@supports not (background: color-mix(in srgb, red 5%, transparent)) {
-  body::after { background: radial-gradient(1200px 600px at 70% -10%, var(--glow) 0%, transparent 60%); }
+/* Desktop: a window that is being resized must not re-raster it. Sized from vw/vh, the
+   gradient was a new full-window paint on every step of the drag; this is the same light
+   (exactly, at 1440x900) on a box of fixed pixels that is only ever moved, kept on its own
+   layer. It ends at 70% of its 630px radius, 261px down, so 320px of box holds all of it. */
+@media (min-width: 861px) {
+  body:not(.tv) #house-light {
+    left: 50%; right: auto; bottom: auto; width: 2560px; height: 320px; margin-left: -1280px; will-change: opacity;
+    background: radial-gradient(1728px 630px at 50% -180px, rgba(var(--amb-rgb, var(--accent-rgb)), var(--house-a)), transparent 70%);
+  }
 }
-@media (prefers-reduced-motion: reduce) { html { transition: none; } }
+/* Under the TV Stage (opaque) it would only be one more full-screen layer to composite. */
+body.tv.home #house-light, body.tv.title-page #house-light, body.tv.stage-grid #house-light { opacity: 0; }
 
-/* ---- One voice for headings ------------------------------------------------ */
-.rail .rail-head h2, .page-title, .sub-h, .dv-main h3, .dv-sub, .season-head h3,
+/* ---- One voice for headings ------------------------------------------------
+   The ONE rule for the display face: titles only, never UI or body. */
+.rail-head h2, .page-title, .sub-h, .section > h3, .dv-main h3, .dv-sub, .season-head h3, .detail-hero h1,
 .bb-title, .dv-title, .cw-t, .genre-tile, #splash-h, .modal .mh h3 {
-  font-family: var(--font-display); font-stretch: 80%; font-weight: 800; letter-spacing: .002em;
+  font-family: var(--font-display); font-stretch: 80%; font-weight: 800; letter-spacing: -.01em;
 }
-.rail .rail-head h2 { font-size: clamp(21px, 1.9vw, 27px); line-height: 1.1; padding-left: 0; }
-.rail .rail-head h2::before { display: none; }          /* the accent bar: decoration, not information */
+.rail .rail-head h2, .section > h3, .dv-main h3 { font-size: clamp(var(--fs-lg), 1.9vw, var(--fs-xl)); line-height: 1.1; }
 .rail .rail-head { align-items: center; margin-bottom: 12px; }
-.rail .rail-head .more { font-size: 13px; font-weight: 700; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.rail .rail-head .more { font-size: var(--fs-sm); font-weight: 700; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 .rail .rail-head .more:hover { color: var(--text); }
 .rail .rail-head .more svg { width: 13px; height: 13px; }
-.page-title { font-size: clamp(34px, 4.6vw, 54px); line-height: 1; letter-spacing: -.005em; }
+.page-title { font-size: clamp(34px, 4.6vw, 54px); line-height: 1; }
 .sub-h { font-size: 22px; margin: 28px 0 12px; }
 .search-hint { margin: 0 0 18px; }
 
@@ -2513,27 +2187,15 @@ header.top .icon-btn { background: none; border-color: transparent; color: var(-
 header.top .icon-btn:hover { background: var(--ghost-bg); color: var(--text); }
 header.top .icon-btn.active { color: var(--accent); }
 header.top .icon-btn svg { width: 21px; height: 21px; }
-nav.main { gap: 2px; margin-left: 6px; }
-nav.main a { border-radius: 99px; padding: 7px 15px; font-weight: 700; font-size: 14.5px; color: var(--text-soft); }
-nav.main a:hover { background: var(--ghost-bg); }
-nav.main a.active { background: color-mix(in srgb, var(--text) 13%, transparent); color: var(--text); }
-header.top.scrolled::after { opacity: .28; }
 
 /* ---- Labels speak in sentences --------------------------------------------- */
-.bb-meta .pill-type, .card .poster .typebadge, .card .poster .newep, .epx-now,
-.dv-facts dt { text-transform: none; letter-spacing: 0; }
-.card .poster .newep, .epx-now { font-size: 10.5px; font-weight: 700; }
-.dv-facts dt { font-size: 13px; font-weight: 600; color: var(--muted); }
 .bb-meta .bb-genre { color: rgba(255,255,255,.82); font-weight: 600; }
 .bb-meta .bb-genre::before { content: ''; display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .55; margin-right: 12px; vertical-align: middle; }
 
 /* ---- Posters --------------------------------------------------------------- */
-:root { --radius: 10px; }
 /* A rail is for glancing: artwork, plus status when there is some. The score lives in
    the hover/focus caption and on grids, where people are actually comparing. */
 .rail .card .poster .rate { display: none; }
-.card .poster { box-shadow: 0 8px 24px rgba(0,0,0,.4); border-color: rgba(255,255,255,.06); }
-.btn.primary { box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 10px 30px -12px color-mix(in srgb, var(--accent) 60%, transparent); }
 
 /* ---- Continue watching: landscape, with the time left ---------------------- */
 .rail.cw-rail .track { grid-auto-columns: 312px; }
@@ -2542,7 +2204,7 @@ header.top.scrolled::after { opacity: .28; }
 /* Still on its poster (the backdrop is being fetched): crop to the faces, sit it back. */
 .cw-card.cw-poster .cw-img { object-position: 50% 16%; filter: brightness(.78) saturate(.92); }
 .cw-shade { position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(0deg, rgba(6,8,12,.94) 0%, rgba(6,8,12,.5) 38%, rgba(6,8,12,0) 68%); }
+  background: linear-gradient(0deg, rgba(var(--veil-rgb), .9) 0%, rgba(var(--veil-rgb), .5) 38%, rgba(var(--veil-rgb), 0) 68%); }
 .cw-text { position: absolute; left: 14px; right: 58px; bottom: 15px; min-width: 0; }
 .cw-t { color: #fff; font-size: 21px; line-height: 1.04; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cw-s { color: rgba(255,255,255,.8); font-size: 12.5px; font-weight: 600; margin-top: 5px; }
@@ -2560,14 +2222,16 @@ header.top.scrolled::after { opacity: .28; }
 .rail.genre-rail .track { grid-auto-columns: 196px; }
 .genre-tile {
   position: relative; display: flex; align-items: flex-end; aspect-ratio: 16 / 9;
-  padding: 13px 15px; border-radius: 12px; overflow: hidden; color: #fff;
+  padding: 13px 15px; border-radius: var(--r-md); overflow: hidden; color: #fff;
   font-size: 22px; line-height: 1; text-decoration: none;
-  background: linear-gradient(135deg, hsl(var(--h) 48% 32%) 0%, hsl(calc(var(--h) + 38) 56% 13%) 100%);
+  /* One flat colour per genre. Dark enough for the white label in every theme, and no
+     color-mix, which webOS's Chromium 79 cannot resolve for a per-tile --h. */
+  background: hsl(var(--h) 42% 26%);
   border: 1px solid rgba(255,255,255,.08);
-  transition: filter .18s ease, transform .18s ease;
+  transition: filter var(--dur-1) var(--ease-out);
 }
 .genre-tile span { position: relative; text-wrap: balance; }
-@media (hover: hover) { .genre-tile:hover { filter: brightness(1.18); transform: translateY(-2px); } }
+@media (hover: hover) { .genre-tile:hover { filter: brightness(1.18); } }
 .genre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; }
 @media (max-width: 860px) { .rail.genre-rail .track { grid-auto-columns: 150px; } .genre-tile { font-size: 19px; }
   .genre-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
@@ -2577,8 +2241,22 @@ header.top.scrolled::after { opacity: .28; }
    any window wider than --maxw the artwork stopped short with a gutter either side. */
 body:not(.tv) .detail-hero { width: var(--bleed-w); margin-left: var(--bleed-ml); margin-right: 0; }
 body:not(.tv) .detail-hero .dv-stage { max-width: var(--maxw); margin-left: auto; margin-right: auto; }
-.dv-title { font-size: clamp(40px, 6vw, 84px); line-height: .95; }
-.metarow .pill { background: rgba(255,255,255,.09); border-color: transparent; }
+
+/* ---- Desktop: one left edge ---------------------------------------------------
+   The logo, the hero's text, every rail and the footer start on ONE line: main's content
+   edge, which is 22px inside the centred --maxw column (--gutter). The hero, the bar and the
+   footer's rule are full-bleed, so they take it as padding or margin; sections inside the
+   already padded #view drop their own. 100%, not --bleed-w: it resolves against each user's
+   own full-width box, and --bleed-w is 5px off on a page too short to scroll. A short page
+   keeps the footer at the foot of the window instead of halfway up it. */
+@media (min-width: 861px) {
+  body:not(.tv) { --gutter: max(22px, calc((100% - var(--maxw)) / 2 + 22px)); }
+  body:not(.tv) header.top { padding-left: var(--gutter); padding-right: var(--gutter); }
+  body:not(.tv) .bb-info { max-width: calc(var(--gutter) + 560px); padding: 0 22px 0 var(--gutter); }
+  body:not(.tv) #view .section { padding-left: 0; padding-right: 0; }
+  body:not(.tv) main { min-height: calc(100vh - var(--header-h) - 140px); }   /* 140px: the footer */
+  body:not(.tv) footer.site { max-width: none; margin: 50px var(--gutter) 0; padding: 26px 0 40px; }
+}
 
 /* ---- Phones: the header is a logo and a face; the tab bar floats ----------- */
 .bb-poster { display: none; }
@@ -2587,17 +2265,35 @@ body:not(.tv) .detail-hero .dv-stage { max-width: var(--maxw); margin-left: auto
   body:not(.tv) header.top #search-btn,
   body:not(.tv) header.top a.icon-btn[data-section="watchlist"] { display: none; }
   body:not(.tv) header.top .brand .txt { display: inline; }
+  /* The bar scrolls away with the page: the tab bar stays, and a 62px strip pinned over a
+     phone screen (over the stuck player on Watch) was room the page needed. Home and Account
+     are a scroll to the top away. */
+  body:not(.tv) header.top { position: relative; }
+  /* ~150px of credits under every page: the TMDB attribution stays on Account, the app's
+     about page. :has() is only for engines that have it; without it the footer shows. */
+  body:not(.tv):not(:has(.acc-panel)) footer.site { display: none; }
   body:not(.tv) .bottom-nav {
     left: 50%; right: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
-    width: min(372px, calc(100vw - 28px)); padding: 5px; border-radius: 99px;
-    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr;
-    background: color-mix(in srgb, var(--bg-2) 90%, transparent);
-    -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%);
-    border: 1px solid rgba(255,255,255,.11); box-shadow: 0 14px 44px rgba(0,0,0,.6);
+    width: min(372px, calc(100vw - 28px)); padding: 5px; border-radius: var(--r-pill);
+    grid-auto-flow: column; grid-auto-columns: 1fr;
+    /* solid and flat: the raised surface and a hairline separate it from what scrolls under */
+    background: var(--surface); border: 1px solid var(--border);
   }
-  body:not(.tv) .bottom-nav a { border-radius: 99px; padding: 7px 0 6px; gap: 2px; color: var(--text-soft); }
-  body:not(.tv) .bottom-nav a.active { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
+  body:not(.tv) .bottom-nav a { position: relative; border-radius: var(--r-pill); padding: 7px 0 6px; gap: 2px; color: var(--text-soft); }
+  /* the current tab: full-strength ink and the house-light bar under its label */
+  body:not(.tv) .bottom-nav a.active { color: var(--text); }
+  body:not(.tv) .bottom-nav a.active::after {
+    content: ''; position: absolute; left: 50%; bottom: 1px; width: 20px; height: 3px; margin-left: -10px;
+    border-radius: 3px; background: rgba(var(--amb-rgb, var(--accent-rgb)), 1);
+  }
   body:not(.tv) { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+  /* The pill floats, so copy scrolled through the gutter under and beside it. A page-colour
+     band behind it (below the bar's z 60) keeps the float without the peek. Not a pseudo of
+     the bar: its transform would make the bar the band's containing block. */
+  body:not(.tv):not(.lock-on)::after {
+    content: ''; position: fixed; left: 0; right: 0; bottom: 0; z-index: 59; pointer-events: none;
+    height: calc(10px + 66px + env(safe-area-inset-bottom, 0px)); background: var(--bg);
+  }
 }
 
 /* ---- Phones: the hero is a poster ------------------------------------------
@@ -2609,30 +2305,35 @@ body:not(.tv) .detail-hero .dv-stage { max-width: var(--maxw); margin-left: auto
     width: auto; margin: 4px 0 10px; overflow: visible;
     height: min(calc((100vw - 32px) * 1.42 + 34px), 76vh);
   }
-  body:not(.tv) .bb-slide { inset: 0 0 34px 0; border-radius: 20px; overflow: hidden;
-    box-shadow: 0 24px 60px -18px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.07); }
+  body:not(.tv) .bb-slide { inset: 0 0 34px 0; border-radius: var(--r-md); overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.07); }
   body:not(.tv) .bb-bg { display: none; }
+  /* no textless poster under a logo (app.js never uses the titled one there): the backdrop */
+  body:not(.tv) .bb-slide.bb-noart .bb-bg { display: block; background-position: center; }
   body:not(.tv) .bb-poster { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 20%; }
   /* Solid under the title block: when there is no textless poster the printed title sits
      in exactly this band, and at 78% it ghosted through behind ours. */
-  body:not(.tv) .bb-scrim { background: linear-gradient(0deg, rgb(6,8,12) 0%, rgb(6,8,12) 27%, rgba(6,8,12,.72) 40%, rgba(6,8,12,0) 62%); }
+  body:not(.tv) .bb-scrim { background: linear-gradient(0deg, rgb(var(--veil-rgb)) 0%, rgb(var(--veil-rgb)) 27%, rgba(var(--veil-rgb), .72) 40%, rgba(var(--veil-rgb), 0) 62%); }
   body:not(.tv) .bb-meta .bb-genre + .bb-genre { display: none; }     /* one line of meta */
   body:not(.tv) .bb-info { left: 0; right: 0; bottom: 18px; max-width: none; padding: 0 16px;
     display: flex; flex-direction: column; align-items: center; text-align: center; }
   body:not(.tv) .bb-logo { max-height: 78px; max-width: 72%; object-position: center bottom; margin-bottom: 10px; }
   body:not(.tv) .bb-title { font-size: 34px; margin-bottom: 10px; }
-  body:not(.tv) .bb-meta { justify-content: center; font-size: 13px; gap: 10px; margin-bottom: 14px; }
+  body:not(.tv) .bb-meta { justify-content: center; font-size: var(--fs-xs); gap: 10px; margin-bottom: 14px; }
   body:not(.tv) .bb-ovw { display: none; }
   body:not(.tv) .bb-cta { width: 100%; display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
-  body:not(.tv) .bb-cta .btn.lg { padding: 12px 10px; font-size: 14.5px; justify-content: center; }
+  body:not(.tv) .bb-cta .btn.lg { padding: 12px 10px; font-size: var(--fs-sm); justify-content: center; }
   body:not(.tv) .bb-dots { bottom: 6px; }
 }
 
-/* ---- Search field on a phone: the field IS the row ------------------------- */
+/* ---- Search field: the magnifier sits inside it, at every size -------------- */
+body:not(.tv) .tv-search { position: relative; }
+body:not(.tv) .tv-search .ico { position: absolute; left: 16px; width: 20px; height: 20px; pointer-events: none; }
+body:not(.tv) .tv-search input { padding-left: 46px; }
+/* on a phone the field IS the row */
 @media (max-width: 640px) {
-  body:not(.tv) .tv-search { gap: 8px; position: relative; }
-  body:not(.tv) .tv-search .ico { position: absolute; left: 16px; width: 20px; height: 20px; pointer-events: none; }
-  body:not(.tv) .tv-search input { height: 52px; font-size: 17px; padding: 0 14px 0 46px; border-radius: 14px; }
+  body:not(.tv) .tv-search { gap: 8px; }
+  body:not(.tv) .tv-search input { height: 52px; font-size: 17px; padding-right: 14px; border-radius: var(--r-md); }
   body:not(.tv) .tv-search .btn { height: 52px; padding: 0 18px; font-size: 15px; }
 }
 
@@ -2655,14 +2356,16 @@ body.tv .cw-t { font-size: clamp(18px, 3.6vh, 28px); }
 body.tv .cw-s { font-size: clamp(12px, 2.1vh, 15px); }
 body.tv .cw-play { display: none; }                      /* OK is the play button */
 body.tv .cw-text { right: 14px; }
-body.tv .genre-tile { font-size: clamp(18px, 3.4vh, 27px); border-radius: 14px; transition: transform .16s ease; }
-body.tv .genre-tile.tv-focus, body.tv .genre-tile:focus { transform: scale(1.06); position: relative; z-index: 6; }
+body.tv .genre-tile { font-size: clamp(18px, 3.4vh, 27px); }
+body.tv .genre-tile.tv-focus, body.tv .genre-tile:focus { position: relative; z-index: 6; }
 body.tv .genre-grid { grid-template-columns: repeat(5, 1fr); gap: clamp(12px, 2vh, 20px); }
 /* The focused poster names itself over its own artwork, and posters carry their own
    titles: a 15%-opaque veil let the two collide. Dark enough to read, short enough to
    leave the face of the poster alone; and one line of meta, never two. */
 body.tv .card .poster .card-hover {
-  background: linear-gradient(0deg, rgba(6,8,12,.97) 0%, rgba(6,8,12,.9) 30%, rgba(6,8,12,0) 62%);
+  background: linear-gradient(0deg, rgb(var(--veil-rgb)) 0%, rgba(var(--veil-rgb), .9) 30%, rgba(var(--veil-rgb), 0) 62%);
+  /* 8px sides, not 12: a 5-column grid card is ~150px, and the house-light bar takes 12 more */
+  padding: 12px 8px;
 }
 body.tv .card .poster .ch-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body.tv .card .poster .ch-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -2678,41 +2381,33 @@ body.tv .card .poster .ch-title { display: -webkit-box; -webkit-line-clamp: 2; -
   body:not(.tv) .dv-stage { padding-top: clamp(150px, 30vh, 260px); padding-bottom: 8px; gap: 12px; }
   body:not(.tv) .detail-hero { margin-bottom: 8px; min-height: 0; }
   body:not(.tv) .metarow { gap: 6px; }
-  body:not(.tv) .metarow .pill { font-size: 12.5px; padding: 4px 10px; }
+  body:not(.tv) .metarow .pill { font-size: var(--fs-xs); padding: 4px 10px; }
   body:not(.tv) .dv-cta { width: 100%; gap: 8px; margin-top: 4px; }
   body:not(.tv) .dv-cta .btn { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 5px; justify-content: center;
-    padding: 10px 2px; font-size: 11px; font-weight: 700; line-height: 1.1; letter-spacing: -.01em; white-space: nowrap; border-radius: 12px; }
+    padding: 10px 2px; font-size: var(--fs-xs); font-weight: 700; line-height: 1.1; white-space: nowrap; }
   body:not(.tv) .dv-cta .btn svg { width: 19px; height: 19px; }
-  body:not(.tv) .dv-cta .btn.primary { flex: 1 1 100%; flex-direction: row; gap: 9px; padding: 14px; font-size: 16px; border-radius: 14px; }
-  body:not(.tv) .dv-cta #detail-wl.primary { flex: 1 1 0; flex-direction: column; gap: 5px; padding: 10px 4px; font-size: 11.5px; border-radius: 12px;
-    background: rgba(125,135,155,.30); color: var(--accent); box-shadow: none; }
+  body:not(.tv) .dv-cta .btn.primary { flex: 1 1 100%; flex-direction: row; gap: 9px; padding: 14px; font-size: var(--fs-md); }
+  body:not(.tv) .dv-cta #detail-wl.primary { flex: 1 1 0; flex-direction: column; gap: 5px; padding: 10px 4px; font-size: var(--fs-xs);
+    background: rgba(var(--veil-rgb), .55); color: var(--accent-on-dark); }
   body:not(.tv) .dv-body { padding-top: 14px; }
 }
-
-/* Daylight. Off TV the hero starts BELOW the sticky bar, so at rest the bar lies on the
-   page colour, not on artwork: the dark dissolve was a smudge on a light page. It gets the
-   theme's real chrome, the same thing every other page already has. On TV the bar IS over
-   the artwork (transparent, hero pulled up under it), so there it takes light ink. */
-:root[data-theme="daylight"] body:not(.tv).home header.top:not(.scrolled) { background: var(--chrome-bg); }
-:root[data-theme="daylight"] body.tv.home header.top:not(.scrolled) .brand,
-:root[data-theme="daylight"] body.tv.home header.top:not(.scrolled) nav.main a,
-:root[data-theme="daylight"] body.tv.home header.top:not(.scrolled) .icon-btn { color: #fff; }
-:root[data-theme="daylight"] body.tv.home header.top:not(.scrolled) .brand-mark { background-color: #fff; }
-:root[data-theme="daylight"] body.tv.home header.top:not(.scrolled) nav.main a.active { background: rgba(255,255,255,.18); }
 
 /* "New episode" never sits on the caption. While the caption shows (hover with a pointer,
    focus on a TV) the floating pill fades out and its twin inside the caption takes over. */
 .ch-new {
-  display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: 99px;
-  background: rgba(8,10,14,.78); color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: var(--r-pill);
+  background: rgba(var(--veil-rgb), .72); color: var(--accent);
+  border: 1px solid rgba(255, 255, 255, .18);
   font-size: 10.5px; font-weight: 700; line-height: 1.35;
+  /* one line, always: on a narrow TV grid card "New episode" broke in two and pushed the
+     title down to its first word */
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
-.card .poster > .newep { transition: opacity .15s ease; }
+.card .poster > .newep { transition: opacity var(--dur-1) var(--ease-out); }
 @media (hover: hover) { body:not(.tv) .card.has-capnew:hover .poster > .newep { opacity: 0; } }
 body.tv .card.has-capnew:focus .poster > .newep,
 body.tv .card.has-capnew.tv-focus .poster > .newep { opacity: 0; }
-body.tv .ch-new { font-size: 11px; padding: 3px 9px; }
+body.tv .ch-new { padding: 3px 9px; }
 
 /* The watchlist button owns the caption's bottom-right corner on hover, so the caption's
    text column ends before it -- the meta line used to run underneath ("... 55m"). */
@@ -2732,8 +2427,8 @@ body:not(.tv) .card .poster .wl { z-index: 4; }
 /* "New episode" vs the always-visible 40px watchlist button on narrow touch cards, and vs
    the resting bookmark on small TV tiles: the label shortens by POSTER width, so one rule
    covers every grid density without changing any of them. 137px = the widest container
-   that collides (measured), and still leaves the 960x540 TV rail on the full label. */
-.card .poster { container-type: inline-size; }
+   that collides (measured), and still leaves the 960x540 TV rail on the full label.
+   (.card .poster is the inline-size container, in its own rule.) */
 .card .poster > .newep i { font-style: normal; }
 @container (max-width: 137px) { .card:not(.rank-item) .poster > .newep i { display: none; } }
 
@@ -2746,12 +2441,9 @@ body:not(.tv) .card .poster .wl { z-index: 4; }
 /* The caption is one line taller when it carries the pill; lift the play button clear. */
 @media (hover: hover) { body:not(.tv) .card.has-capnew .poster .ch-play { top: 40%; } }
 
-/* Badges live on an always-dark scrim, so they take the on-dark accent. No change in the six
+/* Badges live on the always-dark veil, so they take the on-dark accent. No change in the six
    dark themes, where it resolves to --accent; in Daylight indigo-on-black was 3:1. */
-.card .poster .newep, .ch-new, .epx-now {
-  color: var(--accent-on-dark);
-  border-color: color-mix(in srgb, var(--accent-on-dark) 55%, transparent);
-}
+.card .poster .newep, .ch-new, .epx-now { color: var(--accent-on-dark); }
 .card .poster .wl.on { color: var(--accent-on-dark); }
 
 /* Episode rows: keep the first line of the title clear of the mark button (a float, so long
@@ -2789,23 +2481,24 @@ body:not(.tv):not(.cinema-on) .next-up { opacity: 1; filter: none; }   /* dim on
 .tv-search input, .tv-search input::placeholder { text-overflow: ellipsis; }
 @media (max-width: 860px) { body:not(.tv) .field select, body:not(.tv) .field input { font-size: 16px; } }   /* iOS zooms under 16px */
 
-/* Keyboard focus rings that specificity had been eating. */
-body:not(.tv) .btn.primary:focus-visible { box-shadow: var(--ring); }
+/* A keyboard focus ring that specificity had been eating. */
 body:not(.tv) .sb-modes .btn:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }   /* the group clips an outer ring */
 
-/* Daylight: the title stage is dark in EVERY theme (see .detail-hero .scrim), so inside it
-   the ink is dark-theme ink. --accent itself is left alone: .btn.primary uses it as a fill. */
-:root[data-theme="daylight"] .detail-hero {
-  --text: #eef1f6; --text-soft: #d3d9e4; --muted: #c3cad6; --hero-text-shadow: rgba(0,0,0,.55);
+/* Daylight, desktop and phone: the title's text sits on the dark veil over the art (see
+   .detail-hero .scrim), so inside the hero the ink is dark-theme ink. --accent itself is
+   left alone: .btn.primary uses it as a fill. Not TV: there the title page is the Stage,
+   built from the light page colour, and Daylight's own dark ink is what reads on it. */
+:root[data-theme="daylight"] body:not(.tv) .detail-hero {
+  --text: #eef1f6; --text-soft: #d3d9e4; --muted: #c3cad6;
   --accent-on-dark: #c7d2fe;
 }
-:root[data-theme="daylight"] .detail-hero .pill.next-ep,
-:root[data-theme="daylight"] .detail-hero .pill.rating svg,
-:root[data-theme="daylight"] .detail-hero .dv-cta .btn[aria-pressed="true"]:not(.primary) { color: var(--accent-on-dark); }
-:root[data-theme="daylight"] .dv-cta .btn.glass:not(.primary) { background-color: rgba(14,17,24,.78); }
-@media (max-width: 640px) {
-  :root[data-theme="daylight"] body:not(.tv) .dv-cta #detail-wl.primary { background-color: rgba(14,17,24,.78); color: var(--accent-on-dark); }
-}
+:root[data-theme="daylight"] body:not(.tv) .detail-hero .pill.next-ep,
+:root[data-theme="daylight"] body:not(.tv) .detail-hero .pill.rating svg,
+:root[data-theme="daylight"] body:not(.tv) .detail-hero .dv-cta .btn[aria-pressed="true"]:not(.primary) { color: var(--accent-on-dark); }
+/* TV Daylight: the secondary actions are the page's own buttons on the light Stage, and a
+   white wordmark gets an edge so it does not dissolve into it. */
+:root[data-theme="daylight"] body.tv .dv-cta .btn.glass:not(.primary) { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+:root[data-theme="daylight"] body.tv.title-page .detail-logo { filter: drop-shadow(0 0 1px rgba(0, 0, 0, .5)); }
 
 /* ============================================================================
    2.1 — features
@@ -2845,11 +2538,13 @@ body.tv a.who { padding: 2px 4px; }
 .qa-list { display: grid; gap: 6px; padding: 12px; }
 .qa-item {
   display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
-  padding: 14px 16px; border-radius: 12px; border: 1px solid transparent;
+  padding: 14px 16px; border-radius: var(--r-md); border: 1px solid transparent;
   background: var(--bg-2); color: var(--text); font: inherit; font-weight: 700; font-size: 15px; cursor: pointer;
 }
 .qa-item svg { width: 20px; height: 20px; flex: none; color: var(--muted); }
 .qa-item:hover { background: var(--surface-2); }
+/* the confirm sheet's Yes: it is the row that cannot be undone, so it wears the danger colour */
+.qa-item.danger, .qa-item.danger svg { color: var(--danger); }
 body.tv .modal.qa { width: min(560px, 60vw); }
 body.tv .qa-item { font-size: clamp(16px, 2.9vh, 22px); padding: clamp(12px, 2.4vh, 20px) clamp(14px, 2vw, 24px); }
 body.tv .qa-item svg { width: clamp(20px, 3.4vh, 28px); height: clamp(20px, 3.4vh, 28px); }
@@ -2863,8 +2558,7 @@ body.tv .qa-item:focus svg, body.tv .qa-item.tv-focus svg { color: var(--accent)
   body:not(.tv) .card .poster .wl { display: none; }
   body:not(.tv) .card .poster .wl.on {
     display: grid; width: 24px; height: 24px; right: 6px; bottom: 6px;
-    background: rgba(8,10,14,.78); pointer-events: none; opacity: 1; transform: none;
-    -webkit-backdrop-filter: none; backdrop-filter: none;
+    background: rgba(var(--veil-rgb), .72); pointer-events: none; opacity: 1; transform: none;
   }
   body:not(.tv) .card .poster .wl.on svg { width: 13px; height: 13px; }
   /* No caption text to keep clear of any more, and no iOS image callout on a long-press. */
@@ -2934,7 +2628,7 @@ body:not(.tv) .cinema-chrome { right: calc(14px + env(safe-area-inset-right, 0px
 .next-up.counting .nu-k { color: var(--accent-on-dark, var(--accent)); font-weight: 800; }
 
 /* Settings toggles */
-.set-toggle { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-2); }
+.set-toggle { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg-2); }
 .set-toggle input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex: none; }
 .set-toggle span { display: grid; gap: 3px; min-width: 0; }
 .set-toggle small { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
@@ -2963,15 +2657,13 @@ body.tv .toolbar .rt-field { grid-column: 1 / -1; }
 .play-gate::before { content: ""; position: absolute; inset: 0;
   background: radial-gradient(ellipse at center, rgba(0,0,0,.12), rgba(0,0,0,.55)), linear-gradient(to top, rgba(0,0,0,.5), transparent 55%); }
 .play-go { position: relative; display: inline-flex; align-items: center; gap: 12px; height: 56px; padding: 0 28px 0 22px;
-  border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 800; font-size: 17px;
-  cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,.45), var(--accent-glow); }
+  border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 800; font-size: 17px;
+  cursor: pointer; }
 .play-go svg { width: 22px; height: 22px; flex: none; }
 .play-go:hover { filter: brightness(1.07); }
-body.tv .play-go { height: 60px; font-size: 20px; transition: transform .16s ease; }
-body.tv .play-go:focus, body.tv .play-go.tv-focus { transform: scale(1.08); }
+body.tv .play-go { height: 60px; font-size: 20px; }
 
 /* Mirrors the Worker found not answering: out of the room until "Show offline". */
 .mirror[hidden] { display: none; }
-.mirror.down { opacity: .55; }
 .mirror.down .ms { color: var(--muted); }
 .srv-offline { margin-top: 10px; }
