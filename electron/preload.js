@@ -10,6 +10,9 @@ try { isTop = window.top === window.self; } catch (e) { isTop = false; }
 if (isTop) {
   contextBridge.exposeInMainWorld('reeldeck', {
     desktop: true,
+    // Which window buttons share the header: 'overlay' (Windows/Linux, right) or 'inset' (macOS, left).
+    frame: process.platform === 'darwin' ? 'inset' : 'overlay',
+    titlebar: (o) => ipcRenderer.invoke('reeldeck:titlebar', o),
     openExternal: (url) => ipcRenderer.invoke('reeldeck:open-external', String(url || '')),
     installUpdate: () => ipcRenderer.invoke('reeldeck:install-update'),
     checkForUpdates: () => ipcRenderer.invoke('reeldeck:check-update'),

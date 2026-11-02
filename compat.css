@@ -104,7 +104,6 @@ html.no-flexgap .dv-facts > * + * { margin-top: 18px; }
 html.no-flexgap .dv-rate > * + * { margin-left: 6px; }
 html.no-flexgap .next-up > * + * { margin-left: 12px; }
 html.no-flexgap .srv > summary > * + * { margin-left: 12px; }
-html.no-flexgap .srv-opts > * + * { margin-left: 10px; }
 html.no-flexgap .source-bar > * + * { margin-left: 12px; }
 html.no-flexgap .srv-now > * + * { margin-left: 12px; }
 html.no-flexgap .filters > summary > * + * { margin-left: 12px; }

@@ -237,7 +237,16 @@ async function createWindow() {
   }
 
   guards.setAppOrigin(url);
+  // Our own title bar: the app's header IS the window's title bar. The OS still draws the
+  // window buttons -- Windows/Linux as an overlay at the header's right end (transparent, so
+  // the header shows through; the page sizes and recolours it, reeldeck:titlebar), macOS as
+  // the traffic lights inset at its left -- so snap layouts, the system menu and every
+  // accessibility path behave exactly as in a native frame.
+  const frame = process.platform === 'darwin'
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 24 } }
+    : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#00000000', symbolColor: '#e8eaf0', height: 62 } };
   win = new BrowserWindow({
+    ...frame,
     width: 1320,
     height: 860,
     minWidth: 900,
@@ -279,6 +288,19 @@ ipcMain.handle('reeldeck:open-external', (e, target) => {
 });
 
 // Renderer asks to apply a downloaded update now.
+// The page's header changed height or colour: keep the window buttons inside it.
+ipcMain.handle('reeldeck:titlebar', (e, o) => {
+  if (!win || e.sender !== win.webContents || !o || typeof o !== 'object') return;
+  const h = Math.round(Math.min(96, Math.max(28, +o.height || 0)));
+  try {
+    if (process.platform === 'darwin') {
+      if (win.setWindowButtonPosition) win.setWindowButtonPosition({ x: 18, y: Math.round((h - 16) / 2) });
+    } else {
+      const sym = /^#[0-9a-f]{6}$/i.test(o.symbol || '') ? o.symbol : '#e8eaf0';
+      win.setTitleBarOverlay({ color: '#00000000', symbolColor: sym, height: h });
+    }
+  } catch (err) {}
+});
 ipcMain.handle('reeldeck:install-update', () => { try { autoUpdater.quitAndInstall(); } catch (e) {} });
 // Renderer asks to check for updates now (Settings button).
 ipcMain.handle('reeldeck:check-update', () => {

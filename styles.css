@@ -112,6 +112,10 @@ svg { width: 1em; height: 1em; flex: none; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: var(--r-pill); }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted-2); }
 ::-webkit-scrollbar-track { background: transparent; }
+/* In the desktop app the header is the title bar and the window buttons are a transparent
+   overlay on it, so the page's own scrollbar ran up through both (the thumb sat beside the
+   close button at the top of every page). Its track starts under the header instead. */
+html.app-frame::-webkit-scrollbar-track { margin-top: var(--header-h, 62px); }
 
 /* ---------- Header ---------- */
 /* Off TV the hero starts BELOW the sticky bar, so at rest the bar lies on the page (and
@@ -193,6 +197,34 @@ body:not(.tv) nav.main a.active::after {
 
 
 /* ---------- Scroll-aware header ---------- */
+/* ---- Our own title bar (the desktop app, html.app-frame) ------------------------
+   The header is the window's title bar: its empty stretches drag the window (double-click
+   maximises), everything you can press in it stays pressable, and the OS's own window
+   buttons sit inside it -- Windows/Linux at the right end, over a transparent overlay the
+   size of the header (env(titlebar-area-*) says how much room they take), macOS's traffic
+   lights at the left. */
+html.app-frame header.top { -webkit-app-region: drag; }
+html.app-frame header.top a, html.app-frame header.top button, html.app-frame header.top input,
+html.app-frame header.top select, html.app-frame header.top [tabindex], html.app-frame header.top [role="listbox"] { -webkit-app-region: no-drag; }
+html.frame-overlay body header.top { padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px); }
+html.frame-inset body header.top { padding-left: 88px; }
+/* What covers the header takes its place in the drag map. Chromium reads app-region in
+   document order, so a later no-drag cancels the header's drag where they overlap: an open
+   dialog's backdrop (its own close button and Cancel were otherwise "title bar"), and the
+   theater-mode player, which covers the whole window. */
+html.app-frame .modal-back, html.app-frame .player-frame.cinema, html.app-frame .cinema-chrome,
+html.app-frame .cinema-hot { -webkit-app-region: no-drag; }
+/* ...and none of them puts a control under the window buttons. */
+html.frame-overlay .modal-back { padding-top: max(20px, calc(env(titlebar-area-height, 0px) + 8px)); }
+html.frame-overlay .modal-back .modal { max-height: calc(100vh - env(titlebar-area-height, 0px) - 28px); }
+html.frame-overlay .modal-back.acc-back { padding-top: max(min(10vh, 96px), calc(env(titlebar-area-height, 0px) + 8px)); }
+html.frame-overlay body:not(.tv) .cinema-chrome { top: calc(env(titlebar-area-height, 0px) + 12px); }
+/* No header on the lock and splash screens: a strip along the top still moves the window. */
+html.app-frame body.lock-on::before, html.app-frame body.splash-on::before {
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 2147483000;
+  -webkit-app-region: drag;
+}
+
 /* ---- Idle: the bar steps aside -------------------------------------------------
    Sticky, so a transform costs no reflow and the page underneath never shifts.
    pointer-events:none is not cosmetic: tvMeasure rejects it, which is what keeps the
@@ -337,9 +369,11 @@ body.chrome-idle header.top { transform: translateY(-100%); opacity: 0; pointer-
 .card .poster .card-hover { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
   background: linear-gradient(0deg, rgba(var(--veil-rgb), .9) 0%, rgba(var(--veil-rgb), .15) 52%, transparent 100%);
   opacity: 0; pointer-events: none; transition: opacity var(--dur-1) var(--ease-out); padding: 12px; }
-/* The house-light bar: the caption of the card you are on (hover, or focus on TV) is
-   marked in the title's own colour, the same mark as the current tab. */
-.card .poster .ch-cap { border-left: 3px solid rgba(var(--amb-rgb, var(--accent-rgb)), 1); padding-left: 9px; }
+/* The caption is plain text on the veil, and everything in it is known when the card is
+   drawn: title, year, rating. Nothing is fetched on hover and nothing in it changes colour,
+   so the overlay fades in once, finished, the way the big streaming sites do it. (It had a
+   bar in the title's own colour, which arrived a beat after the hover and visibly swapped,
+   and a runtime/seasons line fetched on hover that wrapped and pushed the text up.) */
 /* hover: hover ONLY. Touch browsers latch :hover on tap and hold it until something
    else is tapped, which left this overlay interactive over the poster -- and it holds
    a play button that goes straight to /watch, so the next tap on the same card jumped
@@ -360,7 +394,7 @@ body.chrome-idle header.top { transform: translateY(-100%); opacity: 0; pointer-
 .ch-play svg { width: 25px; height: 25px; margin-left: 2px; }
 .ch-play:hover { filter: brightness(1.08); }
 .ch-title { color: #fff; font-weight: 700; font-size: var(--fs-sm); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ch-meta { color: rgba(255,255,255,.7); font-size: var(--fs-xs); margin-top: 2px; }
+.ch-meta { color: rgba(255,255,255,.7); font-size: var(--fs-xs); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- Top 10 rank rail ---------- */
 /* Columns size to their CONTENT. A fixed column had to be kept in agreement with the
@@ -1674,7 +1708,6 @@ body.tv .next-up .nu-k { font-size: clamp(11px, 1.6vh, 14px); }
 @media (hover: hover) { .srv > summary:hover { background: var(--surface); } }
 .srv-n { font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .srv-body { padding: 0 16px 18px; }
-.srv-opts { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .srv .mirror-note { margin-top: 14px; }
 body.tv .srv > summary { padding: clamp(14px, 2.4vh, 22px) 20px; font-size: clamp(15px, 2.3vh, 19px); }
 body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
@@ -1810,9 +1843,6 @@ body.tv .filters > summary { padding: clamp(13px, 2.2vh, 20px) 20px; font-size: 
 
 /* The search page owns the field now, so give it room on every platform. */
 .tv-search { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
-
-/* The runtime appended to the hover caption once it has been fetched. */
-.ch-rt { white-space: nowrap; }
 
 /* ============================================================================
    SYNC / SIGN-IN
@@ -2269,9 +2299,8 @@ body:not(.tv) .detail-hero .dv-stage { max-width: var(--maxw); margin-left: auto
      phone screen (over the stuck player on Watch) was room the page needed. Home and Account
      are a scroll to the top away. */
   body:not(.tv) header.top { position: relative; }
-  /* ~150px of credits under every page: the TMDB attribution stays on Account, the app's
-     about page. :has() is only for engines that have it; without it the footer shows. */
-  body:not(.tv):not(:has(.acc-panel)) footer.site { display: none; }
+  /* ~150px of credits under every page: the TMDB attribution lives in Account > App. */
+  body:not(.tv) footer.site { display: none; }
   body:not(.tv) .bottom-nav {
     left: 50%; right: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
     width: min(372px, calc(100vw - 28px)); padding: 5px; border-radius: var(--r-pill);
@@ -2286,14 +2315,9 @@ body:not(.tv) .detail-hero .dv-stage { max-width: var(--maxw); margin-left: auto
     content: ''; position: absolute; left: 50%; bottom: 1px; width: 20px; height: 3px; margin-left: -10px;
     border-radius: 3px; background: rgba(var(--amb-rgb, var(--accent-rgb)), 1);
   }
+  /* The pill floats and the page scrolls on under and around it, as in the platforms' own
+     floating tab bars; it is solid, so nothing shows through it. */
   body:not(.tv) { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
-  /* The pill floats, so copy scrolled through the gutter under and beside it. A page-colour
-     band behind it (below the bar's z 60) keeps the float without the peek. Not a pseudo of
-     the bar: its transform would make the bar the band's containing block. */
-  body:not(.tv):not(.lock-on)::after {
-    content: ''; position: fixed; left: 0; right: 0; bottom: 0; z-index: 59; pointer-events: none;
-    height: calc(10px + 66px + env(safe-area-inset-bottom, 0px)); background: var(--bg);
-  }
 }
 
 /* ---- Phones: the hero is a poster ------------------------------------------
@@ -2364,7 +2388,7 @@ body.tv .genre-grid { grid-template-columns: repeat(5, 1fr); gap: clamp(12px, 2v
    leave the face of the poster alone; and one line of meta, never two. */
 body.tv .card .poster .card-hover {
   background: linear-gradient(0deg, rgb(var(--veil-rgb)) 0%, rgba(var(--veil-rgb), .9) 30%, rgba(var(--veil-rgb), 0) 62%);
-  /* 8px sides, not 12: a 5-column grid card is ~150px, and the house-light bar takes 12 more */
+  /* 8px sides, not 12: a 5-column grid card is ~150px */
   padding: 12px 8px;
 }
 body.tv .card .poster .ch-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2393,24 +2417,15 @@ body.tv .card .poster .ch-title { display: -webkit-box; -webkit-line-clamp: 2; -
 }
 
 /* "New episode" never sits on the caption. While the caption shows (hover with a pointer,
-   focus on a TV) the floating pill fades out and its twin inside the caption takes over. */
-.ch-new {
-  display: inline-block; margin-bottom: 6px; padding: 2px 7px; border-radius: var(--r-pill);
-  background: rgba(var(--veil-rgb), .72); color: var(--accent);
-  border: 1px solid rgba(255, 255, 255, .18);
-  font-size: 10.5px; font-weight: 700; line-height: 1.35;
-  /* one line, always: on a narrow TV grid card "New episode" broke in two and pushed the
-     title down to its first word */
-  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
-}
+   focus on a TV) the floating pill fades out. It is not copied into the caption: the badge
+   lands after a fetch, and a caption that is showing never changes (newEpPaint). */
 .card .poster > .newep { transition: opacity var(--dur-1) var(--ease-out); }
 @media (hover: hover) { body:not(.tv) .card.has-capnew:hover .poster > .newep { opacity: 0; } }
 body.tv .card.has-capnew:focus .poster > .newep,
 body.tv .card.has-capnew.tv-focus .poster > .newep { opacity: 0; }
-body.tv .ch-new { padding: 3px 9px; }
 
-/* The watchlist button owns the caption's bottom-right corner on hover, so the caption's
-   text column ends before it -- the meta line used to run underneath ("... 55m"). */
+/* The watchlist button owns the caption's bottom-right corner on hover, so the caption
+   ends before it: a long title wraps onto a last line that sits beside the button. */
 @media (hover: hover) { body:not(.tv) .card .poster .ch-cap { padding-right: 40px; } }
 
 /* ============================================================================
@@ -2436,14 +2451,12 @@ body:not(.tv) .card .poster .wl { z-index: 4; }
    pill then too, and keep caption text out from under the always-on button. */
 @media (hover: none) {
   body:not(.tv) .card.has-capnew:active .poster > .newep { opacity: 0; }
-  body:not(.tv) .card .poster .ch-cap { padding-right: 46px; }
+  body:not(.tv) .card .poster .ch-meta { padding-right: 46px; }
 }
-/* The caption is one line taller when it carries the pill; lift the play button clear. */
-@media (hover: hover) { body:not(.tv) .card.has-capnew .poster .ch-play { top: 40%; } }
 
 /* Badges live on the always-dark veil, so they take the on-dark accent. No change in the six
    dark themes, where it resolves to --accent; in Daylight indigo-on-black was 3:1. */
-.card .poster .newep, .ch-new, .epx-now { color: var(--accent-on-dark); }
+.card .poster .newep, .epx-now { color: var(--accent-on-dark); }
 .card .poster .wl.on { color: var(--accent-on-dark); }
 
 /* Episode rows: keep the first line of the title clear of the mark button (a float, so long
@@ -2562,7 +2575,7 @@ body.tv .qa-item:focus svg, body.tv .qa-item.tv-focus svg { color: var(--accent)
   }
   body:not(.tv) .card .poster .wl.on svg { width: 13px; height: 13px; }
   /* No caption text to keep clear of any more, and no iOS image callout on a long-press. */
-  body:not(.tv) .card .poster .ch-cap { padding-right: 0; }
+  body:not(.tv) .card .poster .ch-meta { padding-right: 0; }
   body:not(.tv) .card, body:not(.tv) .ep { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 }
 

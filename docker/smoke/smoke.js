@@ -567,20 +567,30 @@ async function runProfile(browser, name, report) {
   }
   if (name !== 'tv') await shot('player-page-full', { fullPage: true });
 
-  // ---- account: the account button opens a page with Profile / Settings / App tabs (it used
-  // to open a pop-out menu, and Settings a dialog)
+  // ---- account: the account button opens a popup over the current screen with Profile /
+  // Settings / App tabs (it was a page, #/account, and before that a pop-out menu)
   await go('#/', '.rail .card');
   await page.locator('#acct-btn').click();
-  await page.waitForSelector('.acc-tabs .acc-tab', { timeout: 5000 });
+  await page.waitForSelector('.acc-back .acc-tabs .acc-tab', { timeout: 5000 });
   const acc = await page.evaluate(() => ({ hash: location.hash, menu: !!document.getElementById('acct-menu'),
+    dialog: !!document.querySelector('.acc-back [role=dialog]'), cards: document.querySelectorAll('#view .card').length,
     tabs: [].map.call(document.querySelectorAll('.acc-tab'), (b) => b.textContent.trim()).join('|') }));
-  check('the account button opens the Account page, no pop-out', acc.hash === '#/account' && !acc.menu && acc.tabs === 'Profile|Settings|App', acc);
+  check('the account button opens the Account popup over Home, no page', acc.hash === '#/' && acc.dialog && acc.cards > 0 && !acc.menu && acc.tabs === 'Profile|Settings|App', acc);
   await shot('account');
-  await go('#/account?tab=settings', '#set-themes');
+  await page.locator('#acc-tab-settings').click();
+  await page.waitForSelector('.acc-back #set-themes', { timeout: 5000 });
   check('the Settings tab holds the theme picker', await page.locator('#set-themes .theme-card').count() >= 3);
   await shot('settings');
-  await go('#/account?tab=app', '#set-upd');
+  await page.locator('#acc-tab-app').click();
+  await page.waitForSelector('.acc-back #set-upd', { timeout: 5000 });
   check('the App tab holds the version and updates', await page.evaluate(() => /v\d+\.\d+\.\d+/.test(document.querySelector('.acc-panel').textContent)));
+  await page.keyboard.press('Escape'); await sleep(400);
+  check('Escape closes the Account popup', await page.evaluate(() => !document.querySelector('.modal-back')));
+  // An old link (a bookmark, a TV's saved place) lands on Home with the popup on its tab.
+  await go('#/account?tab=app', '.acc-back #set-upd');
+  check('an old #/account link opens Home with the popup', await page.evaluate(() => location.hash === '#/' &&
+    document.body.classList.contains('home') && document.getElementById('acc-tab-app').getAttribute('aria-selected') === 'true'));
+  await page.keyboard.press('Escape'); await sleep(400);
 
   check('no uncaught errors', r.errors.length === 0, r.errors.slice(0, 3));
   check('no failed TMDB calls', r.apiFailures.length === 0, r.apiFailures.slice(0, 3));
