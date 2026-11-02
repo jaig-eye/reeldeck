@@ -4992,6 +4992,18 @@
       ['mousemove', 'pointerdown', 'touchstart', 'click'].forEach(ev => hot.addEventListener(ev, revealCinema, { passive: true }));
       frame.appendChild(hot);
     }
+    // The desktop app's theater mode fills the window, header and all, so nothing was left to
+    // move the window by. A strip the height of the title bar takes the header's job: it lies
+    // inside the hot-zone, which already holds the player's top fifth (styles.css .cinema-drag).
+    // Not in full screen: there is no window to move. Re-decided on every switch between the two.
+    const drag = $('#cinema-drag');
+    if (APP_FRAME && !wantScreen) {
+      if (!drag) {
+        const dg = document.createElement('div');
+        dg.id = 'cinema-drag'; dg.className = 'cinema-drag'; dg.setAttribute('aria-hidden', 'true');
+        frame.appendChild(dg);
+      }
+    } else if (drag) drag.remove();
     cinemaReveal = () => revealCinema();
     document.addEventListener('mousemove', cinemaReveal, { passive: true });
     document.addEventListener('keydown', cinemaReveal);
@@ -5050,6 +5062,7 @@
     document.body.classList.remove('cinema-screen');
     const bar = $('#cinema-chrome'); if (bar) bar.remove();
     const hot = $('#cinema-hot'); if (hot) hot.remove();
+    const dg = $('#cinema-drag'); if (dg) dg.remove();
     if (fsElement()) fsExit();
     releasePlayerFocus();   // hand D-pad focus back to our UI
     // TV: the ring lands on the frame, which is where the remote was before the pointer

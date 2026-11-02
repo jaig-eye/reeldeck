@@ -219,6 +219,9 @@ html.frame-overlay .modal-back { padding-top: max(20px, calc(env(titlebar-area-h
 html.frame-overlay .modal-back .modal { max-height: calc(100vh - env(titlebar-area-height, 0px) - 28px); }
 html.frame-overlay .modal-back.acc-back { padding-top: max(min(10vh, 96px), calc(env(titlebar-area-height, 0px) + 8px)); }
 html.frame-overlay body:not(.tv) .cinema-chrome { top: calc(env(titlebar-area-height, 0px) + 12px); }
+/* Theater mode in the app: the window's drag strip, where the header was (app.js enterCinema).
+   Later in the document than the player and the hot-zone, so its drag wins over their no-drag. */
+html.app-frame .cinema-drag { position: fixed; top: 0; left: 0; right: 0; height: env(titlebar-area-height, 40px); z-index: 306; -webkit-app-region: drag; }
 /* No header on the lock and splash screens: a strip along the top still moves the window. */
 html.app-frame body.lock-on::before, html.app-frame body.splash-on::before {
   content: ''; position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 2147483000;
