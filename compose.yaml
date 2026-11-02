@@ -28,6 +28,9 @@ services:
       - ./docker/out:/out
       # Mounted rather than baked in, so editing the script does not need a rebuild.
       - ./docker/smoke/smoke.js:/smoke/smoke.js:ro
+      # The sync Worker's own code, served in-process on a test store (smoke.js localWorker):
+      # the profiles sign in with a test code and never reach the deployed Worker.
+      - ./worker/reeldeck-sync.js:/smoke/worker.mjs:ro
     # Chromium wants more shared memory than Docker's 64 MB default.
     shm_size: 1gb
     profiles: [tools]

@@ -44,6 +44,64 @@ function proxy(target) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The page of the profile running now, so an aborted profile can leave its evidence (main loop).
+let lastPage = null;
+
+/* The sync Worker, from the repo's own code (compose mounts worker/reeldeck-sync.js at
+   /smoke/worker.mjs) on an in-memory store. Every request the page makes to the deployed
+   Worker is answered here instead: the app is locked behind an access code, so the profiles
+   sign in with a TEST code, and nothing reaches the real Worker or a real account. Its two
+   servers are stand-ins on .invalid hosts, which the route below never loads. */
+const SYNC_HOST = 'reeldeck.disisbo.workers.dev';
+const SMOKE_CODE = '24682468';
+let workerP = null;
+function localWorker() {
+  if (workerP) return workerP;
+  const db = new Map();
+  const live = (k) => { const e = db.get(k); if (e && e.exp && e.exp <= Date.now()) { db.delete(k); return null; } return e || null; };
+  const cmd = ([c, k, ...a]) => {
+    const e = live(k);
+    if (c === 'GET') return e ? e.v : null;
+    if (c === 'DEL') return db.delete(k) ? 1 : 0;
+    if (c === 'SET') { if (a.includes('NX') && e) return null; const i = a.indexOf('EX'); db.set(k, { v: String(a[0]), exp: i >= 0 ? Date.now() + a[i + 1] * 1000 : 0 }); return 'OK'; }
+    if (c === 'INCR' || c === 'DECR') { const n = (e ? +e.v : 0) + (c === 'INCR' ? 1 : -1); db.set(k, { v: String(n), exp: e ? e.exp : 0 }); return n; }
+    if (c === 'EXPIRE') { if (!e) return 0; e.exp = Date.now() + a[0] * 1000; return 1; }
+    return null;
+  };
+  // The Worker's own outbound calls: the store, and its health probes of the servers (which
+  // all answer). Node's fetch is the Worker's alone here; the browser has its own network.
+  globalThis.fetch = async (url, opt) => String(url).startsWith('https://fake-upstash')
+    ? new Response(JSON.stringify({ result: cmd(JSON.parse(opt.body)) }))
+    : new Response('', { status: 200 });
+  const env = {
+    UPSTASH_REDIS_REST_URL: 'https://fake-upstash', UPSTASH_REDIS_REST_TOKEN: 't',
+    ACCESS_CODES: 'smoke=' + SMOKE_CODE, ACCESS_SIGNING_KEY: 'k'.repeat(40),
+    SOURCES_JSON: JSON.stringify([
+      { name: 'Stand-in A', movie: 'https://player.invalid/movie/{id}', tv: 'https://player.invalid/tv/{id}/{season}/{episode}' },
+      { name: 'Stand-in B', movie: 'https://player2.invalid/movie/{id}', tv: 'https://player2.invalid/tv/{id}/{season}/{episode}' },
+    ]),
+  };
+  workerP = import('/smoke/worker.mjs').then((m) => ({ W: m.default, env }));
+  return workerP;
+}
+async function workerFetch(url, method, headers, body) {
+  const { W, env } = await localWorker();
+  return W.fetch(new Request(url, { method: method, body: method === 'POST' ? body : undefined,
+    headers: Object.assign({}, headers, { 'Content-Type': 'application/json', 'CF-Connecting-IP': '127.0.0.1' }) }), env, { waitUntil() {} });
+}
+async function workerRoute(route) {
+  const q = route.request();
+  const res = await workerFetch(q.url(), q.method(), q.headers(), q.postData());
+  return route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: Buffer.from(await res.arrayBuffer()) });
+}
+/** A signed-in device, for the runs that do not walk the code pad themselves. */
+async function seedSignedIn(ctx) {
+  const res = await workerFetch('https://' + SYNC_HOST + '/v1/access/enter', 'POST', {}, JSON.stringify({ code: SMOKE_CODE }));
+  const acc = (await res.json()).acc;
+  await ctx.addInitScript((t) => {
+    try { if (!localStorage.getItem('reeldeck.access.v1')) localStorage.setItem('reeldeck.access.v1', JSON.stringify({ t: t, exp: +t.split('.')[0] || 0, iat: +t.split('.')[1] || 0 })); } catch (e) {}
+  }, acc);
+}
 
 async function runProfile(browser, name, report) {
   const p = PROFILES[name];
@@ -54,9 +112,11 @@ async function runProfile(browser, name, report) {
   await ctx.route('**/*', (route) => {
     let host = '';
     try { host = new URL(route.request().url()).host; } catch (e) {}
+    if (host === SYNC_HOST) return workerRoute(route);
     if (route.request().url().startsWith('data:') || ALLOW.some((re) => re.test(host))) return route.continue();
     return route.abort();
   });
+  if (name !== 'desktop') await seedSignedIn(ctx);
   // Someone who has watched things: one series mid-episode with a real position, one film
   // part-way, one title whose backdrop the art cache has never seen (so the back-fill runs).
   await ctx.addInitScript(() => {
@@ -82,6 +142,7 @@ async function runProfile(browser, name, report) {
     } catch (e) {}
   });
   const page = await ctx.newPage();
+  lastPage = page;
   const r = report[name] = { checks: [], errors: [], apiFailures: [] };
   page.on('pageerror', (e) => r.errors.push(String(e.message || e)));
   page.on('response', (res) => {
@@ -116,10 +177,17 @@ async function runProfile(browser, name, report) {
 
   // ---- home
   await page.goto(`${ORIGIN}/${p.query}#/`, { waitUntil: 'domcontentloaded' });
-  const guest = page.locator('#sp-guest');
-  if (await guest.isVisible({ timeout: 4000 }).catch(() => false)) {
-    await shot('splash');
-    await guest.click();
+  // Desktop starts as a new device: the code pad, typed on the keyboard. Eight digits go in
+  // on their own, with no Enter.
+  if (name === 'desktop') {
+    const locked = await page.waitForSelector('#lock', { timeout: 15000 }).then(() => true, () => false);
+    check('a new device is asked for its code', locked);
+    if (locked) {
+      await shot('lock');
+      await page.keyboard.type(SMOKE_CODE, { delay: 60 });
+      check('the eighth digit signs in by itself, no Enter',
+        await page.waitForSelector('#lock', { state: 'detached', timeout: 15000 }).then(() => true, () => false));
+    }
   }
   await page.waitForSelector('.rail .card', { timeout: 30000 });
   const rails = await page.$$eval('.rail h2', (hs) => hs.map((h) => h.textContent.trim()));
@@ -134,7 +202,11 @@ async function runProfile(browser, name, report) {
       return { stage: !!document.getElementById('stage'), billboard: !!document.getElementById('billboard'),
                title: (document.querySelector('.st-title') || {}).textContent || (document.querySelector('.st-title img') || {}).alt || '',
                laneOff: rail ? Math.abs(rail.getBoundingClientRect().top - innerHeight / 2) : 999,
-               railTall: hdr.height > innerHeight * 0.9 && hdr.width < 120 };
+               // The header box is always the open width (the panel slides in behind the icons,
+               // stage.css); closed is the state, not the box: tall, at the left edge, not open.
+               railTall: hdr.height > innerHeight * 0.9 && hdr.left <= 0 && !document.body.classList.contains('rail-open') &&
+                 // ...and it LOOKS closed: the labels are faded out (only the icons show)
+                 [].every.call(document.querySelectorAll('header.top .lb'), (l) => +getComputedStyle(l).opacity < 0.1) };
     });
     check('TV: home is the Stage (no billboard, a titled stage)', st.stage && !st.billboard && !!st.title.trim(), st);
     check('TV: the focused row sits at half height', st.laneOff <= 3, st);
@@ -169,8 +241,22 @@ async function runProfile(browser, name, report) {
   check('presets lead the genre rail', await page.locator('.genre-rail .track > .preset-tile').count() >= 4);
   check('home has a fresh-releases rail', rails.some((t) => /New to watch at home|Coming soon/.test(t)), rails);
   await sleep(2600);   // the poster is sampled, then the room cross-fades to it
-  const amb = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--ambient').trim());
-  check('house lights are on', /^rgb\(/.test(amb) && !/rgba\(0, 0, 0, 0\)/.test(amb), amb);
+  // The house light is the sampled title's colour, as an r, g, b triplet (app.js ambientSet).
+  // On TV it follows the ring after a dwell, a title lookup and a poster sample: allow for them.
+  // A near-grey poster has no colour to give and turns the light OFF (ambientPick), and the ring
+  // starts on whatever the seeded history put first -- so on TV the ring walks down the rows
+  // until it rests on a title with colour, which is the thing to prove: the light follows it.
+  if (name === 'tv') {
+    for (let i = 0; i < 4; i++) {
+      const lit = await page.waitForFunction(() => /^\d{1,3},\s*\d{1,3},\s*\d{1,3}$/.test(getComputedStyle(document.documentElement).getPropertyValue('--amb-rgb').trim()), null, { timeout: 3000 }).then(() => true, () => false);
+      if (lit) break;
+      await page.keyboard.press('ArrowDown'); await sleep(600);
+    }
+  }
+  await page.waitForFunction(() => /^\d{1,3},\s*\d{1,3},\s*\d{1,3}$/.test(getComputedStyle(document.documentElement).getPropertyValue('--amb-rgb').trim()), null, { timeout: 8000 }).catch(() => {});
+  const amb = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--amb-rgb').trim());
+  const ring = await page.evaluate(() => { const a = document.activeElement; return a ? (a.className || a.tagName) + ' ' + (a.getAttribute('data-nav') || '') : ''; });
+  check('house lights are on', /^\d{1,3},\s*\d{1,3},\s*\d{1,3}$/.test(amb), amb || { amb: amb, ring: ring });
   check('backdrops were back-filled', await page.locator('.cw-card[data-art-need]').count() === 0);
   if (name === 'phone') {
     const hero = await page.evaluate(() => {
@@ -227,8 +313,13 @@ async function runProfile(browser, name, report) {
     check('desktop: resting on a card puts it in the hero', !!ps.want && ps.on === ps.want, ps);
     await page.mouse.move(720, 30);                    // off the rows, so the scroll stages nothing new
     await page.evaluate(() => window.scrollTo({ top: 1100, behavior: 'instant' })); await sleep(400);
-    const chip = await page.evaluate(() => { const c = document.getElementById('on-stage'); return { shown: !!c && getComputedStyle(c).display !== 'none', nav: c && c.getAttribute('data-nav') }; });
-    check('desktop: the On stage chip names it once the hero is off screen', chip.shown && chip.nav === '#/' + ps.want.replace(':', '/'), { chip, ps });
+    const chip = await page.evaluate(() => { const c = document.getElementById('on-stage'), on = document.querySelector('#billboard .bb-slide.on'), bb = document.getElementById('billboard');
+      return { shown: !!c && getComputedStyle(c).display !== 'none', nav: c && c.getAttribute('data-nav'), pinned: document.body.classList.contains('hero-pinned'),
+               band: on && on.dataset.key, bandBottom: bb ? Math.round(bb.getBoundingClientRect().bottom) : 0 }; });
+    // A window this tall keeps the hero on stage as a band under the bar (stage.css), holding
+    // the staged title, and the chip stands down; a shorter one scrolls it away and the chip names it.
+    if (chip.pinned) check('desktop: the hero stays on stage as a band, holding what was rested on', chip.band === ps.want && chip.bandBottom > 200 && !chip.shown, { chip, ps });
+    else check('desktop: the On stage chip names it once the hero is off screen', chip.shown && chip.nav === '#/' + ps.want.replace(':', '/'), { chip, ps });
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' })); await sleep(300);
 
     // Place memory: scroll the page and one rail, open a title, go Back.
@@ -358,17 +449,25 @@ async function runProfile(browser, name, report) {
   await go('#/movie/438631', '.dv-stage');
   await page.waitForSelector('.cast-track .person', { timeout: 20000 }).catch(() => {});
   check('film page is not an error page', await noError());
+  // The cast is in the Details tab of a tabbed title page: open it first (a hidden row has no width).
+  await page.evaluate(() => {
+    const t = document.querySelector('.cast-track'), p = t && t.closest('.dv-panel');
+    const tab = p && !p.classList.contains('on') && document.querySelector('.dv-tab[data-tab="' + p.dataset.panel + '"]');
+    if (tab) tab.click();
+  });
+  await sleep(300);
   const cast = await page.evaluate(() => {
     const t = document.querySelector('.cast-track'), m = document.querySelector('.dv-main'), f = document.querySelector('.dv-facts');
     if (!t) return null;
     return { scrollable: t.scrollWidth > t.clientWidth + 4,
              clearOfFacts: !f || getComputedStyle(f).position === 'static' && (m.getBoundingClientRect().right <= f.getBoundingClientRect().left + 2 || f.getBoundingClientRect().top >= m.getBoundingClientRect().bottom - 2) };
   });
-  check('cast row is a scroller', cast && cast.scrollable, cast);
+  // TV's title page leaves the cast out on purpose (stage.css: .dv-body); episodes or similar titles follow.
+  if (name !== 'tv') check('cast row is a scroller', cast && cast.scrollable, cast);
   const dv = await page.evaluate(() => ({ cert: (document.querySelector('.pill.cert') || {}).textContent || '', kws: document.querySelectorAll('.kw-row .chip').length,
     who: document.querySelectorAll('.dv-facts a.who').length, logo: !!document.querySelector('.detail-logo') }));
   check('film page: one request still yields logo, age rating, keywords, a linked director', !!dv.cert && dv.kws >= 3 && dv.who >= 1 && dv.logo, dv);
-  check('cast row stays out of the facts column', cast && cast.clearOfFacts);
+  if (name !== 'tv') check('cast row stays out of the facts column', cast && cast.clearOfFacts);
   await fits('film page');
   await shot('film');
   if (name !== 'tv') await shot('film-full', { fullPage: true });
@@ -424,8 +523,8 @@ async function runProfile(browser, name, report) {
   check('search returns a grid', await page.locator('.grid .card').count() > 3);
   await go('#/search?q=villeneuve', '#results .person, #results .center-note');
   check('search finds people', await page.locator('#results .cast-track .person').count() >= 1);
-  await go('#/person/137427', '.detail-body');
-  await page.waitForSelector('.section h3', { timeout: 15000 });
+  // On TV the person's own header is drawn by the Stage, not the page (stage.css), so wait on the sections.
+  await go('#/person/137427', '.section h3');
   const heads = await page.$$eval('.section h3', (hs) => hs.map((h) => h.textContent.trim()));
   check('a director page leads with directing', /directing/i.test(heads[0] || ''), heads);
   await go('#/search?q=dune', '.grid .card');
@@ -500,9 +599,14 @@ async function runProfile(browser, name, report) {
     check('TV: the player waits in the page, ring on the picture', await page.evaluate(() =>
       !document.body.classList.contains('cinema-on') && !document.body.classList.contains('cursor-on') &&
       document.activeElement && document.activeElement.matches('.player-frame')));
-    await page.keyboard.press('Enter'); await sleep(600);
-    check('TV: OK on the picture brings full screen and the pointer', await page.evaluate(() =>
-      document.body.classList.contains('cinema-on') && document.body.classList.contains('cursor-on')));
+    // A person's second press, not a key repeat: an Enter within 180ms of the last one is taken
+    // for a held OK's repeat and swallowed (app.js OK_RAPID), and Play was pressed just before.
+    await sleep(400);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.body.classList.contains('cinema-on') && document.body.classList.contains('cursor-on'), null, { timeout: 4000 }).catch(() => {});
+    const okd = await page.evaluate(() => ({ cinema: document.body.classList.contains('cinema-on'), cursor: document.body.classList.contains('cursor-on'),
+      act: document.activeElement && (document.activeElement.id || document.activeElement.className), modal: [].map.call(document.querySelectorAll('.modal-back'), (m) => m.className) }));
+    check('TV: OK on the picture brings full screen and the pointer', okd.cinema && okd.cursor, okd);
     await shot('player-pointer');
     // The dock: Down with the pointer at the bottom edge raises episodes and servers over the picture.
     for (let i = 0; i < 40 && !(await page.evaluate(() => document.body.classList.contains('dock-open'))); i++) {
@@ -543,11 +647,14 @@ async function runProfile(browser, name, report) {
     await page.keyboard.press('Escape'); await sleep(300);
   }
   if (name === 'phone') {
-    // The picture stays pinned under the bar while the episodes and servers scroll.
+    // The bar scrolls away on a phone; the picture scrolls up to the top of the screen and stays
+    // there while the episodes and servers scroll (stage.css). Where it ends up is where it
+    // started less the scroll, never above the top.
+    const top0 = await page.evaluate(() => { window.scrollTo({ top: 0, behavior: 'instant' }); return Math.round(document.querySelector('.player-frame').getBoundingClientRect().top); });
     await page.evaluate(() => window.scrollTo({ top: 600, behavior: 'instant' })); await sleep(300);
-    const pin = await page.evaluate(() => ({ frame: Math.round(document.querySelector('.player-frame').getBoundingClientRect().top),
-      bar: Math.round(document.querySelector('header.top').getBoundingClientRect().bottom), y: Math.round(scrollY) }));
-    check('phone: the player stays pinned under the bar', pin.y > 100 && Math.abs(pin.frame - pin.bar) <= 2, pin);
+    const pin = await page.evaluate(() => ({ frame: Math.round(document.querySelector('.player-frame').getBoundingClientRect().top), y: Math.round(scrollY) }));
+    pin.want = Math.max(0, top0 - pin.y);
+    check('phone: the player scrolls to the top and stays there', pin.y > 100 && Math.abs(pin.frame - pin.want) <= 2, pin);
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' })); await sleep(300);
     // Fullscreen on a phone turns the picture landscape, by whichever means exists here.
     await page.locator('#tv-mode').tap(); await sleep(2200);   // fullscreen settles, then the 700ms look-again
@@ -637,6 +744,9 @@ async function runPlayerFixture(browser, report) {
       // A film a mirror reported to 1:05:06, since nudged on by the wall clock on a silent one.
       localStorage.setItem('reeldeck.progress.v1', JSON.stringify({ 'movie:27205': { t: 4026, d: 8880, pct: 0.45, at: Date.now() - 3600e3, src: 'elapsed', seek: 3906 } }));
       localStorage.setItem('reeldeck.config.v5', JSON.stringify({ activeSource: 2, sources: [src('Talky', 'talky.test'), src('Silent', 'silent.test'), src('Store', 'store.test')] }));
+      // Signed in, and the Worker unreachable (aborted above): the app keeps going offline with
+      // what the device has, the seeded table included.
+      localStorage.setItem('reeldeck.access.v1', JSON.stringify({ t: 'smoke-offline', exp: 0, iat: 0 }));
     } catch (e) {}
   });
   const page = await ctx.newPage();
@@ -722,9 +832,11 @@ async function runDesktopApp(browser, report) {
   await ctx.route('**/*', (route) => {
     let host = '';
     try { host = new URL(route.request().url()).host; } catch (e) {}
+    if (host === SYNC_HOST) return workerRoute(route);
     if (route.request().url().startsWith('data:') || ALLOW.some((re) => re.test(host))) return route.continue();
     return route.abort();
   });
+  await seedSignedIn(ctx);
   await ctx.addInitScript(() => { window.reeldeck = { desktop: true }; });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => r.errors.push(String(e.message || e)));
@@ -763,6 +875,13 @@ async function runDesktopApp(browser, report) {
       report[n] = report[n] || { checks: [], errors: [] };
       report[n].checks.push({ label: 'profile completed', ok: false, detail: String(e.message || e).split('\n')[0] });
       console.log(`  FAIL [${n}] profile aborted -- ${String(e.message || e).split('\n')[0]}`);
+      // Where it stopped: the address, what the view said, and a picture of it.
+      if (lastPage) {
+        const at = await lastPage.evaluate(() => ({ hash: location.hash, view: ((document.getElementById('view') || {}).textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160),
+          modal: !!document.querySelector('.modal-back'), lock: !!document.getElementById('lock') })).catch(() => null);
+        console.log('       stopped at ' + JSON.stringify(at));
+        await lastPage.screenshot({ path: path.join(OUT, n + '-aborted.png') }).catch(() => {});
+      }
     }
   }
   if (!ONLY || ONLY === 'player') {

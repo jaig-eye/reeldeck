@@ -26,6 +26,7 @@ import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebHistoryItem;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
@@ -58,6 +59,8 @@ public class MainActivity extends BridgeActivity {
     private volatile JavaScriptReplyProxy replyProxy;
     /** True only while a player iframe is on screen — see nativeSetPlayer() in app.js. */
     private volatile boolean playerOpen;
+    /** The address the page's current player frame was opened at ("pframe:" from app.js). */
+    private volatile String playerUrl;
     private volatile boolean downloading;
     // Set when an update is deferred because the install permission is missing, so the
     // download can resume by itself once the user comes back from granting it.
@@ -179,6 +182,25 @@ public class MainActivity extends BridgeActivity {
                 // AdBlocklist's never-block list so the app itself can never be refused.
                 if (AdBlocklist.isBlocked(request.getUrl())) return AdBlocklist.blockedResponse();
                 return super.shouldInterceptRequest(view, request);
+            }
+
+            // Did the player load? The page cannot see into the player, but we see its first
+            // request fail: the server's domain is gone, it refused or timed out (pfail), or
+            // it answered an HTTP error (pstatus). Only for the exact address the page says
+            // its current player frame was opened at -- nothing else inside the player, and
+            // nothing from a frame the page has already replaced. app.js decides what to do.
+            @Override
+            @android.annotation.TargetApi(23)   // WebView only calls these from API 23 on
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (isPlayerLoad(request)) toWeb("pfail:" + error.getErrorCode());
+            }
+
+            @Override
+            @android.annotation.TargetApi(23)   // WebView only calls these from API 23 on
+            public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                super.onReceivedHttpError(view, request, response);
+                if (isPlayerLoad(request) && response != null) toWeb("pstatus:" + response.getStatusCode());
             }
         });
 
@@ -385,6 +407,12 @@ public class MainActivity extends BridgeActivity {
                                 playerOpen = data.endsWith("1");
                                 return;
                             }
+                            // The player frame the page just made, by the address it was opened at.
+                            if (data.startsWith("pframe:")) {
+                                String u = data.substring(7);
+                                playerUrl = u.length() > 0 && u.length() <= 2000 ? u : null;
+                                return;
+                            }
                             // The sites of our configured servers, kept off the ad list.
                             if (data.startsWith("exempt:")) { AdBlocklist.setExempt(data.substring(7)); return; }
                             // Asked for after we hand it a media key: focus is in the
@@ -446,6 +474,13 @@ public class MainActivity extends BridgeActivity {
             // Feature reported as supported but unavailable on this WebView build —
             // leave the bridge absent; the web layer degrades on its own.
         }
+    }
+
+    /** The first request of the page's current player frame: a sub-frame load of exactly its address. */
+    private boolean isPlayerLoad(WebResourceRequest request) {
+        String want = playerUrl;
+        if (want == null || request == null || request.isForMainFrame() || request.getUrl() == null) return false;
+        return want.equals(request.getUrl().toString());
     }
 
     /** Send one line back to the web layer. Safe to call from any thread. */

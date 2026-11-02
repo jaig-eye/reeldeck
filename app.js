@@ -2412,6 +2412,85 @@
     // it can be a minute out either way -- still better than four presses.
     if (!nextUpDismissed) nextUpCheck(t, watchNow.runtime || 0);
   }
+  /* ---- Did the player load? (desktop) ----------------------------------------------
+     A dead server is a black or white rectangle: nothing says so, and the viewer sits there.
+     The page cannot see into a cross-origin player; the desktop app can (electron/watchdog.js
+     reports on the named frame), so a few seconds after each player frame is created the page
+     asks, and a server that plainly failed hands over to the next one. "Plainly": its page did
+     not load at all, or came back 404/410/5xx; or nothing at all is drawn in it, in any frame,
+     at both of the two later looks (a poster, a Play button or a Cloudflare check is not
+     nothing). It stops watching for good the moment a video is ready or playing, the server
+     reports a position, or the viewer clicks into the player -- from then on it is theirs. */
+  const PLAYER_CHECK = IS_DESKTOP && !!window.reeldeck && typeof window.reeldeck.checkPlayer === 'function';
+  const PW_AT = [4000, 9000, 17000];     // ms after the frame is made; blank counts from the second look
+  let playerSeq = 0;
+  const playerName = () => 'rd-player-' + (++playerSeq);
+  // What counts as plainly dead, the same on both apps. 403, 429 and 503 are also what a
+  // Cloudflare check answers with, so those are never enough on their own.
+  const playerHard = (failed, st) => failed ? 'didn’t load'
+    : (st === 404 || st === 410 || (st >= 500 && st !== 503)) ? 'answered ' + st : '';
+  // Android: no look inside the player, only its first request's fate, which MainActivity
+  // reports for the exact address the page names (pframe:) -- so only the hard half applies.
+  // WebView reports a frame's load errors from Android 6 (API 23) on; on 5.x it never would.
+  const NATIVE_LOADS = () => NATIVE_TAP && !/Android [1-5]\./.test(navigator.userAgent || '');
+  let pwNative = null;
+  function playerNativeReport(d) {
+    const w = pwNative;
+    if (!w) return;
+    if (cfg.autoSwitch === false || !document.body.contains(w.fr) || !routeIs(w.route) ||
+        (watchNow && watchNow.gotProvider) || Date.now() - w.at > 60000) { pwNative = null; return; }
+    // Offline, every server "fails to load": that is the connection, not the server.
+    if (d.indexOf('pfail:') === 0 && navigator.onLine === false) return;
+    const why = d.indexOf('pfail:') === 0 ? playerHard(true, 0) : playerHard(false, parseInt(d.slice(8), 10) || 0);
+    if (!why) return;
+    pwNative = null;
+    w.onFail(why);
+  }
+  function playerWatch(fr, onFail) {
+    if (!fr || cfg.autoSwitch === false) return;
+    if (!PLAYER_CHECK) {
+      if (!NATIVE_LOADS()) return;
+      let href = '';
+      try { href = new URL(fr.src, location.href).href; } catch (e) { return; }
+      pwNative = { fr: fr, onFail: onFail, route: routeSeq, at: Date.now() };
+      nativeSend('pframe:' + href);
+      return;
+    }
+    const name = fr.getAttribute('name') || '';
+    if (!name) return;
+    const myRoute = routeSeq;
+    let blank = 0, done = false, touched = false;
+    // A click into the player focuses it, and the window blurs: the viewer is driving.
+    const onBlur = () => setTimeout(() => { if (document.activeElement === fr) touched = true; }, 0);
+    const stop = () => { done = true; window.removeEventListener('blur', onBlur); };
+    window.addEventListener('blur', onBlur);
+    // cfg.autoSwitch again on every look: the setting can be switched off while one runs.
+    const gone = () => done || touched || cfg.autoSwitch === false || !document.body.contains(fr) || !routeIs(myRoute) || !!(watchNow && watchNow.gotProvider);
+    const next = (i) => {
+      if (i + 1 >= PW_AT.length) return stop();
+      setTimeout(() => look(i + 1), PW_AT[i + 1] - PW_AT[i]);
+    };
+    const look = (i) => {
+      if (gone()) return stop();
+      // Out of sight nothing is drawn and nothing is decided: look again once it is back.
+      if (document.hidden) return setTimeout(() => look(i), 2000);
+      window.reeldeck.checkPlayer(name).then((r) => {
+        if (gone()) return stop();
+        if (!r || !r.found) return next(i);
+        if (r.playing || r.ready) return stop();
+        // Offline, every server fails to load and draws nothing: that is the connection, not
+        // the server, so nothing is decided until the device is back online.
+        if (navigator.onLine === false) return next(i);
+        const hard = playerHard(!!r.failed, +r.status || 0);   // 403/429/503 go by what is drawn
+        if (hard) { stop(); return onFail(hard); }
+        // Blank only on a complete look (watchdog: every frame read); an undecided one changes nothing.
+        if (r.content) blank = 0; else if (i > 0 && r.complete) blank++;
+        if (blank >= 2) { stop(); return onFail('showed a blank screen'); }
+        next(i);
+      }, () => next(i));
+    };
+    setTimeout(() => look(0), PW_AT[0]);
+  }
   function watchEnd() {
     nextUpHide(); nextUpDismissed = false;
     if (watchNow) {
@@ -4457,7 +4536,7 @@
       // Fullscreen buttons call requestFullscreen on .player-frame, in OUR document, so
       // they are unaffected by the frame's policy and keep every overlay working.
       // FRAME_DENY: the ad-tech features that would otherwise be on in here (see its comment).
-      return `<iframe id="player-iframe" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay; ${FRAME_DENY}" ${sandbox} referrerpolicy="origin"></iframe>`;
+      return `<iframe id="player-iframe" name="${playerName()}" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay; ${FRAME_DENY}" ${sandbox} referrerpolicy="origin"></iframe>`;
       };
       const art = d && (d.backdrop_path || d.poster_path);
       const goLabel = resumeAt > 30 ? 'Resume ' + fmtClock(resumeAt) : 'Play';
@@ -4597,7 +4676,9 @@
     // Switching a mirror swaps the iframe src IN PLACE rather than re-rendering the
     // page, so the D-pad ring stays on the tile the user is on.
     const room = $('.server-room');
-    const switchTo = (i) => {
+    // auto: the watcher moved on by itself (autoNext), so a failure of THIS one moves on again;
+    // a server picked by hand is only reported on, never left behind the viewer's back.
+    const switchTo = (i, auto) => {
       if (isNaN(i) || i === cfg.activeSource || !sources[i]) return;
       cfg.activeSource = i; cfg.activeName = sources[i].name; saveConfig();
       const s2 = sources[i];
@@ -4622,9 +4703,11 @@
         // session-history entry is left for Back to rewind the player into.
         const nf = fr2.cloneNode(false);            // same id / allow / sandbox / referrerpolicy
         nf.setAttribute('tabindex', '-1');
+        nf.setAttribute('name', playerName());     // the watcher's handle on THIS frame
         nf.src = buildSourceUrl(s2, type, id, imdb, season, episode, at);   // set BEFORE insertion
         nf.addEventListener('error', () => toast('This mirror failed — try the next server'));
         fr2.replaceWith(nf);
+        playerWatch(nf, auto ? autoNext : (why) => toast(s2.name + ' ' + why + ' \u2014 try another server'));
       }
       // The badge, the two-minute silence clock, the "played to its end" proof and the episode
       // tag all belong to the mirror that is on screen NOW; and the wall clock restarts from
@@ -4646,6 +4729,22 @@
         el.setAttribute('aria-pressed', String(idx === i));
         const ms = el.querySelector('.ms'); if (ms) ms.textContent = idx === i ? '● Playing' : el.classList.contains('down') ? offLabel(el.dataset.mirrorName) : 'Mirror ' + (idx + 1);
       });
+    };
+    // The watcher's hand-over (playerWatch): on to the next server that is answering and has
+    // not been tried for this title in this sitting, saying which one failed and how. Once
+    // every server has had its turn it stops and says so, rather than going round again.
+    const tried = new Set();
+    const autoNext = (why) => {
+      const from = sources[cfg.activeSource], fromName = (from && from.name) || 'This server';
+      tried.add(cfg.activeSource);
+      let j = -1;
+      for (let k = 1; k < sources.length && j < 0; k++) {
+        const i = (cfg.activeSource + k) % sources.length;
+        if (!tried.has(i) && !(healthOn && isDown(sources[i].name))) j = i;
+      }
+      if (j < 0) return toast(fromName + ' ' + why + ', and every other server has been tried. Pick one under Servers & playback.');
+      toast(fromName + ' ' + why + ' \u2014 trying ' + (sources[j].name || 'the next server'));
+      switchTo(j, true);
     };
     const offBtn = $('#srv-offline');
     if (offBtn) offBtn.onclick = () => {
@@ -4738,7 +4837,7 @@
                           : ((d && d.runtime) || 0))
     });
     };
-    if (fr) { watchLive = true; startTracking(); }
+    if (fr) { watchLive = true; startTracking(); playerWatch(fr, autoNext); }
     // Play: build the frame NOW, for whichever mirror is selected. The press is the user
     // gesture the mirror's autoplay needs, and the frame is created after it, so autoplay
     // stays on. Anything that would show the player (Fullscreen, Theater, F, T) goes through
@@ -4751,6 +4850,7 @@
       const f2 = $('#player-iframe');
       if (f2) { f2.setAttribute('tabindex', '-1'); f2.addEventListener('error', () => toast('This mirror failed — try the next server')); }
       startTracking();
+      playerWatch(f2, autoNext);
       if (IS_TV) {
         frame.setAttribute('tabindex', '0'); frame.setAttribute('role', 'button'); frame.setAttribute('aria-label', 'Open the player');
         tvInvalidate(); tvFocusEl(frame);        // in the page: OK on the picture goes full screen
@@ -5025,6 +5125,8 @@
         // Backstop for the guard above: the native layer acks once the MotionEvent has
         // actually been dispatched. Acking earlier would race the focus change.
         if (d === 'tapped') return cursorRefocus();
+        // The player's first request failed, or answered an error (playerNativeReport).
+        if (d.indexOf('pfail:') === 0 || d.indexOf('pstatus:') === 0) return playerNativeReport(d);
         // The remote's own media keys, handed to us by MainActivity because WebView
         // will not route them into page content on its own.
         if (d === 'key:playpause') return void playerKey('space');
@@ -5708,6 +5810,10 @@ ${IS_TV ? '' : `
           <h4>Playback</h4>
           <label class="set-toggle"><input type="checkbox" id="set-autonext" ${cfg.autoNext === false ? '' : 'checked'}>
             <span><b>Play the next episode automatically</b><small>When a server reports that an episode has ended. Servers marked Verified do; on the others it stays a button.</small></span></label>
+          ${PLAYER_CHECK || NATIVE_LOADS() ? `<label class="set-toggle"><input type="checkbox" id="set-autoswitch" ${cfg.autoSwitch === false ? '' : 'checked'}>
+            <span><b>Switch servers when one doesn\u2019t load</b><small>${PLAYER_CHECK
+              ? 'When a server\u2019s page fails to load or stays blank, the next one is tried. Never once a video is playing or you have clicked into the player.'
+              : 'When a server\u2019s page fails to load or answers with an error, the next one is tried.'}</small></span></label>` : ''}
         </div>
         ${IS_TV ? '' : `<div class="set-group">
           <h4>Your data</h4>
@@ -5766,6 +5872,8 @@ ${IS_TV ? '' : `
     if (ga) ga.onclick = () => { closeModal(back); go('#/get-app'); };
     const an = q('#set-autonext');
     if (an) an.onchange = () => { cfg.autoNext = an.checked; saveConfig(); };
+    const asw = q('#set-autoswitch');
+    if (asw) asw.onchange = () => { cfg.autoSwitch = asw.checked; saveConfig(); };
     const ex = q('#set-export');
     if (ex) ex.onclick = exportData;
     const imB = q('#set-import'), imF = q('#set-import-file');

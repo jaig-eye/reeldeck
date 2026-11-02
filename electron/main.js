@@ -11,6 +11,7 @@ const http = require('http');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
 const guards = require('./guards');
+const watchdog = require('./watchdog');
 const { FILES: WEB_FILES, DIRS: WEB_DIRS } = require('../scripts/web-files');
 
 const ROOT = path.join(__dirname, '..'); // the moviestream folder (index.html, app.js, styles.css)
@@ -262,6 +263,8 @@ async function createWindow() {
     }
   });
 
+  watchdog.attach(win.webContents);   // remembers which player frames failed to load (watchdog.js)
+
   // window.open, top navigation and links to other programs are refused for every frame
   // by electron/guards.js (hardenApp attaches it to this window as it is created).
 
@@ -288,6 +291,12 @@ ipcMain.handle('reeldeck:open-external', (e, target) => {
 });
 
 // Renderer asks to apply a downloaded update now.
+// Did the player load? Only about frames inside the window that asks (watchdog.js).
+ipcMain.handle('reeldeck:player-check', (e, name) => {
+  if (!win || e.sender !== win.webContents || !e.senderFrame || e.senderFrame.parent) return { found: false };
+  return watchdog.check(e.sender, e.senderFrame, name);
+});
+
 // The page's header changed height or colour: keep the window buttons inside it.
 ipcMain.handle('reeldeck:titlebar', (e, o) => {
   if (!win || e.sender !== win.webContents || !o || typeof o !== 'object') return;

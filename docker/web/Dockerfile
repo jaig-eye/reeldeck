@@ -11,7 +11,7 @@ FROM node:22-alpine AS build
 WORKDIR /src
 # Only what build-web.js reads. Nothing here needs node_modules.
 COPY scripts/build-web.js scripts/web-files.js scripts/
-COPY index.html app.js styles.css stage.css sw.js manifest.webmanifest ./
+COPY index.html app.js styles.css stage.css compat.css sw.js manifest.webmanifest ./
 COPY assets assets
 RUN node scripts/build-web.js
 
