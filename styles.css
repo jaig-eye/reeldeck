@@ -114,8 +114,11 @@ svg { width: 1em; height: 1em; flex: none; }
 ::-webkit-scrollbar-track { background: transparent; }
 /* In the desktop app the header is the title bar and the window buttons are a transparent
    overlay on it, so the page's own scrollbar ran up through both (the thumb sat beside the
-   close button at the top of every page). Its track starts under the header instead. */
-html.app-frame::-webkit-scrollbar-track { margin-top: var(--header-h, 62px); }
+   close button at the top of every page). A blank 'up' button as tall as the title bar is a
+   spacer the thumb can't enter (a track margin is ignored on the window's own scrollbar).
+   On body, the element Chromium styles the window's scrollbar from (an html:: rule is
+   ignored), and keyed to env(), which is 0 outside the app, not to html.app-frame. */
+body::-webkit-scrollbar-button:vertical:start:decrement { display: block; height: env(titlebar-area-height, 0px); background: transparent; }
 
 /* ---------- Header ---------- */
 /* Off TV the hero starts BELOW the sticky bar, so at rest the bar lies on the page (and
@@ -206,6 +209,17 @@ body:not(.tv) nav.main a.active::after {
 html.app-frame header.top { -webkit-app-region: drag; }
 html.app-frame header.top a, html.app-frame header.top button, html.app-frame header.top input,
 html.app-frame header.top select, html.app-frame header.top [tabindex], html.app-frame header.top [role="listbox"] { -webkit-app-region: no-drag; }
+/* Fixed, not sticky, in the app. Chromium files a sticky element's drag region by where it
+   sat in the page and does not move it as the page scrolls: the title bar stopped dragging a
+   few wheel notches down, and the stale strip could land on the page below it (the middle of
+   the watch page's back button did nothing). A fixed bar's region stays put. The page starts
+   below it, as it did with sticky; on a narrow window it stays too (it is the title bar), so
+   the phone layout's pinned player stops under it rather than under the window buttons. */
+html.app-frame body:not(.tv) header.top { position: fixed; top: 0; left: 0; right: 0; }
+html.app-frame body:not(.tv):not(.lock-on):not(.splash-on) { padding-top: var(--header-h); }
+@media (max-width: 860px) {
+  html.app-frame body:not(.tv):not(.cinema-on) .pl-split .player-frame { top: var(--header-h); }
+}
 html.frame-overlay body header.top { padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px); }
 html.frame-inset body header.top { padding-left: 88px; }
 /* What covers the header takes its place in the drag map. Chromium reads app-region in
@@ -219,6 +233,10 @@ html.frame-overlay .modal-back { padding-top: max(20px, calc(env(titlebar-area-h
 html.frame-overlay .modal-back .modal { max-height: calc(100vh - env(titlebar-area-height, 0px) - 28px); }
 html.frame-overlay .modal-back.acc-back { padding-top: max(min(10vh, 96px), calc(env(titlebar-area-height, 0px) + 8px)); }
 html.frame-overlay body:not(.tv) .cinema-chrome { top: calc(env(titlebar-area-height, 0px) + 12px); }
+/* macOS has no overlay (no titlebar-area), so the theater drag strip below is its 40px
+   fallback, and it comes later in the document than the Exit pill: below it, or the pill's
+   top two thirds dragged the window. */
+html.frame-inset body:not(.tv) .player-frame:has(> .cinema-drag) > .cinema-chrome { top: 52px; }
 /* Theater mode in the app: the window's drag strip, where the header was (app.js enterCinema).
    Later in the document than the player and the hot-zone, so its drag wins over their no-drag. */
 html.app-frame .cinema-drag { position: fixed; top: 0; left: 0; right: 0; height: env(titlebar-area-height, 40px); z-index: 306; -webkit-app-region: drag; }
