@@ -142,7 +142,10 @@
     // e.g. { name:'MySource', movie:'https://host/embed/movie/{id}',
     //        tv:'https://host/embed/tv/{id}/{season}/{episode}' }
     sources: DEFAULT_SOURCES,
-    activeSource: 0
+    activeSource: 0,
+    // Server names the viewer flagged for heavy ads (see isAdHeavy). Only ever REPLACED, never
+    // pushed to: Reset assigns DEFAULTS, so this very array would otherwise collect the flags.
+    adHeavy: []
   };
 
   // Theme catalog. Values live in CSS ([data-theme=...]); this drives the picker
@@ -181,6 +184,10 @@
   // What the tile says. A name that no longer resolves is gone; anything else only failed to
   // answer the Worker, which is why the tile stays one press away rather than being deleted.
   function offLabel(name) { return mirrorDown[name] === 'dns' ? 'Domain gone' : 'No response'; }
+  // Flagged by the viewer with the player's "Lots of ads" button. By name, like activeName, so a
+  // reordered table keeps the verdict. watchView starts on an unflagged server that is answering,
+  // and "Try another server" and the automatic hand-over reach for those first.
+  function isAdHeavy(name) { return !!(name && cfg.adHeavy.indexOf(name) >= 0); }
 
   /**
    * Validate a mirror table that arrived over the network.
@@ -285,6 +292,7 @@
     // Anyone who installed before the permanent alias existed has apkShortUrl: '',
     // and would have gone on auto-shortening forever.
     if (!c.apkShortUrl) c.apkShortUrl = DEFAULTS.apkShortUrl || '';
+    if (!Array.isArray(c.adHeavy)) c.adHeavy = [];
     return c;
   }
   function saveConfig() {
@@ -2242,6 +2250,24 @@
   // any other page. watchStart: starts the pending player (Fullscreen/Theater and F/T use it).
   let watchLive = false, watchStart = null;
   let downPicked = '';                  // an offline mirror the viewer chose by hand, this session
+  let adPicked = '';                    // a server flagged for ads that the viewer chose by hand, this session
+  /*
+   * The LG app has one window: a clicked ad that navigates the top page REPLACES Reeldeck, and
+   * Back has nothing to return to. So while a player is live there, where it is gets written
+   * down every few seconds (and as the page goes), and liveResume() takes a launch that soon
+   * after back to it. Leaving the player normally clears the mark (route()).
+   */
+  const LIVE_KEY = 'reeldeck.live.v1';
+  function liveMark() {
+    if (!watchLive || location.hash.indexOf('#/watch/') !== 0) return;
+    try { localStorage.setItem(LIVE_KEY, JSON.stringify({ hash: location.hash, at: Date.now() })); } catch (e) {}
+  }
+  function liveClear() { try { localStorage.removeItem(LIVE_KEY); } catch (e) {} }
+  if (IS_WEBOS) {
+    setInterval(liveMark, 5000);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) liveMark(); });
+    window.addEventListener('pagehide', liveMark);
+  }
   // Set by go() when the press that navigated was a title's own Play: watchView skips the
   // poster for that one visit. Consumed there; route() drops it for any other page.
   let watchArm = false;
@@ -4410,6 +4436,14 @@
     const cur0 = (sources[cfg.activeSource] || {}).name;
     // For THIS visit only: activeName keeps the viewer's choice, so it comes back once it answers.
     if (healthOn && isDown(cur0) && cur0 !== downPicked) cfg.activeSource = upIdx[0];
+    // Likewise a server flagged for ads, when an unflagged one is answering: this visit only,
+    // and not when the viewer went back to it by hand.
+    const cleanAt = (i) => !isAdHeavy(sources[i].name) && !(healthOn && isDown(sources[i].name));
+    const cur1 = (sources[cfg.activeSource] || {}).name;
+    if (isAdHeavy(cur1) && cur1 !== adPicked) {
+      const k = sources.findIndex((s, i) => cleanAt(i));
+      if (k >= 0) cfg.activeSource = k;
+    }
     const src = sources[cfg.activeSource];
 
     // The season's episode list: the NAME of what is playing (the header only ever
@@ -4576,12 +4610,13 @@
     const roomTiles = sources.map((s, i) => {
       const off = healthOn && isDown(s.name) && i !== cfg.activeSource;
       return `
-      <button class="mirror ${i === cfg.activeSource ? 'on' : ''}${isTracked(s.name) ? ' tracked' : ''}${off ? ' down' : ''}"
+      <button class="mirror ${i === cfg.activeSource ? 'on' : ''}${isTracked(s.name) ? ' tracked' : ''}${off ? ' down' : ''}${isAdHeavy(s.name) ? ' ads' : ''}"
               data-src="${i}" data-mirror-name="${esc(s.name || '')}" aria-pressed="${i === cfg.activeSource}"${off ? ' hidden title="Did not answer our check. It may still work on your network."' : ''}>
         <span class="num">${String(i + 1).padStart(2, '0')}</span>
         <span class="mn">${esc(s.name || ('Source ' + (i + 1)))}</span>
         <span class="ms">${i === cfg.activeSource ? '\u25cf Playing' : off ? offLabel(s.name) : 'Mirror ' + (i + 1)}</span>
         <span class="mbadge">${ICON.check} Verified</span>
+        <span class="mads">Lots of ads</span>
       </button>`;
     }).join('');
 
@@ -4613,6 +4648,7 @@
         ${sources.length ? `<div class="pl-srv">
         <div class="srv-now">
           <span class="lbl">${src ? 'Playing on <b>' + esc(src.name) + '</b>' : 'No source selected'}</span>
+          ${src ? `<button class="btn sm ghost" id="ad-flag" aria-pressed="${isAdHeavy(src.name)}">${isAdHeavy(src.name) ? 'Unflag ads' : 'Lots of ads?'}</button>` : ''}
           ${(healthOn ? upIdx.length : sources.length) > 1 ? `<button class="btn sm" id="next-src">Try another server</button>` : ''}
         </div>
         <details class="srv" id="srv"${srvWasOpen || IS_TV || sideOpen ? ' open' : ''}>
@@ -4653,6 +4689,8 @@
       cfg.activeSource = i; cfg.activeName = sources[i].name; saveConfig();
       const s2 = sources[i];
       downPicked = isDown(s2.name) ? s2.name : '';
+      if (!auto) adPicked = isAdHeavy(s2.name) ? s2.name : '';
+      adFlagSync();
       // Where the episode stands NOW, not where it stood when the page rendered: open a film
       // fresh, watch forty minutes, change server -- the new one was sent to 0:00, and its first
       // report overwrote the forty minutes. Only ever FORWARD of the render-time point: a mirror
@@ -4708,9 +4746,11 @@
       const from = sources[cfg.activeSource], fromName = (from && from.name) || 'This server';
       tried.add(cfg.activeSource);
       let j = -1;
-      for (let k = 1; k < sources.length && j < 0; k++) {
-        const i = (cfg.activeSource + k) % sources.length;
-        if (!tried.has(i) && !(healthOn && isDown(sources[i].name))) j = i;
+      for (let pass = 0; pass < 2 && j < 0; pass++) {   // servers not flagged for ads first
+        for (let k = 1; k < sources.length && j < 0; k++) {
+          const i = (cfg.activeSource + k) % sources.length;
+          if (!tried.has(i) && !(healthOn && isDown(sources[i].name)) && (pass || !isAdHeavy(sources[i].name))) j = i;
+        }
       }
       if (j < 0) return toast(fromName + ' ' + why + ', and every other server has been tried. Pick one under Servers & playback.');
       toast(fromName + ' ' + why + ' \u2014 trying ' + (sources[j].name || 'the next server'));
@@ -4733,14 +4773,35 @@
     // One-press failover — the control the "this mirror failed" toast points at.
     const nx = $('#next-src');
     if (nx) nx.onclick = () => {
-      let i = cfg.activeSource;                     // the next one that is answering
-      for (let k = 0; k < sources.length; k++) {
-        i = (i + 1) % sources.length;
-        if (!healthOn || !isDown(sources[i].name)) break;
+      let i = -1;                                   // the next one that is answering, unflagged first
+      for (let pass = 0; pass < 2 && i < 0; pass++) {
+        for (let k = 1; k < sources.length && i < 0; k++) {
+          const j = (cfg.activeSource + k) % sources.length;
+          if ((!healthOn || !isDown(sources[j].name)) && (pass || !isAdHeavy(sources[j].name))) i = j;
+        }
       }
+      if (i < 0) i = (cfg.activeSource + 1) % sources.length;
       switchTo(i);
       toast('Switched to ' + (sources[i].name || 'the next server'));
       dockClose();
+    };
+    // "Lots of ads?": flag the server on screen, or take the flag back. It does not switch
+    // mid-film -- the next title starts elsewhere, and "Try another server" is right beside it.
+    function adFlagSync() {
+      const name = (sources[cfg.activeSource] || {}).name, on = isAdHeavy(name);
+      const b = $('#ad-flag');
+      if (b) { b.textContent = on ? 'Unflag ads' : 'Lots of ads?'; b.setAttribute('aria-pressed', String(on)); }
+      if (room) room.querySelectorAll('.mirror').forEach(el => el.classList.toggle('ads', isAdHeavy(el.dataset.mirrorName)));
+    }
+    const af = $('#ad-flag');
+    if (af) af.onclick = () => {
+      const name = (sources[cfg.activeSource] || {}).name; if (!name) return;
+      const on = !isAdHeavy(name);
+      cfg.adHeavy = on ? cfg.adHeavy.concat(name) : cfg.adHeavy.filter(n => n !== name);
+      saveConfig();
+      if (on) adPicked = '';
+      adFlagSync();
+      toast(on ? name + ' flagged \u2014 Reeldeck will start on a cleaner server' : name + ' unflagged');
     };
     const qa = $('#quick-add');
     if (qa) qa.onclick = () => {
@@ -6044,7 +6105,7 @@ ${IS_TV ? '' : `
       parts = []; params = {};
     } else if (parts.length) accPending = null;
     watchStart = null;          // a pending Play belongs to the page that drew the poster
-    if (parts[0] !== 'watch') { watchLive = false; watchArm = false; }
+    if (parts[0] !== 'watch') { watchLive = false; watchArm = false; liveClear(); }
     document.body.classList.remove('dock-open');   // the player's episode/server dock (TV)
     // TV: a title page keeps the Stage behind it, so the backdrop carries over from Home.
     document.body.classList.toggle('title-page', (parts[0] === 'movie' || parts[0] === 'tv') && !!parts[1]);
@@ -6727,10 +6788,29 @@ ${IS_TV ? '' : `
    * which is what silently stripped the `tv` body class and the D-pad keydown listener
    * from every signed-out TV launch.
    */
+  /*
+   * The LG launcher always opens the bare app. If it does within 15 minutes of a live player
+   * (liveMark), that launch most likely follows an ad that took the page over: go back to the
+   * title, where Resume is one press away. Quitting with Home mid-film leaves the mark too, so
+   * that brings the same title back -- no worse than Home, which is one press from there.
+   */
+  function liveResume() {
+    if (!IS_WEBOS) return;
+    let m = null;
+    try { m = JSON.parse(localStorage.getItem(LIVE_KEY) || 'null'); } catch (e) {}
+    liveClear();
+    if (!m || typeof m.hash !== 'string' || !(Date.now() - m.at < 15 * 60000)) return;
+    if (!/^#\/watch\/(movie|tv)\/\d+/.test(m.hash) || (location.hash && location.hash !== '#/')) return;
+    const h = m.hash.replace(/([?&])restart=1(&|$)/, '$1').replace(/[?&]$/, '');   // resume, not start over
+    try { history.replaceState(history.state, '', h); } catch (e) { return; }
+    navSeen[navDepth] = location.hash;
+    setTimeout(() => toast('Back where you left off'), 800);
+  }
   function boot() {
     if (!IS_TV) nativeSend('orient:auto');     // a reload mid-film must not leave the app locked sideways
     buildHeader();
     newEpWatch();
+    liveResume();
     route();
     // Every view builds its rails asynchronously, so watch for them rather than trying
     // to find a single point after which they all exist.

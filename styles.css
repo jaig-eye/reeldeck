@@ -939,6 +939,12 @@ body.tv .pl-sub { font-size: clamp(13px, 2.2vh, 18px); }
   text-transform: none; letter-spacing: normal;
 }
 .mirror-note .mbadge.static { vertical-align: middle; margin-right: 2px; }
+/* Flagged by the viewer ("Lots of ads?"): a plain warning chip, shown only on those tiles. */
+.mads { display: none; }
+.mirror.ads .mads {
+  display: inline-flex; margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: .3px;
+  color: #f59e0b; border: 1px solid currentColor; border-radius: var(--r-pill); padding: 2px 8px;
+}
 
 /* ---------- Watch progress ---------- */
 .prog { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
@@ -1758,6 +1764,8 @@ body.tv .srv-n { font-size: clamp(12px, 1.9vh, 16px); }
 .srv-now .lbl { color: var(--muted); font-weight: 600; font-size: 13px; }
 .srv-now .lbl b { color: var(--text); }
 .srv-now .btn { margin-left: auto; }
+.srv-now .btn + .btn { margin-left: 0; }
+html.no-flexgap .srv-now .btn + .btn { margin-left: 12px; }   /* compat.css's gap stand-in, which the line above outranks */
 .srv-now + .srv { margin-top: 0; border-radius: 0 0 var(--r-md) var(--r-md); }
 @media (max-width: 640px) { .sb-modes { margin-left: 0; } }
 /* The season rail on the player page carries no heading of its own -- the strip
