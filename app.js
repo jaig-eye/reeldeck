@@ -500,7 +500,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '3.3.4';   // bump with each release (matches package.json)
+  const APP_VERSION = '3.3.5';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
