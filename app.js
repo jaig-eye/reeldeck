@@ -442,6 +442,17 @@
    */
   const HOST_BLOCKS_POPUPS = IS_DESKTOP || IS_NATIVE;
   /**
+   * The LG app (webos/index.html opens us with webos=1) runs the player unsandboxed too, though
+   * webOS blocks nothing: the mirrors refuse a sandboxed frame, and no allow-* token hides it
+   * (assigning document.domain throws in ANY sandbox). The price, read from WAM and Chromium 79
+   * source, not yet seen on the set: a web app has one window, so a window.open, target=_blank
+   * or top.location from the frame -- once it has been clicked -- replaces THIS page with the
+   * ad, and Back has nothing left to answer it. Dialogs stay off (WAM suppresses them) and
+   * webOS apps cannot download. Only the launcher's flag counts: the LG's own browser also
+   * says Web0S, and there a pop-up is a real tab that the sandbox still has to fence.
+   */
+  const PLAYER_UNSANDBOXED = HOST_BLOCKS_POPUPS || location.href.indexOf('webos=1') >= 0;
+  /**
    * Permissions Policy denials for the frames we do not control (the player, the trailer).
    *
    * Almost every powerful feature defaults to 'self', so a cross-origin frame lacks it unless
@@ -4519,8 +4530,8 @@
       // screen.orientation.lock / the native layer, called from THIS document by
       // cinemaLandscape -- a frame's sandbox has no say over it). Everything a player
       // legitimately needs is granted either way.
-      const sandbox = HOST_BLOCKS_POPUPS
-        ? ''                                            // host-level blocking instead
+      const sandbox = PLAYER_UNSANDBOXED
+        ? ''                                            // host-level blocking instead (none on webOS)
         : 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation allow-popups"';
       // NO `fullscreen` in the allow list, deliberately. Fullscreen inside a
       // cross-origin frame is gated by Permissions Policy, whose default allowlist is

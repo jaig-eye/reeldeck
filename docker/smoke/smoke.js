@@ -593,6 +593,7 @@ async function runProfile(browser, name, report) {
   }
   await page.waitForSelector('#player-iframe', { timeout: 10000 });
   check('Play builds the player and removes the poster', await page.evaluate(() => !document.querySelector('.play-gate') && document.querySelectorAll('#player-iframe').length === 1));
+  check('the web build keeps the player sandboxed', await page.evaluate(() => document.getElementById('player-iframe').hasAttribute('sandbox')));
   if (name === 'tv') {
     // The player opens in the page (some mirrors break loading straight into full screen);
     // OK on the picture is what brings full screen and the pointer.
@@ -861,6 +862,45 @@ async function runDesktopApp(browser, report) {
   await ctx.close();
 }
 
+/* The LG app (webos/index.html) opens the hosted page with ?tv=1&webos=1, and there the player
+ * runs unsandboxed -- the mirrors refuse a sandboxed frame. The LG's own browser says Web0S
+ * too, but it is a browser, with real pop-up tabs: it keeps the sandbox. */
+async function runWebos(browser, report) {
+  const r = report.webos = { checks: [], errors: [] };
+  const check = (label, ok, detail) => {
+    r.checks.push({ label, ok: !!ok, detail: detail === undefined ? '' : detail });
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} [webos] ${label}${detail !== undefined && detail !== '' ? ' -- ' + JSON.stringify(detail) : ''}`);
+  };
+  const play = async (query, ua) => {
+    const ctx = await browser.newContext(Object.assign({ viewport: { width: 960, height: 540 }, deviceScaleFactor: 2, colorScheme: 'dark' }, ua ? { userAgent: ua } : {}));
+    await ctx.route('**/*', (route) => {
+      let host = '';
+      try { host = new URL(route.request().url()).host; } catch (e) {}
+      if (host === SYNC_HOST) return workerRoute(route);
+      if (route.request().url().startsWith('data:') || ALLOW.some((re) => re.test(host))) return route.continue();
+      return route.abort();
+    });
+    await seedSignedIn(ctx);
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => r.errors.push(String(e.message || e)));
+    await page.goto(`${ORIGIN}/${query}#/watch/tv/1399?s=1&e=2`, { waitUntil: 'domcontentloaded' });
+    const guest = page.locator('#sp-guest');
+    if (await guest.isVisible({ timeout: 4000 }).catch(() => false)) await guest.click();
+    await page.waitForSelector('.play-gate #play-go', { timeout: 30000 });
+    await page.locator('#play-go').click();
+    await page.waitForSelector('#player-iframe', { timeout: 10000 });
+    const f = await page.evaluate(() => { const el = document.getElementById('player-iframe'); return { sandbox: el.getAttribute('sandbox'), allow: el.getAttribute('allow') }; });
+    await ctx.close();
+    return f;
+  };
+  const app = await play('?tv=1&webos=1');
+  check('LG app: the player has no sandbox', app.sandbox === null, app.sandbox);
+  check('LG app: the allow list is unchanged (autoplay, no fullscreen)', /autoplay/.test(app.allow) && !/(^|; )fullscreen/.test(app.allow), app.allow);
+  const lgBrowser = await play('?tv=1', 'Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36 WebAppManager');
+  check("LG's own browser: the player stays sandboxed", typeof lgBrowser.sandbox === 'string' && /allow-scripts/.test(lgBrowser.sandbox), lgBrowser.sandbox);
+  check('no uncaught errors', r.errors.length === 0, r.errors.slice(0, 3));
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   if (SHOTS) for (const f of fs.readdirSync(OUT)) if (/\.png$|^report\.json$/.test(f)) fs.unlinkSync(path.join(OUT, f));
@@ -893,6 +933,11 @@ async function runDesktopApp(browser, report) {
     console.log('\n== app ==');
     try { await runDesktopApp(browser, report); }
     catch (e) { report.app = report.app || { checks: [] }; report.app.checks.push({ label: 'desktop app walk completed', ok: false, detail: String(e.message || e).split('\n')[0] }); console.log('  FAIL [app] aborted -- ' + String(e.message || e).split('\n')[0]); }
+  }
+  if (!ONLY || ONLY === 'webos') {
+    console.log('\n== webos ==');
+    try { await runWebos(browser, report); }
+    catch (e) { report.webos = report.webos || { checks: [] }; report.webos.checks.push({ label: 'webos walk completed', ok: false, detail: String(e.message || e).split('\n')[0] }); console.log('  FAIL [webos] aborted -- ' + String(e.message || e).split('\n')[0]); }
   }
   await browser.close(); srv.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2));
