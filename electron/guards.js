@@ -22,8 +22,7 @@
 //                                                                   will-redirect
 //                  This stops the frame being REPLACED by another site. It does not stop
 //                  what the mirror's own scripts draw inside it (a full-size ad iframe is
-//                  just page content); only the ad blocker and the web build's sandbox
-//                  touch that.
+//                  just page content); only the ad blocker touches that.
 //
 // Kept in its own module so scripts/test-guards.js can run this exact code against a
 // hostile page. Every refusal is reported through `log`.

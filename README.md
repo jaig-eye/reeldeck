@@ -29,7 +29,7 @@ Built on [TMDB](https://www.themoviedb.org), designed for a remote first.
 - 🔄 **Sync with a four-digit code.** Your code is your account: watchlist, history and resume points follow it to every device you enter it on.
 - 🔎 **Search and browse.** Filters, genres, keywords, cast and crew filmographies, a Top 10, new episodes, and "because you watched".
 - 🎨 **Seven themes**, from OLED black to Daylight.
-- 🛡️ **Locked-down players.** The desktop app stops embedded players opening links, windows or downloads; the web build sandboxes them against pop-ups.
+- 🛡️ **Locked-down players.** The desktop app stops embedded players opening links, windows or downloads.
 - 💻 **One codebase, every screen.** Android TV and Google TV, LG webOS, Windows, macOS, Android phones and any modern browser (installable as an app).
 
 ## 📸 Screenshots

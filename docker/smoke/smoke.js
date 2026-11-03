@@ -593,7 +593,7 @@ async function runProfile(browser, name, report) {
   }
   await page.waitForSelector('#player-iframe', { timeout: 10000 });
   check('Play builds the player and removes the poster', await page.evaluate(() => !document.querySelector('.play-gate') && document.querySelectorAll('#player-iframe').length === 1));
-  check('the web build keeps the player sandboxed', await page.evaluate(() => document.getElementById('player-iframe').hasAttribute('sandbox')));
+  check('the player has no sandbox', await page.evaluate(() => !document.getElementById('player-iframe').hasAttribute('sandbox')));
   if (name === 'tv') {
     // The player opens in the page (some mirrors break loading straight into full screen);
     // OK on the picture is what brings full screen and the pointer.
@@ -862,9 +862,9 @@ async function runDesktopApp(browser, report) {
   await ctx.close();
 }
 
-/* The LG app (webos/index.html) opens the hosted page with ?tv=1&webos=1, and there the player
- * runs unsandboxed -- the mirrors refuse a sandboxed frame. The LG's own browser says Web0S
- * too, but it is a browser, with real pop-up tabs: it keeps the sandbox. */
+/* The LG app (webos/index.html) opens the hosted page with ?tv=1&webos=1; the LG's own browser
+ * says Web0S without the flag. Either way the player runs unsandboxed -- the mirrors refuse a
+ * sandboxed frame. */
 async function runWebos(browser, report) {
   const r = report.webos = { checks: [], errors: [] };
   const check = (label, ok, detail) => {
@@ -897,7 +897,7 @@ async function runWebos(browser, report) {
   check('LG app: the player has no sandbox', app.sandbox === null, app.sandbox);
   check('LG app: the allow list is unchanged (autoplay, no fullscreen)', /autoplay/.test(app.allow) && !/(^|; )fullscreen/.test(app.allow), app.allow);
   const lgBrowser = await play('?tv=1', 'Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36 WebAppManager');
-  check("LG's own browser: the player stays sandboxed", typeof lgBrowser.sandbox === 'string' && /allow-scripts/.test(lgBrowser.sandbox), lgBrowser.sandbox);
+  check("LG's own browser: the player has no sandbox", lgBrowser.sandbox === null, lgBrowser.sandbox);
   check('no uncaught errors', r.errors.length === 0, r.errors.slice(0, 3));
 }
 

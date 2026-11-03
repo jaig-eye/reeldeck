@@ -429,37 +429,13 @@
     return !!C.Plugins;                                     // older bridge
   })();
   /**
-   * Does the thing hosting us already refuse window.open?
-   *
-   *   Android  MainActivity sets setSupportMultipleWindows(false) and
-   *            setJavaScriptCanOpenWindowsAutomatically(false)
-   *   Electron win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-   *   Browser  nothing whatsoever
-   *
-   * That asymmetry is the entire reason pop-up ads appear on the hosted web build and not
-   * in either app. Where the host does the work we leave the player unsandboxed, because
-   * the sandbox buys nothing there and some mirrors refuse to run inside one.
-   */
-  const HOST_BLOCKS_POPUPS = IS_DESKTOP || IS_NATIVE;
-  /**
-   * The LG app (webos/index.html opens us with webos=1) runs the player unsandboxed too, though
-   * webOS blocks nothing: the mirrors refuse a sandboxed frame, and no allow-* token hides it
-   * (assigning document.domain throws in ANY sandbox). The price, read from WAM and Chromium 79
-   * source, not yet seen on the set: a web app has one window, so a window.open, target=_blank
-   * or top.location from the frame -- once it has been clicked -- replaces THIS page with the
-   * ad, and Back has nothing left to answer it. Dialogs stay off (WAM suppresses them) and
-   * webOS apps cannot download. Only the launcher's flag counts: the LG's own browser also
-   * says Web0S, and there a pop-up is a real tab that the sandbox still has to fence.
-   */
-  const PLAYER_UNSANDBOXED = HOST_BLOCKS_POPUPS || location.href.indexOf('webos=1') >= 0;
-  /**
    * Permissions Policy denials for the frames we do not control (the player, the trailer).
    *
    * Almost every powerful feature defaults to 'self', so a cross-origin frame lacks it unless
    * `allow` grants it. The ad-tech family is the exception: Topics, Protected Audience (interest
    * groups, on-device auctions), Attribution Reporting, Private Aggregation and Shared Storage
-   * default to '*' -- ON inside every mirror and every ad nested in it, sandboxed or not, which
-   * on the two apps (unsandboxed, see frameHTML) is the only fence there is. Denied by name.
+   * default to '*' -- ON inside every mirror and every ad nested in it, and with the player
+   * unsandboxed (see frameHTML) this is the only fence there is. Denied by name.
    * NOT denied, though also '*': storage-access. It only ever lets a frame ask for ITS OWN
    * unpartitioned cookies, never ours, and a Cloudflare-challenged mirror may need it to keep its
    * clearance cookie -- denying it would turn the challenge into a loop.
@@ -500,7 +476,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '3.3.5';   // bump with each release (matches package.json)
+  const APP_VERSION = '3.3.6';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -4509,30 +4485,13 @@
       frameHTML = (s) => {
       nativeExempt();
       const url = buildSourceUrl(s, type, id, imdb, season, episode, resumeAt);
-      // In a browser the frame is ALWAYS sandboxed, and `allow-downloads` is never in
-      // the list -- so an embed cannot start a download whatever else is switched on.
-      // A native host blocks downloads itself (Electron cancels 'will-download';
-      // MainActivity installs a DownloadListener that does nothing), so it is left
-      // unsandboxed rather than risking a mirror that refuses to run in one.
-      //
-      // allow-popups is always granted: most mirrors open a window on the first click and
-      // stall without one (a "Block pop-up ads" switch that withheld it left the player
-      // unusable, and is gone). That window inherits THIS sandbox: no downloads, no escaping
-      // it, no navigating our page, no dialogs. The two tokens that used to come with it are
-      // gone for good:
-      //   allow-popups-to-escape-sandbox  made every ad pop-up an ordinary, unsandboxed tab,
-      //                                   free to download and offer installers
-      //   allow-top-navigation            let a frame replace our page with an ad
-      // Also never granted: allow-modals (alert/confirm -- the "your PC is infected" scam),
-      // allow-downloads, allow-top-navigation-to-custom-protocols (links that make the OS
-      // open another program), allow-pointer-lock (a video player never captures the mouse; an
-      // ad that does traps the cursor) and allow-orientation-lock (our own landscape turn is
-      // screen.orientation.lock / the native layer, called from THIS document by
-      // cinemaLandscape -- a frame's sandbox has no say over it). Everything a player
-      // legitimately needs is granted either way.
-      const sandbox = PLAYER_UNSANDBOXED
-        ? ''                                            // host-level blocking instead (none on webOS)
-        : 'sandbox="allow-same-origin allow-scripts allow-forms allow-presentation allow-popups"';
+      // NO sandbox, on every build. Mirrors detect one (assigning document.domain throws in
+      // ANY sandbox, whatever allow-* tokens are granted) and refuse to load, and the webos=1
+      // check that used to exempt the LG app did not hold on the set. The price: in a plain
+      // browser, and on webOS, nothing stops the frame's pop-ups, downloads, dialogs or
+      // top-level navigation once it has been clicked. The desktop and Android apps still
+      // block those at the host (Electron's guards.js; MainActivity's window and download
+      // settings), and FRAME_DENY still fences the ad-tech APIs everywhere.
       // NO `fullscreen` in the allow list, deliberately. Fullscreen inside a
       // cross-origin frame is gated by Permissions Policy, whose default allowlist is
       // `self`, so omitting the token leaves document.fullscreenEnabled false inside the
@@ -4547,7 +4506,7 @@
       // Fullscreen buttons call requestFullscreen on .player-frame, in OUR document, so
       // they are unaffected by the frame's policy and keep every overlay working.
       // FRAME_DENY: the ad-tech features that would otherwise be on in here (see its comment).
-      return `<iframe id="player-iframe" name="${playerName()}" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay; ${FRAME_DENY}" ${sandbox} referrerpolicy="origin"></iframe>`;
+      return `<iframe id="player-iframe" name="${playerName()}" title="${esc(title)} — player" src="${esc(url)}" allow="autoplay; encrypted-media; picture-in-picture; airplay; ${FRAME_DENY}" referrerpolicy="origin"></iframe>`;
       };
       const art = d && (d.backdrop_path || d.poster_path);
       const goLabel = resumeAt > 30 ? 'Resume ' + fmtClock(resumeAt) : 'Play';
@@ -4712,7 +4671,7 @@
         // stamped Verified, for good. A new element is a new browsing context. The old document
         // dies here, anything it had already queued no longer matches contentWindow, and no
         // session-history entry is left for Back to rewind the player into.
-        const nf = fr2.cloneNode(false);            // same id / allow / sandbox / referrerpolicy
+        const nf = fr2.cloneNode(false);            // same id / allow / referrerpolicy
         nf.setAttribute('tabindex', '-1');
         nf.setAttribute('name', playerName());     // the watcher's handle on THIS frame
         nf.src = buildSourceUrl(s2, type, id, imdb, season, episode, at);   // set BEFORE insertion
