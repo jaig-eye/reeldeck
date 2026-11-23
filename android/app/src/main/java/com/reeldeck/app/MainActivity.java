@@ -70,6 +70,14 @@ public class MainActivity extends BridgeActivity {
     private volatile boolean leftForeground;
     /** One "hold" announcement per press of OK; reset by the next fresh key-down. */
     private boolean okHoldSent;
+    /**
+     * The web layer's D-pad pointer is on screen. While it is, the arrows and OK never reach
+     * the WebView: they go to the page over the bridge instead. A tap that lands on a
+     * mirror's control moves focus INTO its cross-origin frame, and from there a real arrow
+     * key walks the player's own menus (its subtitle list) instead of moving the pointer --
+     * with the keys never entering the WebView, there is nothing for the frame to catch.
+     */
+    private volatile boolean pointerOn;
     /** Media keys are a REMOTE affordance; on a phone they belong to whatever the
      *  user was actually listening to, so we never take them there. */
     private volatile boolean isTelevision;
@@ -405,6 +413,11 @@ public class MainActivity extends BridgeActivity {
                             // look broken.
                             if (data.startsWith("player:")) {
                                 playerOpen = data.endsWith("1");
+                                if (!playerOpen) pointerOn = false;
+                                return;
+                            }
+                            if (data.startsWith("pointer:")) {
+                                pointerOn = data.endsWith("1");
                                 return;
                             }
                             // The player frame the page just made, by the address it was opened at.
@@ -529,6 +542,19 @@ public class MainActivity extends BridgeActivity {
                     }
                     return true;   // a repeat never reaches the page
                 }
+            }
+        }
+        if (isTelevision && pointerOn && replyProxy != null) {
+            String dir = code == KeyEvent.KEYCODE_DPAD_UP ? "up"
+                    : code == KeyEvent.KEYCODE_DPAD_DOWN ? "down"
+                    : code == KeyEvent.KEYCODE_DPAD_LEFT ? "left"
+                    : code == KeyEvent.KEYCODE_DPAD_RIGHT ? "right"
+                    : isOk ? "ok" : null;
+            if (dir != null) {
+                // Arrow repeats are passed on (the page accelerates a held direction); OK's
+                // repeats were already stopped above, so one press is one tap.
+                if (event.getAction() == KeyEvent.ACTION_DOWN) toWeb("dpad:" + dir);
+                return true;   // DOWN and UP both stay out of the WebView
             }
         }
         if (isTelevision && playerOpen && (isPlayPause || isSeek)) {

@@ -484,7 +484,7 @@
   const IS_WINDOWED = IS_DESKTOP ||
     (!IS_NATIVE && !IS_TV &&
      !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches));
-  const APP_VERSION = '3.3.6';   // bump with each release (matches package.json)
+  const APP_VERSION = '3.3.7';   // bump with each release (matches package.json)
   const REPO = 'jaig-eye/reeldeck';
   // The universal APK the CI attaches to every release — the same file Downloader
   // fetches when installing on a TV by hand.
@@ -5155,12 +5155,45 @@
     if (document.activeElement === curEl) return;
     try { curEl.focus({ preventScroll: true }); } catch (e) { try { curEl.focus(); } catch (e2) {} }
   }
-  // Primary guard: the iframe ELEMENT lives in our document, so it does raise focusin
-  // here when the embed takes focus. Deliberately scoped to cursor mode — player-focus
-  // mode wants focus in the iframe and must not be fought.
-  document.addEventListener('focusin', (e) => {
-    if (cursorActive() && e.target && e.target.id === 'player-iframe') cursorRefocus();
-  });
+  /*
+   * TV: the remote NEVER navigates inside an embed. Click only.
+   *
+   * A tap (ours, or a Magic Remote click on webOS) that lands on a mirror's control moves DOM
+   * focus into the cross-origin frame, and from then on the D-pad walks the PLAYER's own
+   * menus: open its subtitle list and the arrows run up and down the list, OK picks, and
+   * nothing in our document hears a key -- so the pointer, Back and the dock are all gone
+   * until the viewer leaves full screen and clicks their way out. The cursorRefocus guard
+   * only caught the first focus change, and only in pointer mode; a menu that focuses its
+   * own items after opening took the remote straight back.
+   *
+   * So on a TV, any iframe holding focus is taken off it, by three independent triggers
+   * (focusin on the element, the window's blur, and a cheap poll for whatever both miss).
+   * The click has already been delivered by then; a menu it opened stays open and is closed
+   * the way it was opened -- point at something else and press OK.
+   *
+   * The one exception is playerKey()'s momentary lend for the remote's media keys
+   * (body.player-focused), which hands focus straight back on its own.
+   */
+  function tvFrameGuard() {
+    if (!IS_TV) return;
+    const a = document.activeElement;
+    if (!a || a.tagName !== 'IFRAME') return;
+    if (document.body.classList.contains('player-focused')) return;
+    if (cursorActive() && curEl) { cursorRefocus(); if (document.activeElement !== a) return; }
+    try { a.blur(); } catch (e) {}
+    const back = (cursorActive() && curEl) || document.querySelector('.player-frame[tabindex="0"]');
+    if (back) { if (IS_TV && back !== curEl) tvFocusEl(back); else try { back.focus({ preventScroll: true }); } catch (e) {} }
+    else tvRestoreFocus();
+  }
+  if (IS_TV) {
+    document.addEventListener('focusin', (e) => {
+      if (e.target && e.target.tagName === 'IFRAME') setTimeout(tvFrameGuard, 0);
+    });
+    // Focus moving into a child frame blurs OUR window. A short delay, not none: the click
+    // that moved it must finish landing (mousedown moves focus, mouseup is the click).
+    window.addEventListener('blur', () => setTimeout(tvFrameGuard, 180));
+    setInterval(tvFrameGuard, 300);
+  }
   if (NATIVE_TAP) {
     try {
       window.ReeldeckNative.onmessage = (ev) => {
@@ -5169,6 +5202,9 @@
         // Backstop for the guard above: the native layer acks once the MotionEvent has
         // actually been dispatched. Acking earlier would race the focus change.
         if (d === 'tapped') return cursorRefocus();
+        // Pointer mode: the activity keeps the D-pad and OK out of the WebView entirely and
+        // hands them to us here, so they can never reach a focused embed's own menus.
+        if (d.indexOf('dpad:') === 0) return void nativeDpad(d.slice(5));
         // The player's first request failed, or answered an error (playerNativeReport).
         if (d.indexOf('pfail:') === 0 || d.indexOf('pstatus:') === 0) return playerNativeReport(d);
         // The remote's own media keys, handed to us by MainActivity because WebView
@@ -5209,6 +5245,27 @@
 
   function cursorActive() { return document.body.classList.contains('cursor-on'); }
 
+  /**
+   * A D-pad press the activity took for the pointer. If the pointer has gone by the time it
+   * arrives (a race with cursorOff, or a reload that left the activity thinking it is up),
+   * the press is replayed as an ordinary key on our own document, and the activity is told
+   * again that the pointer is down -- a stale flag must never cost the viewer the remote.
+   */
+  function nativeDpad(k) {
+    if (cursorActive()) {
+      if (k === 'ok') return cursorTap();
+      if (k === 'up' || k === 'down' || k === 'left' || k === 'right') return cursorMove(k);
+      return;
+    }
+    nativeSend('pointer:0');
+    const key = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', ok: 'Enter' }[k];
+    if (!key) return;
+    const t = document.activeElement || document.body;
+    ['keydown', 'keyup'].forEach((type) => {
+      try { t.dispatchEvent(new KeyboardEvent(type, { key: key, bubbles: true, cancelable: true })); } catch (e) {}
+    });
+  }
+
   /** `what` names the thing Back leaves, for the hint: the player unless told otherwise. */
   function cursorOn(what) {
     if (!IS_TV) return;
@@ -5225,6 +5282,7 @@
     // still tap through at a point the user cannot see.
     overlayHost().appendChild(curEl);
     document.body.classList.add('cursor-on');
+    nativeSend('pointer:1');
     // Start where a play button usually is, rather than dead centre.
     curX = Math.round(window.innerWidth / 2);
     curY = Math.round(window.innerHeight * 0.58);
@@ -5278,6 +5336,7 @@
   function cursorOff() {
     if (!cursorActive()) return;
     document.body.classList.remove('cursor-on');
+    nativeSend('pointer:0');
     if (curHint) curHint.classList.remove('show');
     if (curEl) curEl.classList.remove('idle');
     clearTimeout(cursorOn._t);
@@ -5335,9 +5394,16 @@
   }
 
   // Held direction accelerates, so crossing the screen is a flick rather than a chore.
+  // Spaced-out single presses go the other way: a press after a pause is a NUDGE, a few
+  // pixels, so a small control (a subtitle row, a gear icon) can be lined up exactly.
+  // Sized to the canvas: ~4px on a 960-wide TV WebView, ~5 on the LG's 1280, 8 at 1920.
   function cursorMove(dir) {
     const t = (window.performance && performance.now) ? performance.now() : Date.now();
-    curStep = (t - curLast < 260) ? Math.min(curStep + 7, 78) : 14;
+    const gap = t - curLast;
+    const fine = Math.max(3, Math.round((window.innerWidth || 960) / 240));
+    if (gap < 260) curStep = Math.min(Math.max(curStep, 14) + 7, 78);   // held / rapid
+    else if (gap < 650) curStep = 14;                                     // steady tapping
+    else curStep = fine;                                                  // deliberate single press
     curLast = t;
     // Already at the bottom edge and pressing on: the dock (episodes and servers) rises.
     if (dir === 'down' && curY >= window.innerHeight - 8 && dockOpen()) return;
@@ -6808,6 +6874,7 @@ ${IS_TV ? '' : `
   }
   function boot() {
     if (!IS_TV) nativeSend('orient:auto');     // a reload mid-film must not leave the app locked sideways
+    nativeSend('pointer:0');                   // a reload with the pointer up must not leave the activity holding the D-pad
     buildHeader();
     newEpWatch();
     liveResume();
@@ -8105,12 +8172,7 @@ ${IS_TV ? '' : `
       e.preventDefault(); e.stopPropagation();
       remoteBack(() => { try { window.close(); } catch (er) {} });
     }, true);
-    window.addEventListener('blur', () => setTimeout(() => {
-      const a = document.activeElement;
-      if (!a || a.tagName !== 'IFRAME') return;
-      const back = document.getElementById('tv-cursor') || document.querySelector('.player-frame[tabindex="0"]');
-      if (back) try { back.focus({ preventScroll: true }); } catch (er) {}
-    }, 400));
+    // (Taking focus back off the frame is tvFrameGuard's job, on every TV build.)
   }
 
   // The desktop app has no browser chrome: no Back button, no Alt+Left (a null menu means no
